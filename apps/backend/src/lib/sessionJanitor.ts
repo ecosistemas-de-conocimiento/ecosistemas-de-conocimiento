@@ -69,6 +69,7 @@
 import type { Payload, Where } from 'payload'
 
 import { KEEP_CONVERSATION_UPLOADS } from './conversationUploads'
+import { safeErrMessage } from './errorSummary'
 
 export interface JanitorConfig {
   /** Sessions idle longer than this many days are reaped. */
@@ -279,7 +280,7 @@ export async function runSessionJanitor(
         } catch (err) {
           result.failed += 1
           payload.logger.error(
-            { sessionId: id, err: err instanceof Error ? err.message : String(err) },
+            { sessionId: id, err: safeErrMessage(err) },
             '[session-janitor] failed to delete session (continuing)',
           )
         }

@@ -18,6 +18,7 @@
  */
 
 import { purgeUnscrubbedGraphRows, type PurgePayload } from '../src/lib/graph/purgeUnscrubbed'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 async function main(): Promise<void> {
   const apply = process.env.PURGE_APPLY === '1'
@@ -43,6 +44,6 @@ try {
   await main()
   process.exit(0)
 } catch (err) {
-  console.error('[purge-unscrubbed-graph] failed:', err)
+  console.error('[purge-unscrubbed-graph] failed:', safeErrMessage(err))
   process.exit(1)
 }

@@ -40,9 +40,11 @@
  *    shared package later is a swap, not a redesign.
  */
 
-// The ONLY static import here, and deliberately a leaf: `storage/client` reads
-// `process.env` and nothing else. The AWS SDK stays behind a dynamic import
-// inside `getBucketOps`, so a local-disk boot never loads it.
+// The ONLY static imports here, and deliberately leaves: `errorSummary` imports
+// nothing, `storage/client` reads `process.env` and nothing else. The AWS SDK
+// stays behind a dynamic import inside `getBucketOps`, so a local-disk boot
+// never loads it.
+import { safeErrMessage } from './errorSummary'
 import { isStorageConfigured } from './storage/client'
 
 /** The two states. There is no third one — see Rule 1. */
@@ -366,18 +368,18 @@ async function runOne(dep: Dependency): Promise<CheckResult> {
     const ms = Date.now() - started
     const failures = (consecutiveFailures.get(dep.name) ?? 0) + 1
     consecutiveFailures.set(dep.name, failures)
-    const error = classifyError(err)
+    const code = classifyError(err)
 
     // 🔴 The ONLY place the real error is allowed to exist. Never the response.
     console.error(
-      `[readiness] ${dep.name} probe failed (${failures}/${DOWN_AFTER_CONSECUTIVE_FAILURES}, ${ms}ms, reported as "${error}")`,
-      err,
+      `[readiness] ${dep.name} probe failed (${failures}/${DOWN_AFTER_CONSECUTIVE_FAILURES}, ${ms}ms, reported as "${code}")`,
+      safeErrMessage(err),
     )
 
     // Rule 4c: below the threshold the check still reports `ok`, but carries the
     // error so a monitor can see the flap. This window is a known, accepted cost.
     const status: CheckStatus = failures >= DOWN_AFTER_CONSECUTIVE_FAILURES ? 'down' : 'ok'
-    return { status, ms, error }
+    return { status, ms, error: code }
   }
 }
 

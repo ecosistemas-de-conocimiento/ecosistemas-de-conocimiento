@@ -28,6 +28,7 @@
 
 import type { GraphQueryPayload } from '../src/lib/graph/queries'
 import { purgeGraphNoise } from '../src/lib/graph/purgeNoise'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 async function main(): Promise<void> {
   const apply = process.env.PURGE_NOISE_APPLY === '1'
@@ -63,6 +64,6 @@ try {
   await main()
   process.exit(0)
 } catch (err) {
-  console.error('[purge-graph-noise] failed:', err)
+  console.error('[purge-graph-noise] failed:', safeErrMessage(err))
   process.exit(1)
 }

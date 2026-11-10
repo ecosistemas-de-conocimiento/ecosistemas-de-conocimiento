@@ -31,6 +31,7 @@ import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
 import { EcosystemNotVisibleError, ecosystemMetrics } from '@/lib/ecosystemMetrics'
+import { safeErrMessage } from '@/lib/errorSummary'
 
 // Per-caller and per-tenant, and it changes as people use the product. Never
 // prerender it, and never let a shared proxy hold it.
@@ -67,7 +68,7 @@ export async function GET(request: Request): Promise<Response> {
     // the lib, so nothing that reaches here is an existence signal — and a
     // database outage reported as "no such ecosistema" would send whoever is
     // on call looking for a deleted tenant.
-    console.error('[metrics] ecosystem metrics failed', err)
+    console.error('[metrics] ecosystem metrics failed', safeErrMessage(err))
     return fail(500, 'Could not compute the metrics.')
   }
 }

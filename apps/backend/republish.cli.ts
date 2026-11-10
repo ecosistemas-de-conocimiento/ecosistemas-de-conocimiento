@@ -26,6 +26,7 @@ import config from '@payload-config'
 
 import { getAdminAIClient } from '@/lib/aiClient'
 import { ingestCallbackUrl } from '@/lib/callbackConfig'
+import { safeErrMessage } from '@/lib/errorSummary'
 import { beginPublish, NotPublishableError } from '@/lib/publishDocument'
 
 const intEnv = (name: string, fallback: number): number => {
@@ -91,7 +92,7 @@ for (const [i, doc] of docs.entries()) {
       skipped[reason] = (skipped[reason] ?? 0) + 1
     } else {
       failed++
-      console.error(`[republish] doc ${doc.id} FALLÓ:`, (err as Error).message)
+      console.error(`[republish] doc ${doc.id} FALLÓ:`, safeErrMessage(err))
     }
   }
   if (i < docs.length - 1) await sleep(DELAY_MS)

@@ -60,6 +60,7 @@ import type { Payload } from 'payload'
 
 import { themeFromSeededTitle } from './corpus'
 import { readCorpusManifest, resolveCorpusDir } from './corpusSource'
+import { safeErrMessage } from '../lib/errorSummary'
 
 /** `Carta de presentación — traducción en salud (SIM_0001)` → `SIM_0001`. */
 const SIM_ID = /(SIM_\d+)/
@@ -250,7 +251,7 @@ export async function backfillCorpusLabels(
       // ⚠ One failure does not stop the rest: a label is independent per row,
       // and 249 labelled documents with one loud line beats an aborted pass.
       payload.logger.warn(
-        `[backfill-labels] document ${change.id}: ${err instanceof Error ? err.message : String(err)}`,
+        `[backfill-labels] document ${change.id}: ${safeErrMessage(err)}`,
       )
     }
   }

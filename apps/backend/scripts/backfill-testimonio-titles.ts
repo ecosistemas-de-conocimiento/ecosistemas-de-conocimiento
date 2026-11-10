@@ -41,6 +41,7 @@
 import { backfillTestimonioTitles } from '../src/lib/backfillTestimonioTitles'
 import { detectorFallbackMode } from '../src/lib/platformSettings'
 import { titleClientFromEnv } from '../src/lib/testimonioTitle'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 const nonNegativeInt = (raw: string | undefined, fallback: number): number => {
   const n = Number(raw)
@@ -102,6 +103,6 @@ try {
   await main()
   process.exit(0)
 } catch (err) {
-  console.error('[backfill-testimonio-titles] failed:', err)
+  console.error('[backfill-testimonio-titles] failed:', safeErrMessage(err))
   process.exit(1)
 }

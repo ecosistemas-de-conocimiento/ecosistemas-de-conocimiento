@@ -21,6 +21,7 @@
  */
 
 import { regateMemberDocumentos } from '../src/lib/regateMemberDocumentos'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 async function main(): Promise<void> {
   const apply = process.argv.includes('--apply')
@@ -72,6 +73,6 @@ try {
   await main()
   process.exit(process.exitCode ?? 0)
 } catch (err) {
-  console.error('[regate-member-documentos] failed:', err)
+  console.error('[regate-member-documentos] failed:', safeErrMessage(err))
   process.exit(1)
 }

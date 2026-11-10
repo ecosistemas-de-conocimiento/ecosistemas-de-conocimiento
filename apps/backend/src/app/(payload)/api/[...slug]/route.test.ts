@@ -189,3 +189,93 @@ describe('Payload REST routes', () => {
     expect(auth).toHaveBeenCalledOnce()
   })
 })
+
+/** A request whose handler stays inside Payload until `finish` is called. */
+function held() {
+  let finish!: (r: Response | Error) => void
+  const done = new Promise<Response>((resolve, reject) => {
+    finish = (r) => (r instanceof Error ? reject(r) : resolve(r))
+  })
+  return { done, finish }
+}
+
+const upload = () => req('POST', 'x', 'multipart/form-data; boundary=x', '/api/media')
+
+describe('uploads at once per account (re-audit 2026-11-10, C-03)', () => {
+  const as = (id: number) => auth.mockResolvedValue({ user: { id, collection: 'users', isActive: true } })
+
+  it('🔴 the third concurrent upload of one account is 429 with Retry-After; another account is unaffected', async () => {
+    const { POST } = await import('./route')
+    const { DEFAULT_UPLOADS_PER_USER } = await import('@/lib/uploadSlots')
+    expect(DEFAULT_UPLOADS_PER_USER).toBe(2)
+    const slow = [held(), held(), held()]
+    let next = 0
+    handler.mockImplementation(() => slow[next++].done)
+    as(1)
+    const first = POST(upload(), slugOf('/api/media'))
+    const second = POST(upload(), slugOf('/api/media'))
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2))
+
+    const third = await POST(upload(), slugOf('/api/media'))
+    expect(third.status).toBe(429)
+    expect(third.headers.get('retry-after')).toBe('5')
+    expect(handler).toHaveBeenCalledTimes(2)
+
+    as(2)
+    const other = POST(upload(), slugOf('/api/media'))
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(3))
+
+    for (const s of slow) s.finish(Response.json({ ok: true }))
+    expect((await first).status).toBe(200)
+    expect((await second).status).toBe(200)
+    expect((await other).status).toBe(200)
+  })
+
+  it('🔴 the slot comes back after a success and after a thrown error', async () => {
+    const { POST } = await import('./route')
+    const { uploadSlotsHeld } = await import('@/lib/uploadSlots')
+    as(3)
+    handler.mockImplementation(async () => Response.json({ ok: true }))
+    for (let i = 0; i < 3; i++) expect((await POST(upload(), slugOf('/api/media'))).status).toBe(200)
+    expect(uploadSlotsHeld('users:3')).toBe(0)
+
+    handler.mockImplementation(async () => {
+      throw new Error('busboy blew up')
+    })
+    for (let i = 0; i < 3; i++) await expect(POST(upload(), slugOf('/api/media'))).rejects.toThrow('busboy blew up')
+    expect(uploadSlotsHeld('users:3')).toBe(0)
+
+    handler.mockImplementation(async () => Response.json({ ok: true }))
+    expect((await POST(upload(), slugOf('/api/media'))).status).toBe(200)
+  })
+
+  it('UPLOAD_MAX_CONCURRENT_PER_USER tunes it; junk falls back to 2', async () => {
+    const { uploadsPerUser } = await import('@/lib/uploadSlots')
+    expect(uploadsPerUser({ UPLOAD_MAX_CONCURRENT_PER_USER: '4' })).toBe(4)
+    for (const v of [undefined, '', '0', '-1', '1.5', 'dos']) {
+      expect(uploadsPerUser({ UPLOAD_MAX_CONCURRENT_PER_USER: v }), String(v)).toBe(2)
+    }
+  })
+})
+
+describe('a stalled body (re-audit 2026-11-10, C-03)', () => {
+  it('🔴 a JSON write that stops sending is 408, and Payload never sees it', async () => {
+    vi.stubEnv('API_BODY_IDLE_TIMEOUT_MS', '50')
+    try {
+      const { PATCH } = await import('./route')
+      let sent = false
+      const body = new ReadableStream<Uint8Array>({
+        pull(c) {
+          if (sent) return new Promise<void>(() => {})
+          sent = true
+          c.enqueue(new TextEncoder().encode('{"name":'))
+        },
+      })
+      const res = await PATCH(req('PATCH', body), args)
+      expect(res.status).toBe(408)
+      expect(handler).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+})

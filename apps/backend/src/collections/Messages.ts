@@ -12,6 +12,7 @@ import { MESSAGE_CORPUS_STATES } from '../lib/conversationIngest'
 import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
 import { assertSessionOwnedBy, SessionNotOwnedError } from '../lib/corpus'
 import { relationId } from '../lib/permissions'
+import { safeErrMessage } from '../lib/errorSummary'
 
 /**
  * Chat messages — one per turn (user, assistant, or system). Replaces the
@@ -277,7 +278,7 @@ const ingestConversationHook: CollectionAfterChangeHook = ({ doc, req, operation
         ...(ingestCallbackUrl() ? { callbackUrl: ingestCallbackUrl() as string } : {}),
       })
     })().catch((err) => {
-      console.error('[messages] background conversation ingest failed for session', id, err)
+      console.error('[messages] background conversation ingest failed for session', id, safeErrMessage(err))
     })
   })
 

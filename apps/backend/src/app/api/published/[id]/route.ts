@@ -11,7 +11,8 @@ import configPromise from '@payload-config'
 import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
-import { API_BODY_MAX_BYTES, readCapped, tooLarge } from '@/lib/bodyCap'
+import { API_BODY_MAX_BYTES, BodyTimeoutError, bodyTimedOut, readCapped, tooLarge } from '@/lib/bodyCap'
+import { safeErrMessage } from '@/lib/errorSummary'
 import { HoldNotVisibleError } from '@/lib/holdReview'
 import { rejectPublished } from '@/lib/rejectPublished'
 
@@ -32,7 +33,13 @@ export async function POST(request: Request, ctx: Ctx): Promise<Response> {
 
   const { id } = await ctx.params
   // 🔴 Counted: a multipart label skips the middleware, and `json()` has no cap.
-  const bytes = await readCapped(request, API_BODY_MAX_BYTES)
+  let bytes: Uint8Array | null
+  try {
+    bytes = await readCapped(request, API_BODY_MAX_BYTES)
+  } catch (err) {
+    if (err instanceof BodyTimeoutError) return bodyTimedOut()
+    throw err
+  }
   if (!bytes) return tooLarge(API_BODY_MAX_BYTES)
   let body: Record<string, unknown> | null = null
   try {
@@ -54,7 +61,7 @@ export async function POST(request: Request, ctx: Ctx): Promise<Response> {
     return NextResponse.json(outcome, { headers: NO_STORE })
   } catch (err) {
     if (err instanceof HoldNotVisibleError) return fail(404, err.message)
-    console.error('[published] reject failed', err)
+    console.error('[published] reject failed', safeErrMessage(err))
     return fail(500, 'Could not record the decision.')
   }
 }

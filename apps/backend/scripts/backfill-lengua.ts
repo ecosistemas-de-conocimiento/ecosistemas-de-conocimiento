@@ -32,6 +32,7 @@
 
 import { getAppAIClient } from '../src/lib/aiClient'
 import { backfillLengua } from '../src/lib/backfillLengua'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 const nonNegativeInt = (raw: string | undefined, fallback: number): number => {
   const n = Number(raw)
@@ -80,6 +81,6 @@ try {
   await main()
   process.exit(0)
 } catch (err) {
-  console.error('[backfill-lengua] failed:', err)
+  console.error('[backfill-lengua] failed:', safeErrMessage(err))
   process.exit(1)
 }

@@ -21,6 +21,8 @@
 
 import { exportJWK, importPKCS8, importSPKI, type JWK, type KeyLike } from 'jose'
 
+import { safeErrMessage } from '../errorSummary'
+
 /** The ONLY signature algorithm this service issues or accepts. */
 export const SIGNING_ALG = 'EdDSA' as const
 
@@ -229,7 +231,7 @@ export async function getJwks(): Promise<{ keys: JWK[] }> {
   try {
     return { keys: [await getPublicJwk()] }
   } catch (err) {
-    console.error('[identity/jwt] failed to export AUTH_PUBLIC_KEY as a JWK:', err)
+    console.error('[identity/jwt] failed to export AUTH_PUBLIC_KEY as a JWK:', safeErrMessage(err))
     return { keys: [] }
   }
 }

@@ -8,7 +8,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { isUploadRoute, readCapped, withCappedBody } from './bodyCap'
+import { BodyTimeoutError, bodyTimeouts, isUploadRoute, readCapped, withCappedBody } from './bodyCap'
 
 const KiB = 1024
 
@@ -130,5 +130,98 @@ describe('isUploadRoute', () => {
       .filter((f) => f.endsWith('.ts') && !f.includes('.test.'))
       .filter((f) => /^ {2}upload: /m.test(readFileSync(path.join(dir, f), 'utf8')))
     expect(uploads).toEqual(['Media.ts'])
+  })
+})
+
+/** A body that sends `first` and then never another byte, or closes. */
+function stalled(first = new Uint8Array([0x7b])) {
+  const seen = { cancelled: false }
+  let sent = false
+  const body = new ReadableStream<Uint8Array>({
+    pull(c) {
+      if (!sent) {
+        sent = true
+        c.enqueue(first)
+        return
+      }
+      return new Promise<void>(() => {})
+    },
+    cancel() {
+      seen.cancelled = true
+    },
+  })
+  return { body, seen }
+}
+
+/** One byte every `everyMs`, forever. */
+function trickle(everyMs: number) {
+  const seen = { cancelled: false }
+  const body = new ReadableStream<Uint8Array>({
+    pull: (c) =>
+      new Promise<void>((resolve) =>
+        setTimeout(() => {
+          if (!seen.cancelled) c.enqueue(new Uint8Array(1))
+          resolve()
+        }, everyMs),
+      ),
+    cancel() {
+      seen.cancelled = true
+    },
+  })
+  return { body, seen }
+}
+
+describe('a slow body (re-audit 2026-11-10, C-03)', () => {
+  it('🔴 a body that stalls is dropped after the idle bound, and its stream cancelled', async () => {
+    const { body, seen } = stalled()
+    const started = Date.now()
+    await expect(readCapped(post(body), 1024, { idleMs: 50, totalMs: 10_000 })).rejects.toBeInstanceOf(BodyTimeoutError)
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(seen.cancelled).toBe(true)
+  })
+
+  it('🔴 a body that trickles under the idle bound still stops at the total one', async () => {
+    const { body, seen } = trickle(10)
+    const started = Date.now()
+    await expect(readCapped(post(body), 1024 * 1024, { idleMs: 1_000, totalMs: 150 })).rejects.toBeInstanceOf(
+      BodyTimeoutError,
+    )
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(seen.cancelled).toBe(true)
+  })
+
+  it('🔴 withCappedBody throws the same for a stalled JSON write', async () => {
+    const { body } = stalled()
+    const req = post(body, { 'content-type': 'application/json' })
+    await expect(withCappedBody(req, 1024, { idleMs: 50, totalMs: 10_000 })).rejects.toBeInstanceOf(BodyTimeoutError)
+  })
+
+  it('a body that keeps coming within both bounds is read whole', async () => {
+    const chunks = [new Uint8Array([0x61]), new Uint8Array([0x62])]
+    const body = new ReadableStream<Uint8Array>({
+      pull: (c) =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            const next = chunks.shift()
+            if (next) c.enqueue(next)
+            else c.close()
+            resolve()
+          }, 10),
+        ),
+    })
+    const out = await readCapped(post(body), 1024, { idleMs: 500, totalMs: 2_000 })
+    expect(new TextDecoder().decode(out!)).toBe('ab')
+  })
+
+  it('30 s idle and 120 s total by default; the env tunes both, junk falls back', () => {
+    expect(bodyTimeouts({})).toEqual({ idleMs: 30_000, totalMs: 120_000 })
+    expect(bodyTimeouts({ API_BODY_IDLE_TIMEOUT_MS: '5000', API_BODY_TOTAL_TIMEOUT_MS: '60000' })).toEqual({
+      idleMs: 5_000,
+      totalMs: 60_000,
+    })
+    expect(bodyTimeouts({ API_BODY_IDLE_TIMEOUT_MS: '0', API_BODY_TOTAL_TIMEOUT_MS: 'x' })).toEqual({
+      idleMs: 30_000,
+      totalMs: 120_000,
+    })
   })
 })

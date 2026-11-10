@@ -1,6 +1,8 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
+import noRawErrorLog from './eslint/noRawErrorLog.js';
+
 // Shape mirrors services/ai-service/eslint.config.js (same base, same two
 // rule options). Added 2026-10-28 on a tree that other lanes were editing, so
 // the rules the existing code breaks are `warn`, not `error`, and no source
@@ -23,6 +25,14 @@ export default tseslint.config(
       'prefer-const': 'warn',
       '@typescript-eslint/no-unused-expressions': 'warn',
     },
+  },
+  // P-07: a raw error's text can quote a database row (`eslint/noRawErrorLog.js`).
+  // `error` from the start: tests are exempt, they log nothing that ships.
+  {
+    files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.mjs'],
+    ignores: ['**/*.test.ts', '**/*.spec.ts', 'e2e/**'],
+    plugins: { edc: { rules: { 'no-raw-error-log': noRawErrorLog } } },
+    rules: { 'edc/no-raw-error-log': 'error' },
   },
   // Plain-Node `.mjs` files have no @types/node declaration, so `no-undef`
   // needs the Node globals they use spelled out.

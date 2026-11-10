@@ -32,6 +32,7 @@
 
 import { getAppAIClient } from '../src/lib/aiClient'
 import { liveCheckViaRetrieve, repairPendingPublished } from '../src/lib/repairPendingPublished'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 const positiveInt = (raw: string | undefined, fallback: number): number => {
   const n = Number(raw)
@@ -68,6 +69,6 @@ try {
   await main()
   process.exit(0)
 } catch (err) {
-  console.error('[repair-pending-published] failed:', err)
+  console.error('[repair-pending-published] failed:', safeErrMessage(err))
   process.exit(1)
 }
