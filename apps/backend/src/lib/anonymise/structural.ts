@@ -43,6 +43,8 @@
  * cost of re-identification, never as making it impossible.
  */
 
+import { namePartsOf } from './nameParts'
+import { normaliseName } from './pseudonyms'
 import type { RedactionCount } from './types'
 import { OMITTED_PLACEHOLDER } from './types'
 
@@ -212,8 +214,14 @@ const ID_INLINE = new RegExp(
  */
 const BYLINE_KEY = ['autor', 'autora', 'autores', 'autoras', 'author', 'authors'].map(anyCase).join('|')
 
-/** `[*_]*` takes markdown bold around the key or the colon: `**Autor:**`. */
-const BYLINE_SEP = String.raw`[*_]*[ \t]*[:=][ \t]*[*_]*[ \t]*`
+/**
+ * `[*_]*` takes markdown bold around the key or the colon: `**Autor:**`.
+ * 🔴 `(?:[*_]+[ \t]*)?`, NOT `[*_]*[ \t]*` after the colon's spaces: two
+ * `[ \t]*` around an empty `[*_]*` split a run of N spaces N ways, and
+ * "Autor:" + 20k spaces + "x" took 0.5 s, 4x per 2x (measured 2026-10-28,
+ * local tsx). Same strings matched.
+ */
+const BYLINE_SEP = String.raw`[*_]*[ \t]*[:=][ \t]*(?:[*_]+[ \t]*)?`
 
 /** A byline at a field start: the whole field is the value, whatever its case. */
 const BYLINE_FIELD = new RegExp(
@@ -242,8 +250,8 @@ const isSpace = (c: string | undefined) => c !== undefined && /\s/u.test(c)
  *
  * 🔴 WHY NOT `split` (audit 5, 2026-10-28): the regex is tried at every
  * position, and inside a run of N spaces each try reads to the end of the run
- * before failing: N² ("Autor: Ana Ruiz | Lugar" + 60k spaces took 11.4 s on
- * 9597969, 23.9 s with the additive passes). A try inside a whitespace run
+ * before failing: N² ("Autor: Ana Ruiz | Lugar" + 60k spaces took 11.4 s, 23.9 s
+ * with the additive passes). A try inside a whitespace run
  * succeeds or fails exactly as a try at the run's start does (both depend only
  * on what follows the run), so after a failed try the scan skips the run.
  */
@@ -425,6 +433,30 @@ function isProse(segment: string): boolean {
   return words.some((w) => PROSE_WORDS.has(w))
 }
 
+/*
+ * ── 🔴 KEEPING A DOCUMENT'S ACTUAL AUTHORS (owner ruling R60, 2026-10-28) ───
+ *
+ * "Don't redact authors", clarified by the owner the same day: ONLY the
+ * document's actual author — its uploader, by their account name or roster
+ * entry. A byline that names anyone else is redacted wherever it sits, so a
+ * forged "Autora: …" line (a quote, a list item, a heading, a reference, an
+ * interview's "Por:") cannot unhide anybody: the names come from the
+ * account, never from the text.
+ *
+ * Stage 1 itself still redacts every byline. The gate runs it a SECOND time
+ * with `keepAuthors` to get the text it restores from (`authorRestore.ts`):
+ * identical, except that a byline piece naming a trusted author is left as
+ * written.
+ */
+
+/** Folded name parts, as a sorted key: "Ruiz, Ana" and "Ana Ruiz" agree. */
+export function namePartsKey(name: string): string {
+  return namePartsOf(name)
+    .map(normaliseName)
+    .sort()
+    .join(' ')
+}
+
 /** Count a rule only when it actually fired — a zero row is noise in the report. */
 function pushCount(into: RedactionCount[], label: string, count: number): void {
   if (count === 0) return
@@ -447,18 +479,35 @@ export interface StructuralOptions {
    * in the body share a label. Absent → `[Dato omitido]`.
    */
   person?: (name: string) => string
+  /**
+   * R60: the document's TRUSTED authors (from its uploader's account, never
+   * from the text), each with at least two name parts. A byline piece whose
+   * name parts equal one of them ("Ana Ruiz", "Dra. Ana Ruiz", or the pair
+   * "Ruiz, Ana") is LEFT AS WRITTEN and its range returned in `bylines`.
+   * Every other piece is redacted as without it.
+   */
+  keepAuthors?: readonly string[]
 }
+
+/** R60: what a kept byline piece may hold. Anything else (a phone, an address) stays redacted. */
+const KEEPABLE_PIECE = /^[\p{L}\p{M}\s.'’-]+$/u
 
 export function structuralPass(
   text: string,
   options: StructuralOptions = {},
-): { text: string; removed: RedactionCount[] } {
+): {
+  text: string
+  removed: RedactionCount[]
+  /** R60: `[start, end)` of each kept byline piece in `text` (only with `keepAuthors`). */
+  bylines: Array<[number, number]>
+} {
   const removed: RedactionCount[] = []
   let dates = 0
   let ids = 0
   let authors = 0
 
   // 🔴 Noncharacters out first: the sentinels below must be the only ones (audit 4).
+  const trusted = new Set((options.keepAuthors ?? []).map(namePartsKey).filter((k) => k.includes(' ')))
   let out = text.replace(NONCHARACTERS, REPLACEMENT_CHARACTER)
 
   out = out.replace(ISO_DATE, (_m, year: string, month: string) => {
@@ -507,16 +556,57 @@ export function structuralPass(
 
   // Each author on its own: "Ana Ruiz y Luis Gómez" is two people, two labels.
   // A piece with no capital letter ("anónimo") gets no person label.
+  // R60: a piece naming a trusted author, alone or as the pair "Ruiz, Ana",
+  // is held as written instead.
+  const keptIds = new Set<number>()
+  const holdKept = (piece: string): string => {
+    const r = hold(piece)
+    keptIds.add(held.length - 1)
+    return r
+  }
+  /** A kept piece the additive passes found glued to more name is not the author: redact it. */
+  const unkeep = (id: number, source: string): void => {
+    if (!keptIds.delete(id)) return
+    authors += 1
+    held[id] = options.person && /\p{Lu}/u.test(source) ? options.person(source) : OMITTED_PLACEHOLDER
+  }
+  /** The indexes of `splitAuthors` output that name a trusted author. Letters only: a phone in the piece keeps nothing. */
+  const keptPieces = (split: string[]): Set<number> => {
+    const keep = new Set<number>()
+    if (trusted.size === 0) return keep
+    const clean = (piece: string) => KEEPABLE_PIECE.test(piece)
+    for (let i = 0; i < split.length; i += 2) {
+      const piece = split[i] as string
+      const next = split[i + 2]
+      if (clean(piece) && trusted.has(namePartsKey(piece))) keep.add(i)
+      else if (
+        next !== undefined &&
+        (split[i + 1] as string).trim() === ',' &&
+        clean(piece) &&
+        clean(next) &&
+        trusted.has(namePartsKey(`${next} ${piece}`))
+      ) {
+        keep.add(i)
+        keep.add(i + 2)
+        i += 2
+      }
+    }
+    return keep
+  }
+
   const byline = (mode: 'field' | 'inline') => (_m: string, key: string, value: string) => {
     const first = held.length
     let source: string | null = null
+    const split = splitAuthors(value)
+    const keep = keptPieces(split)
     const replaced =
       key +
-      splitAuthors(value)
+      split
         .map((piece, i) => {
           if (i % 2 === 1 || piece.trim() === '') return piece
-          authors += 1
           source = piece
+          if (keep.has(i)) return holdKept(piece)
+          authors += 1
           return hold(options.person && /\p{Lu}/u.test(piece) ? options.person(piece) : OMITTED_PLACEHOLDER)
         })
         .join('')
@@ -553,16 +643,21 @@ export function structuralPass(
    * only when the piece has fewer than two capitalised words. "Luis Gómez
    * (2021)" and "Luis Gómez 2" are authors.
    */
-  const takeAll = (segment: string, failClosed: boolean, prefix = ''): string =>
-    splitAuthors(segment)
+  const takeAll = (segment: string, failClosed: boolean, prefix = ''): string => {
+    const split = splitAuthors(segment)
+    // A prefix means the rules above took part of this name: never a kept piece.
+    const keep = prefix === '' ? keptPieces(split) : new Set<number>()
+    return split
       .map((piece, i) => {
         if (i % 2 === 1 || piece.trim() === '') return piece
+        if (keep.has(i)) return holdKept(piece)
         const bare = piece.replace(/\([^()]*\)/gu, '') // "(2021)", "(Lupita)": never a label's number
         const label = /\d/u.test(bare) && (bare.match(/\p{Lu}[\p{L}\p{M}]/gu) ?? []).length < 2
         if (!failClosed && (label || (!/\p{Lu}/u.test(piece) && isProse(piece)))) return piece
         return take(piece, i === 0 ? prefix : '')
       })
       .join('')
+  }
   /** The match of sticky `re` at `i` in `s`, or null when empty. */
   const at = (re: RegExp, s: string, i: number): string | null => {
     re.lastIndex = i
@@ -582,7 +677,7 @@ export function structuralPass(
    * last piece it took). Pushes the text from `start` on into `parts`, with
    * what it redacts replaced, and returns where it stopped.
    */
-  const extend = (line: string, start: number, mode: End['mode'], source: string, parts: string[]): number => {
+  const extend = (line: string, start: number, mode: End['mode'], source: string, lastId: number, parts: string[]): number => {
     let i = start
 
     // 1. A title's dot ended the value: "Ma. Elena Ruiz", "Ana Ruiz vda. de Gómez".
@@ -595,7 +690,10 @@ export function structuralPass(
         if (mode === 'id') {
           ids += 1
           parts.push(hold(OMITTED_PLACEHOLDER))
-        } else parts.push(takeAll(v, true, `${source.trim()}. `))
+        } else {
+          unkeep(lastId, source)
+          parts.push(takeAll(v, true, `${source.trim()}. `))
+        }
         i = s + v.length
       }
     }
@@ -606,6 +704,7 @@ export function structuralPass(
       const g = at(GLUE_X, line, i)
       if (g && !/[:=]/u.test(g)) {
         const lead = /^ +/u.exec(g)?.[0] ?? ''
+        unkeep(lastId, source)
         parts.push(lead, take(g.slice(lead.length), `${source.trim()} `))
         i += g.length
       }
@@ -619,6 +718,7 @@ export function structuralPass(
       const v = at(FIELD_VALUE_X, line, i)
       if (v && !/[:=]/u.test(v) && v.trim() !== '') {
         const lead = /^[ \t]+/u.exec(v)?.[0] ?? ''
+        unkeep(lastId, source)
         parts.push(lead, takeAll(v.slice(lead.length), true, `${source.trim()} `))
         i += v.length
       }
@@ -659,7 +759,7 @@ export function structuralPass(
         const e = endAt.get(Number(m[1]))
         if (!e) continue
         parts.push(line.slice(c, after))
-        c = extend(line, after, e.mode, e.source, parts)
+        c = extend(line, after, e.mode, e.source, e.id, parts)
         continue
       }
       const field = fieldStartsAt(line, m.index)
@@ -676,7 +776,7 @@ export function structuralPass(
       if (!value) continue
       parts.push(line.slice(c, after), takeAll(value, field))
       const last = splitAuthors(value).at(-1) ?? ''
-      c = extend(line, after + value.length, field ? 'field' : 'inline', last, parts)
+      c = extend(line, after + value.length, field ? 'field' : 'inline', last, held.length - 1, parts)
     }
     parts.push(line.slice(c))
     return parts.join('')
@@ -686,11 +786,18 @@ export function structuralPass(
     .map((part, i) => (i % 2 === 1 ? part : extendLine(part)))
     .join('')
 
-  out = out.replace(HELD, (_m, i: string) => held[Number(i)] as string)
+  const bylines: Array<[number, number]> = []
+  let delta = 0
+  out = out.replace(HELD, (m: string, i: string, offset: number) => {
+    const r = held[Number(i)] as string
+    if (keptIds.has(Number(i))) bylines.push([offset + delta, offset + delta + r.length])
+    delta += r.length - m.length
+    return r
+  })
 
   pushCount(removed, LABEL_FECHA, dates)
   pushCount(removed, LABEL_ID, ids)
   pushCount(removed, LABEL_AUTOR, authors)
 
-  return { text: out, removed }
+  return { text: out, removed, bylines }
 }

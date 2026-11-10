@@ -180,7 +180,17 @@ export interface KeptPublicFigure {
 }
 
 export type GateResult =
-  | { status: 'ready'; redactedText: string; report: GateReport; keptPublic?: KeptPublicFigure[] }
+  | {
+      status: 'ready'
+      redactedText: string
+      report: GateReport
+      keptPublic?: KeptPublicFigure[]
+      /**
+       * R60: the document's author as left in `redactedText`, each distinct
+       * spelling once. Not a removal record (see {@link KeptPublicFigure}).
+       */
+      keptAuthors?: string[]
+    }
   | GateHold
 
 /**
@@ -215,6 +225,14 @@ export interface GateInput {
    * `motivo` is kept. Anything unsure is redacted.
    */
   keepPublicFigures?: boolean
+  /**
+   * 🔴 R60 (owner, 2026-10-28): the document's ACTUAL author — its uploader's
+   * account display name and roster entry. Honoured for a `documento` ONLY.
+   * Never taken from the text: a byline anyone can type unhides nobody.
+   * Their mentions are redacted like any name and restored on a READY result
+   * (`authorRestore.ts`); a hold shows them redacted.
+   */
+  authors?: readonly string[]
 }
 
 /** One finding from the detector: a literal string that identifies someone. */
