@@ -23,6 +23,7 @@ import { getPayload } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '@/access'
 import { audioServiceApiKey, audioServiceBaseUrl } from '@/lib/audioClient'
+import { readCapped } from '@/lib/bodyCap'
 import { featureEnabled } from '@/lib/features'
 import { organizationIdsForUser, relationId } from '@/lib/permissions'
 
@@ -38,37 +39,6 @@ const fail = (status: number, error: string): Response =>
   NextResponse.json({ error }, { status, headers: NO_STORE })
 
 type Ctx = { params: Promise<{ sid: string }> }
-
-/**
- * The body, or null past `max` bytes. ⚠ Counted while reading: Next sets no
- * body limit on route handlers, so `arrayBuffer()` first would let any signed-in
- * caller push an arbitrary body into this process's memory.
- */
-async function readCapped(request: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
-  const declared = Number(request.headers.get('content-length') ?? '0')
-  if (declared > max) return null
-  if (!request.body) return new Uint8Array(0)
-  const reader = request.body.getReader()
-  const parts: Uint8Array[] = []
-  let size = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    size += value.byteLength
-    if (size > max) {
-      await reader.cancel()
-      return null
-    }
-    parts.push(value)
-  }
-  const out = new Uint8Array(size)
-  let pos = 0
-  for (const p of parts) {
-    out.set(p, pos)
-    pos += p.byteLength
-  }
-  return out
-}
 
 async function prepare(
   request: Request,

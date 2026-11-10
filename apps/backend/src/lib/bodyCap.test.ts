@@ -3,9 +3,12 @@
  * cap, whether or not it declares a `Content-Length` (audit 2026-11-10, C-03).
  */
 
+import { readFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
-import { readCapped, withCappedBody } from './bodyCap'
+import { isUploadRoute, readCapped, withCappedBody } from './bodyCap'
 
 const KiB = 1024
 
@@ -24,8 +27,12 @@ function endless(chunk = 64 * KiB) {
   return { body, seen }
 }
 
-const post = (body: BodyInit | ReadableStream<Uint8Array>, headers: Record<string, string> = {}) =>
-  new Request('http://backend.test/api/x', { method: 'POST', body, headers, duplex: 'half' } as RequestInit)
+const post = (
+  body: BodyInit | ReadableStream<Uint8Array>,
+  headers: Record<string, string> = {},
+  url = 'http://backend.test/api/x',
+  method = 'POST',
+) => new Request(url, { method, body, headers, duplex: 'half' } as RequestInit)
 
 describe('readCapped', () => {
   it('returns the bytes of a body under the cap', async () => {
@@ -66,15 +73,62 @@ describe('withCappedBody', () => {
     await expect(req!.json()).resolves.toEqual({ a: 1 })
   })
 
-  it('leaves multipart alone: busboy bounds it, and media can be 200 MB', async () => {
+  it('leaves multipart to an upload route alone: busboy bounds it, and media can be 200 MB', async () => {
     const { body, seen } = endless()
-    const req = post(body, { 'content-type': 'multipart/form-data; boundary=x' })
+    const req = post(body, { 'content-type': 'multipart/form-data; boundary=x' }, 'http://backend.test/api/media')
     expect(await withCappedBody(req, 256 * KiB)).toBe(req)
     expect(seen.cancelled).toBe(false)
+  })
+
+  it('🔴 counts multipart anywhere else, in any letter case (re-audit N2)', async () => {
+    for (const type of ['multipart/form-data; boundary=x', 'Multipart/Form-Data; boundary=x', 'MULTIPART/mixed']) {
+      const { body, seen } = endless()
+      const req = post(body, { 'content-type': type }, 'http://backend.test/api/sugerencias')
+      expect(await withCappedBody(req, 256 * KiB), type).toBeNull()
+      expect(seen.cancelled, type).toBe(true)
+    }
+  })
+
+  it('hands on multipart under the cap off an upload route, byte for byte', async () => {
+    const form = '--x\r\nContent-Disposition: form-data; name="_payload"\r\n\r\n{"a":1}\r\n--x--\r\n'
+    const req = await withCappedBody(post(form, { 'content-type': 'multipart/form-data; boundary=x' }), 256 * KiB)
+    expect(req!.headers.get('content-type')).toBe('multipart/form-data; boundary=x')
+    expect(await req!.text()).toBe(form)
   })
 
   it('leaves a GET alone', async () => {
     const req = new Request('http://backend.test/api/x')
     expect(await withCappedBody(req, 1)).toBe(req)
+  })
+})
+
+describe('isUploadRoute', () => {
+  const at = (method: string, p: string) => new Request(`http://backend.test${p}`, { method })
+
+  it('is create and update-by-id on media, nothing else', () => {
+    expect(isUploadRoute(at('POST', '/api/media'))).toBe(true)
+    expect(isUploadRoute(at('PATCH', '/api/media/12'))).toBe(true)
+    expect(isUploadRoute(at('post', '/api/media?depth=0'))).toBe(true)
+    for (const [method, p] of [
+      ['PATCH', '/api/media'],
+      ['POST', '/api/media/12'],
+      ['POST', '/api/media/12/duplicate'],
+      ['PATCH', '/api/media/12/x'],
+      ['PUT', '/api/media/12'],
+      ['POST', '/api/sugerencias'],
+      ['POST', '/api/mediax'],
+      ['POST', '/api/documents'],
+      ['PATCH', '/api/documents/1/anonimizacion'],
+    ]) {
+      expect(isUploadRoute(at(method, p)), `${method} ${p}`).toBe(false)
+    }
+  })
+
+  it('🔴 media is the only upload collection: a new one must be added there', () => {
+    const dir = path.resolve(__dirname, '../collections')
+    const uploads = readdirSync(dir)
+      .filter((f) => f.endsWith('.ts') && !f.includes('.test.'))
+      .filter((f) => /^ {2}upload: /m.test(readFileSync(path.join(dir, f), 'utf8')))
+    expect(uploads).toEqual(['Media.ts'])
   })
 })

@@ -5,12 +5,18 @@
  *
  * ⚠ Multipart never reaches this. Next copies the body of every request a
  * middleware runs for and TRUNCATES that copy at 10 MiB (Next 15.4,
- * `server/body-streams.js`), which would cut every media upload short. busboy's
- * `upload.limits` bounds multipart instead.
+ * `server/body-streams.js`), which would cut every media upload short. The
+ * routes count it instead (`lib/bodyCap.ts`), and on an upload route busboy's
+ * `upload.limits` bound it.
  *
- * ⚠ A chunked body has no `Content-Length` and passes here. Payload's REST
- * routes and the callback receiver count what they read; any other route gets
- * at most the 10 MiB copy above.
+ * 🔴 The header test is a regex Next anchors and builds with no flags
+ * (`new RegExp('^' + value + '$')`, `matchHas` in Next 15.4), so it is
+ * case-sensitive and spelled out letter by letter here. With plain
+ * `multipart/.*` a `Multipart/form-data` upload ran through, and that copy
+ * would cut it.
+ *
+ * ⚠ A chunked body has no `Content-Length` and passes here. Every route that
+ * reads a body counts it (`lib/bodyCap.ts`).
  */
 
 import { NextResponse, type NextRequest } from 'next/server'
@@ -25,7 +31,7 @@ export const config = {
   matcher: [
     {
       source: '/api/:path*',
-      missing: [{ type: 'header', key: 'content-type', value: 'multipart/.*' }],
+      missing: [{ type: 'header', key: 'content-type', value: '[Mm][Uu][Ll][Tt][Ii][Pp][Aa][Rr][Tt]/.*' }],
     },
   ],
 }

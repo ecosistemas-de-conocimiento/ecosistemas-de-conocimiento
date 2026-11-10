@@ -35,6 +35,19 @@ describe('middleware', () => {
     expect(unstable_doesMiddlewareMatch({ config, url: '/api/media', headers })).toBe(false)
   })
 
+  it('🔴 never runs for multipart in any letter case (re-audit N2)', () => {
+    for (const type of ['Multipart/Form-Data; boundary=----x', 'MULTIPART/FORM-DATA; boundary=----x']) {
+      expect(unstable_doesMiddlewareMatch({ config, url: '/api/media', headers: { 'content-type': type } }), type).toBe(
+        false,
+      )
+    }
+  })
+
+  it('still runs for a type that only mentions multipart', () => {
+    const headers = { 'content-type': 'text/plain; x=multipart/form-data' }
+    expect(unstable_doesMiddlewareMatch({ config, url: '/api/sugerencias', headers })).toBe(true)
+  })
+
   it('stays off the admin panel', () => {
     expect(unstable_doesMiddlewareMatch({ config, url: '/admin' })).toBe(false)
   })
