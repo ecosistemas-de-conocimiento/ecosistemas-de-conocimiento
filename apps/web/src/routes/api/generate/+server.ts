@@ -1,3 +1,4 @@
+import { safeErrMessage } from '$lib/errorSummary';
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
@@ -974,7 +975,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     } catch (err) {
       // A failure assembling context must not 500 the turn: fall back to a
       // bare user turn (no summary/retrieval) and still stream an answer.
-      console.warn('[generate] engine prepareTurn failed; bare turn:', (err as Error).message);
+      console.warn('[generate] engine prepareTurn failed; bare turn:', safeErrMessage(err));
       prepared = {
         messages: [
           { role: 'system' as const, content: turnConfig.systemPrompt },

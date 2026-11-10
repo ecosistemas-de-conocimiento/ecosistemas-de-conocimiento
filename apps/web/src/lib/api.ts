@@ -1,3 +1,4 @@
+import { safeErrMessage } from '$lib/errorSummary';
 import type { Message, WorkingDoc, ContextRef, ContextScope, Provenance } from './types';
 import { AI_UNAVAILABLE_MESSAGE, AI_UNAVAILABLE_CODE } from './aiMessages';
 import { EMPTY_ANSWER_CODE, isEmptyGeneration } from '@edc/chat-engine/core';
@@ -107,7 +108,7 @@ export function userFacingError(err: unknown): string {
   // "ai-service: …", "HTTP 502"). The people using this are not technical
   // (UX backlog #26), so they get one plain sentence and the detail goes to
   // the console.
-  console.warn('[chat] turn failed:', (err as Error)?.message ?? err);
+  console.warn('[chat] turn failed:', safeErrMessage(err));
   return err instanceof ConnectionLostError ? CONNECTION_LOST_MESSAGE : TURN_FAILED_MESSAGE;
 }
 

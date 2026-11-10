@@ -30,6 +30,7 @@
  * (keyed on `contentKind`, never on the file-format `kind`).
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { env } from '$env/dynamic/private';
 import { backendFetch } from '$lib/server/auth';
 import {
@@ -338,7 +339,7 @@ export async function resolveSearchIds(
     if (!names || !titled) return null;
     return [...new Set([...names, ...titled])];
   } catch (err) {
-    console.warn('[biblioteca] search id read failed', err);
+    console.warn('[biblioteca] search id read failed', safeErrMessage(err));
     return null;
   }
 }
@@ -522,7 +523,7 @@ export async function resolveContributors(
     }
     return out;
   } catch (err) {
-    console.warn('[biblioteca] contributor read failed', err);
+    console.warn('[biblioteca] contributor read failed', safeErrMessage(err));
     return {};
   }
 }
@@ -594,7 +595,7 @@ export async function listPublished(
       ok: true,
     };
   } catch (err) {
-    console.warn('[biblioteca] list read failed', err);
+    console.warn('[biblioteca] list read failed', safeErrMessage(err));
     return { ...EMPTY_PAGE, page: input.page };
   }
 }
@@ -638,7 +639,7 @@ export async function readPublished(
       },
     };
   } catch (err) {
-    console.warn('[biblioteca] document read failed', err);
+    console.warn('[biblioteca] document read failed', safeErrMessage(err));
     return { state: 'unavailable' };
   }
 }

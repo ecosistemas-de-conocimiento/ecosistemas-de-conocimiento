@@ -149,7 +149,8 @@ describe('the real cause is logged server-side, in full', () => {
       org: 'example-org',
       surface: 'generate:sync',
     });
-    expect((fields as { err: unknown }).err).toBeInstanceOf(BudgetNotConfiguredError);
+    // The error's type, not its text (P-07): the fields above carry the detail.
+    expect((fields as { err: unknown }).err).toBe('BudgetNotConfiguredError');
   });
 
   it('logs BUDGET EXHAUSTED, with the amounts, for an exhausted cap', () => {

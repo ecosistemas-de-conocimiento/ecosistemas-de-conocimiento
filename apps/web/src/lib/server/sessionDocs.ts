@@ -24,6 +24,7 @@
  * ever proves wrong, this one function is the fix, not a grep across the app.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { backendFetch } from '$lib/server/auth';
 import { libraryTitleOf } from '$lib/biblioteca';
 
@@ -150,7 +151,7 @@ export async function fetchSessionDocs(
     }
     return { docs, ok: true };
   } catch (err) {
-    console.error(`[sessionDocs] read failed for session ${sessionId}:`, err);
+    console.error(`[sessionDocs] read failed for session ${sessionId}:`, safeErrMessage(err));
     return UNKNOWN;
   }
 }

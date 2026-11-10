@@ -29,6 +29,7 @@
  * the data would still be safe; the experience would just be worse.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { backendFetch } from '$lib/server/auth';
 import {
   parseHeldDetail,
@@ -131,7 +132,7 @@ export async function readIdentity(token: string | undefined): Promise<unknown |
     }
     return await res.json().catch(() => null);
   } catch (err) {
-    console.warn('[holds] could not read the caller permissions', err);
+    console.warn('[holds] could not read the caller permissions', safeErrMessage(err));
     return null;
   }
 }
@@ -181,7 +182,7 @@ export async function listHolds(
     const body = (await res.json().catch(() => null)) as { holds?: unknown } | null;
     return { state: 'ready', value: parseHeldList(body?.holds) };
   } catch (err) {
-    console.warn('[holds] could not list the held documents', err);
+    console.warn('[holds] could not list the held documents', safeErrMessage(err));
     return { state: 'unavailable' };
   }
 }
@@ -201,7 +202,7 @@ export async function readHold(
     if (!detail) return { state: 'unavailable' };
     return { state: 'ready', value: detail };
   } catch (err) {
-    console.warn('[holds] could not read the held document', err);
+    console.warn('[holds] could not read the held document', safeErrMessage(err));
     return { state: 'unavailable' };
   }
 }
@@ -256,7 +257,7 @@ export async function decideHold(
     if (!outcome || typeof outcome.id !== 'string') return { state: 'unavailable' };
     return { state: 'ready', value: outcome };
   } catch (err) {
-    console.warn('[holds] could not record the decision', err);
+    console.warn('[holds] could not record the decision', safeErrMessage(err));
     return { state: 'unavailable' };
   }
 }

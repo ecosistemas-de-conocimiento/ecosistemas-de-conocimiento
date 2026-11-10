@@ -477,6 +477,7 @@ async function abortIfStale(
       console.error('[graph] could not clear rows for aborted doc', docId, errSummary(err))
     })
     // Safe metadata only: the reasons are fixed strings, never row text.
+    // eslint-disable-next-line edc/no-raw-error-log -- `reason` is a staleness reason, not an error
     console.warn('[graph] doc', docId, 'changed since its job was queued — run aborted:', reason)
     await setGraphStatus(payload, docId, {
       graphStatus: 'failed',

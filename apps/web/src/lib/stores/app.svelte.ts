@@ -1,3 +1,4 @@
+import { safeErrMessage } from '$lib/errorSummary';
 import type { UploadContentKind } from '$lib/uploadKind';
 import type {
   DocKind,
@@ -392,7 +393,7 @@ class AppStore {
       this.ecosystemsUnavailable = Boolean(data?.degraded);
     } catch (err) {
       if (this.stale(epoch)) return;
-      console.warn('loadEcosystems failed', err);
+      console.warn('loadEcosystems failed', safeErrMessage(err));
       this.ecosystems = [];
       this.ecosystemId = null;
       this.ecosystemsUnavailable = true;
@@ -480,7 +481,7 @@ class AppStore {
       // throw here means a genuine network failure (or unexpected shape).
       // Treat it as a non-fatal degraded read rather than rejecting the
       // hydration promise: the banner shows, the app boots on an empty state.
-      console.warn('hydrateFromServer degraded', err);
+      console.warn('hydrateFromServer degraded', safeErrMessage(err));
       if (!this.stale(epoch)) this.degraded = { reason: 'unavailable' };
     } finally {
       if (!this.stale(epoch)) this.ready = true;
@@ -538,7 +539,7 @@ class AppStore {
       await this.hydrateFromServer();
       return true;
     } catch (err) {
-      console.error('switchEcosystem failed', err);
+      console.error('switchEcosystem failed', safeErrMessage(err));
       const code = (err as Error)?.message;
       toasts.push({
         kind: 'error',
@@ -625,7 +626,7 @@ class AppStore {
       // row's progress, on nothing more than one 5xx — and the panel would
       // then claim "no hay documentos", which is a lie about the user's data.
       // Keep what we had and flag the app as degraded instead.
-      console.warn('loadDocs failed; keeping the documents already on screen', err);
+      console.warn('loadDocs failed; keeping the documents already on screen', safeErrMessage(err));
       this.degraded ??= { reason: 'unavailable' };
     }
   }
@@ -726,7 +727,7 @@ class AppStore {
       this.sessions = [created, ...this.sessions];
       return created.id;
     } catch (err) {
-      console.error('newSession failed', err);
+      console.error('newSession failed', safeErrMessage(err));
       // A session must name the ecosistema it belongs to, and the BFF resolves
       // that from the user's memberships. No membership, no session — and the
       // user needs to be told, not left on a silently empty screen.
@@ -841,7 +842,7 @@ class AppStore {
         credentials: 'same-origin',
       });
     } catch (err) {
-      console.error('deleteSession failed', err);
+      console.error('deleteSession failed', safeErrMessage(err));
       this.sessions = prev;
       toasts.push({
         kind: 'error',
@@ -867,7 +868,7 @@ class AppStore {
         credentials: 'same-origin',
       });
     } catch (err) {
-      console.error('renameSession failed', err);
+      console.error('renameSession failed', safeErrMessage(err));
       // Only roll back if nothing renamed it again meanwhile.
       if (s.title === next) s.title = prev;
       toasts.push({
@@ -915,7 +916,7 @@ class AppStore {
         credentials: 'same-origin',
       });
     } catch (err) {
-      console.error('setContextScope failed', err);
+      console.error('setContextScope failed', safeErrMessage(err));
       s.contextScope = prev;
     }
   }
@@ -985,7 +986,7 @@ class AppStore {
       );
       return idOf(data.doc.id);
     } catch (err) {
-      console.error('persistMessage failed', err);
+      console.error('persistMessage failed', safeErrMessage(err));
       return null;
     }
   }
@@ -1037,7 +1038,7 @@ class AppStore {
         signal: AbortSignal.timeout(RATING_TIMEOUT_MS),
       });
     } catch (err) {
-      console.error('rateMessage failed', err);
+      console.error('rateMessage failed', safeErrMessage(err));
       const current = find();
       // Roll back ONLY if our optimistic value is still the one on screen. A
       // reload (or a second rating) that landed while this was in flight is
@@ -1101,7 +1102,7 @@ class AppStore {
         signal: AbortSignal.timeout(RATING_TIMEOUT_MS),
       });
     } catch (err) {
-      console.error('rateReason failed', err);
+      console.error('rateReason failed', safeErrMessage(err));
       const current = find();
       // Roll back only if ours is still what is on screen — see rateMessage.
       if (current && current.ratingReason === reason) {
@@ -1149,7 +1150,7 @@ class AppStore {
         signal: AbortSignal.timeout(RATING_TIMEOUT_MS),
       });
     } catch (err) {
-      console.error('unrateMessage failed', err);
+      console.error('unrateMessage failed', safeErrMessage(err));
       const current = find();
       // Only restore if the row is still empty — a rating made while this was
       // in flight is fresher than what we removed.
@@ -1200,7 +1201,7 @@ class AppStore {
       if (s) s.docs.push(created);
       return created;
     } catch (err) {
-      console.error('newDoc failed', err);
+      console.error('newDoc failed', safeErrMessage(err));
       return null;
     }
   }
@@ -1229,7 +1230,7 @@ class AppStore {
       });
       return true;
     } catch (err) {
-      console.error('editNote failed', err);
+      console.error('editNote failed', safeErrMessage(err));
       toasts.push({ kind: 'error', title: 'No se guardó la nota', message: 'Inténtalo de nuevo en un momento.' });
       return false;
     }
@@ -1263,7 +1264,7 @@ class AppStore {
         credentials: 'same-origin',
       });
     } catch (err) {
-      console.error('updateDoc failed', err);
+      console.error('updateDoc failed', safeErrMessage(err));
     }
   }
 
@@ -1349,7 +1350,7 @@ class AppStore {
       }
       return created;
     } catch (err) {
-      console.error('uploadDoc failed', err);
+      console.error('uploadDoc failed', safeErrMessage(err));
       toasts.push({
         kind: 'error',
         title: 'No se pudo conectar',
@@ -1468,7 +1469,7 @@ class AppStore {
       void this.pollDocStatus(sessionId, docId);
       return true;
     } catch (err) {
-      console.error('retryIngest failed', err);
+      console.error('retryIngest failed', safeErrMessage(err));
       toasts.push({
         kind: 'error',
         title: 'No se pudo conectar',
@@ -1561,7 +1562,7 @@ class AppStore {
       void this.pollDocStatus(sessionId, docId);
       return true;
     } catch (err) {
-      console.error('saveTranscript failed', err);
+      console.error('saveTranscript failed', safeErrMessage(err));
       toasts.push({
         kind: 'error',
         title: 'No se pudo conectar',
@@ -1690,7 +1691,7 @@ class AppStore {
         });
       }
     } catch (err) {
-      console.error('publishDoc failed', err);
+      console.error('publishDoc failed', safeErrMessage(err));
       // No status touched: the document is still exactly what it was.
       toasts.push({
         kind: 'error',
@@ -1874,7 +1875,7 @@ class AppStore {
       });
       return true;
     } catch (err) {
-      console.error('deleteDoc failed', err);
+      console.error('deleteDoc failed', safeErrMessage(err));
       this.deletedDocIds.delete(docId);
       for (const { session, at } of before) session.docs = putBack(session.docs, at);
       this.ownedDocs = putBack(this.ownedDocs, ownedAt);
@@ -1911,7 +1912,7 @@ class AppStore {
       );
       return (data?.docs ?? []).map(docFromBackend);
     } catch (err) {
-      console.error('listAvailableDocs failed', err);
+      console.error('listAvailableDocs failed', safeErrMessage(err));
       toasts.push({
         kind: 'error',
         title: 'No se pudo abrir la lista',
@@ -1967,7 +1968,7 @@ class AppStore {
       });
       return 'ok';
     } catch (err) {
-      console.error('attachDoc failed', err);
+      console.error('attachDoc failed', safeErrMessage(err));
       return (err as Error)?.message === 'session_not_found' ? 'gone' : 'failed';
     }
   }
@@ -2007,7 +2008,7 @@ class AppStore {
         credentials: 'same-origin',
       });
     } catch (err) {
-      console.error('detachDoc failed', err);
+      console.error('detachDoc failed', safeErrMessage(err));
       s.docs = prev;
       toasts.push({
         kind: 'error',
@@ -2094,7 +2095,7 @@ class AppStore {
         : null;
       this.ownedDocsReady = true;
     } catch (err) {
-      console.error('loadOwnedDocs failed', err);
+      console.error('loadOwnedDocs failed', safeErrMessage(err));
       this.ownedDocsDegraded = { reason: 'unavailable' };
     } finally {
       this.ownedDocsLoading = false;
@@ -2129,7 +2130,7 @@ class AppStore {
       d.graphError = null;
       return true;
     } catch (err) {
-      console.error('retryGraph failed', err);
+      console.error('retryGraph failed', safeErrMessage(err));
       toasts.push({
         kind: 'error',
         title: 'No se pudo conectar',
