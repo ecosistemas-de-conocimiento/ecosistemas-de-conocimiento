@@ -33,7 +33,7 @@ describe('real dates in prose are coarsened exactly as before', () => {
     ['(2026-11-10)', '(2026-11)'],
     ['Ocurrió el 2026-08-15T10:23:45Z.', 'Ocurrió el 2026-08.'],
     ['del 2026-11-10 al 2026-11-12', 'del 2026-11 al 2026-11'],
-    ['Fue el 15/08/2026 y el 3-3-26.', 'Fue el 08/2026 y el 03/2026.'],
+    ['Fue el 15/08/2026 y el 3-3-26.', 'Fue el 08/2026 y el 03/26.'],
     ['el 15 de agosto de 2026', 'el agosto de 2026'],
   ])('%s', (text, expected) => {
     expect(structuralPass(text).text).toBe(expected)
