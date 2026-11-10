@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto'
+
 import type {
   Access,
+  CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
   Where,
@@ -446,6 +449,8 @@ export const bindMediaToEcosystem: CollectionBeforeValidateHook = async ({
 
 /**
  * WHERE AN OBJECT LANDS IN THE BUCKET: `eco_{orgId}/u_{uploaderId}/{filename}`.
+ * `{filename}` is a random id plus the extension (`neutralUploadName`), never
+ * the uploaded name.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * 🔴 THE PREFIX IS NOT AN ACCESS BOUNDARY. IT NEVER GRANTS OR DENIES ANYTHING.
@@ -567,6 +572,66 @@ export const MEDIA_MIME_TYPES = [
   'video/webm',
 ] as const
 
+// ---------------------------------------------------------------------------
+// The stored file name
+// ---------------------------------------------------------------------------
+
+/**
+ * The extensions an accepted upload may keep: the document types above, plus
+ * the audio list `Documents.ts` mirrors from audio-service (`AUDIO_EXTENSIONS`).
+ * Anything else after the last dot is part of the name.
+ */
+const MEDIA_EXTENSIONS = new Set([
+  'pdf', 'docx', 'xlsx', 'xls', 'csv', 'html', 'htm', 'md', 'markdown', 'txt',
+  'mp3', 'm4a', 'mp4', 'm4b', 'aac', 'wav', 'wave', 'ogg', 'oga', 'opus',
+  'webm', 'flac', 'mkv', 'mov', 'amr', '3gp', 'wma', 'aiff', 'aif',
+])
+
+/** The extension for a mime type when the name carries none from the list. */
+const MEDIA_EXTENSION_FOR_MIME: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-excel': 'xls', 'application/x-cfb': 'xls',
+  'text/csv': 'csv', 'text/html': 'html', 'text/markdown': 'md', 'text/plain': 'txt',
+  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/m4a': 'm4a',
+  'audio/aac': 'aac', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav',
+  'audio/ogg': 'ogg', 'audio/opus': 'opus', 'audio/webm': 'webm', 'audio/flac': 'flac', 'audio/x-flac': 'flac',
+  'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+}
+
+/** `{uuid}.{ext}`: the name's extension if listed, else the mime type's, else none. */
+export function neutralMediaFilename(name: string | null | undefined, mimeType?: string | null): string {
+  const fromName = /\.([A-Za-z0-9]{1,8})$/.exec(name ?? '')?.[1]?.toLowerCase()
+  const fromMime = MEDIA_EXTENSION_FOR_MIME[(mimeType ?? '').split(';')[0]!.trim().toLowerCase()]
+  const ext = fromName && MEDIA_EXTENSIONS.has(fromName) ? fromName : fromMime
+  const id = randomUUID()
+  return ext ? `${id}.${ext}` : id
+}
+
+/**
+ * 🔴 THE PERSON'S FILE NAME NEVER BECOMES THE KEY (audit 2026-11-10, C-12).
+ * Payload derives `filename` from the upload's name, and the object key is
+ * `{prefix}/{filename}`, so "Entrevista a Rosa Martínez.m4a" was the bucket key,
+ * the panel title and a line in every bucket listing and backup.
+ *
+ * ⚠ BEFORE OPERATION, NOT BEFORE VALIDATE. `generateFileData` runs between the
+ * two: it reads `req.file.name`, writes the local-disk path from it, and the S3
+ * plugin later uploads under the `filename` it produced. Renaming the file
+ * first keeps every reader of `media.filename` (the serve route, `locateMedia`,
+ * `conversationUploads`) on the one key the bytes were written to.
+ *
+ * The extension stays: `textUploadsAreText` and `legacyExcelUploads` read it,
+ * and the local-disk serve route derives the content type from it. The name a
+ * person sees is `documents.name`, which this does not touch.
+ */
+export const neutralUploadName: CollectionBeforeOperationHook = ({ args, operation }) => {
+  if (operation !== 'create' && operation !== 'update') return args
+  const file = (args as { req?: { file?: { name?: string; mimetype?: string } } }).req?.file
+  if (file) file.name = neutralMediaFilename(file.name, file.mimetype)
+  return args
+}
+
 export const Media: CollectionConfig = {
   slug: 'media',
   admin: {
@@ -669,6 +734,7 @@ export const Media: CollectionConfig = {
     { name: 'alt', type: 'text' },
   ],
   hooks: {
+    beforeOperation: [neutralUploadName],
     beforeValidate: [rejectOversizedUpload, audioOnlyWebm, textUploadsAreText, legacyExcelUploads, bindMediaToEcosystem],
   },
 }
