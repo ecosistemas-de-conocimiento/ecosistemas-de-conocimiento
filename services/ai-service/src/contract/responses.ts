@@ -956,6 +956,19 @@ export const providerTimeoutBodySchema = z.object({
 });
 
 /**
+ * 502 `EmptyCompletion` on `/v1/generate/sync`: the provider answered with no
+ * text on every attempt of the router's bounded retry ladder. Not billed, not
+ * cached. Same class as the `/v1/generate/stream` error frame
+ * `code: 'EmptyCompletion'`.
+ */
+export const emptyCompletionBodySchema = z.object({
+  error: z.literal('EmptyCompletion'),
+  code: z.literal('ERR_EMPTY_COMPLETION'),
+  traceId: z.string().optional().describe('The router trace of the failed call.'),
+  message: z.string(),
+});
+
+/**
  * `ProviderUnavailable` — the circuit breaker is open. Sent with a
  * `retry-after` header in SECONDS; `retryAfterMs` on the body is the same
  * budget in milliseconds, because the SSE transport has no headers to read.
@@ -1009,7 +1022,7 @@ export const streamErrorFrameSchema = z.object({
   truncated: z.literal(true).optional(),
   /** `ProviderTimeout` only: `provider_timeout`. */
   reason: z.string().optional(),
-  /** `ProviderTimeout` only: the router trace of the cut call. */
+  /** `ProviderTimeout` and `EmptyCompletion`: the router trace of the failed call. */
   traceId: z.string().optional(),
 })
   .openapi('GenerateStreamError');

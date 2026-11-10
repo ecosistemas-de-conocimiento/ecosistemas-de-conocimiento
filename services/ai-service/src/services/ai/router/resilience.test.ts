@@ -25,6 +25,7 @@ import {
   retryAfterMsFromError,
 } from './resilience.js';
 import { RouterCache } from './cache.js';
+import { EmptyCompletion } from './empty-completion.js';
 import { getTaskProfile } from './task-profiles.js';
 import type { RouteRequest } from './types.js';
 
@@ -317,6 +318,22 @@ describe('Router — circuit breaker', () => {
     expect(pu.statusCode).toBe(503);
     expect(pu.retryable).toBe(true);
     expect(pu.headers['retry-after']).toBe('10');
+  });
+
+  it('an empty answer is retried but never opens the circuit', async () => {
+    expect(isTransientProviderError(new EmptyCompletion())).toBe(true);
+    const adapter = vi.fn().mockResolvedValue(completion({ contentText: '' }));
+    const resilience = fastResilience({ maxAttempts: 2 });
+    const { router } = makeRouter({ adapter, budget: makeBudget(), resilience });
+
+    // 4 calls × 3 attempts = 12 consecutive empties, past the 5 that open it.
+    for (let i = 0; i < 4; i++) {
+      await expect(router.route(makeReq({ traceId: `e-${i}` }))).rejects.toBeInstanceOf(
+        EmptyCompletion,
+      );
+    }
+    expect(adapter).toHaveBeenCalledTimes(12);
+    expect(resilience.state()).toBe(CircuitState.Closed);
   });
 
   it('a non-transient failure does not count towards opening the circuit', async () => {

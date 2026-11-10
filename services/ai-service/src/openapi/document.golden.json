@@ -1844,6 +1844,35 @@
           "message"
         ]
       },
+      "EmptyCompletionBody": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "EmptyCompletion"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "ERR_EMPTY_COMPLETION"
+            ]
+          },
+          "traceId": {
+            "type": "string",
+            "description": "The router trace of the failed call."
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "code",
+          "message"
+        ]
+      },
       "ProviderUnavailableBody": {
         "type": "object",
         "properties": {
@@ -3644,6 +3673,16 @@
           },
           "499": {
             "description": "The client went away mid-generation and the work was abandoned. ZERO-BYTE BODY, and not an IANA status — the socket is usually already gone, so this is mostly visible in logs rather than to the caller."
+          },
+          "502": {
+            "description": "The provider answered with no text on every attempt of the bounded retry ladder. Not billed, not cached. `code: ERR_EMPTY_COMPLETION`; on `/v1/generate/stream` the same failure is the error frame `code: EmptyCompletion`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyCompletionBody"
+                }
+              }
+            }
           },
           "503": {
             "description": "The provider circuit breaker is OPEN — ai-service is refusing to call upstream rather than queueing behind a failing provider. Retry after the header says so; `retryAfterMs` carries the same budget in milliseconds because the SSE transport has no headers to read.",

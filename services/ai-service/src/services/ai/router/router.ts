@@ -22,6 +22,8 @@
 //   8. True up the budget reserve against actual cost.
 //   9. Cache write. Final trace + usage row.
 //   On adapter exception: refund full reserve, write failed trace, re-throw.
+//   An EMPTY answer is an adapter exception (`EmptyCompletion`, raised in
+//   `callAdapter` so it is retried and never cached).
 //   On OUR timeout (deadline or stall) in ANY pass: refund every hold, write a
 //   $0 `aborted` trace marked `truncated`, throw `ProviderTimeout` (504). See
 //   `provider-timeout.ts`.
@@ -56,6 +58,7 @@ import {
   type PassPurpose,
 } from '../../../metrics/llm.js';
 import { normalizeFinishReason } from './finish-reason.js';
+import { EmptyCompletion, isEmptyCompletion } from './empty-completion.js';
 import {
   PROVIDER_TIMEOUT_REASON,
   ProviderTimeout,
@@ -603,6 +606,9 @@ export class Router implements LLMRouter {
       // unspent portion of the reserve. Non-abort errors fall back to the
       // legacy "refund everything, log $0" behaviour.
       const partial = err instanceof OpenRouterAbortError ? err.partial : undefined;
+      // The last empty answer, when every attempt came back empty. Unbilled
+      // like any other failure; what the provider charged stays on the trace.
+      const empty = err instanceof EmptyCompletion ? err.completion : undefined;
       const actualCostUsd = partial?.usage.costUsd ?? 0;
       const refundUsd = Math.max(0, totalReservedUsd - actualCostUsd);
       const failureStatus: 'aborted' | 'failed' = partial ? 'aborted' : 'failed';
@@ -627,7 +633,7 @@ export class Router implements LLMRouter {
         project: req.project ?? null,
         label: req.label,
         status: failureStatus,
-        model: partial?.model ?? model,
+        model: partial?.model ?? empty?.model ?? model,
         provider: DEFAULT_PROVIDER,
         generationRequestId: req.generationRequestId,
         generationJobId: req.generationJobId,
@@ -656,7 +662,8 @@ export class Router implements LLMRouter {
           ...httpRequestIdMeta(req),
           errorCode: err instanceof Error ? err.name : 'unknown',
           errorMessage: err instanceof Error ? err.message : String(err),
-          ...providerGenerationIdMeta(partial),
+          ...providerGenerationIdMeta(partial ?? empty),
+          ...(empty ? { providerCostUsd: empty.usage.costUsd } : {}),
           ...(partial
             ? {
                 partial: true,
@@ -676,7 +683,7 @@ export class Router implements LLMRouter {
         generationRequestId: req.generationRequestId,
         generationJobId: req.generationJobId,
         provider: DEFAULT_PROVIDER,
-        model: partial?.model ?? model,
+        model: partial?.model ?? empty?.model ?? model,
         endpoint: 'router.route',
         inputTokens,
         outputTokens,
@@ -684,6 +691,10 @@ export class Router implements LLMRouter {
         actualCostUsd,
         status: failureStatus,
       });
+      // Re-raised with the trace id so the wire body can quote it.
+      if (err instanceof EmptyCompletion) {
+        throw new EmptyCompletion({ traceId, completion: err.completion, cause: err });
+      }
       throw err;
     }
 
@@ -792,7 +803,9 @@ export class Router implements LLMRouter {
     const deltaUsd = totalReservedUsd - actualCostUsd; // positive ⇒ refund
     await this.budgetAdjust({ org: req.org, deltaUsd, traceId });
 
-    // 8. Cache write (only when caching enabled for this effort).
+    // 8. Cache write (only when caching enabled for this effort). Only a
+    //    completed call reaches this line, and `RouterCache.set` refuses an
+    //    empty answer on its own as well.
     const win = winning;
     if (cacheEnabled) {
       this.cache.set(cacheKey, {
@@ -914,7 +927,14 @@ export class Router implements LLMRouter {
       const completion = await this.resilience.execute(
         async (attemptSignal) => {
           try {
-            return await args.call(attemptSignal);
+            const completion = await args.call(attemptSignal);
+            // 🔴 An empty 200 is a provider ERROR, checked here — inside the
+            // retry ladder, for every adapter and every pass — so it is retried
+            // under the same bounded policy as a 5xx, filed as a failure in
+            // traces and usage, and never reaches the cache. See
+            // `empty-completion.ts` for the dev measurement.
+            if (isEmptyCompletion(completion)) throw new EmptyCompletion({ completion });
+            return completion;
           } catch (err) {
             // Tokens already on the wire ⇒ this attempt is the only attempt.
             if (args.committed?.()) throw new CommittedPassError(err);

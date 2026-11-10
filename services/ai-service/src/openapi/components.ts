@@ -78,6 +78,7 @@ export const NestedErrorBody = reg('NestedErrorBody', nestedErrorBodySchema);
 export const ProblemBody = reg('ProblemBody', sensibleErrorBodySchema);
 export const RateLimitedBody = reg('RateLimitedBody', rateLimitedBodySchema);
 export const ProviderTimeoutBody = reg('ProviderTimeoutBody', R.providerTimeoutBodySchema);
+export const EmptyCompletionBody = reg('EmptyCompletionBody', R.emptyCompletionBodySchema);
 export const ProviderUnavailableBody = reg(
   'ProviderUnavailableBody',
   R.providerUnavailableBodySchema,
