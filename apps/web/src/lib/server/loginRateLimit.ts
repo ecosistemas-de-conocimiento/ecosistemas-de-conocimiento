@@ -52,7 +52,7 @@ function buckets(ip: string, email: string): Bucket[] {
     {
       key: `ip-email:${ip}|${normaliseLoginEmail(email)}`,
       limit: envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX', 4),
-      windowMs: envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S', 600) * 1000,
+      windowMs: envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S', 3600) * 1000,
     },
     { key: `ip:${ip}`, limit: envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX', 100), windowMs: LOGIN_FAIL_WINDOW_MS },
   ];

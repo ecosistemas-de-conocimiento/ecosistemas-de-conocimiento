@@ -184,11 +184,11 @@ describe('failed sign-ins per (IP, email)', () => {
     expect(await viaApi()).toBe(429);
   });
 
-  it('opens again after its 10 minutes', async () => {
+  it('opens again after its hour', async () => {
     vi.useFakeTimers();
     backend(401, WRONG_PASSWORD);
     for (let i = 0; i < 3; i += 1) await viaApi();
-    vi.advanceTimersByTime(10 * 60_000 + 1000);
+    vi.advanceTimersByTime(60 * 60_000 + 1000);
     expect(await viaApi()).toBe(401);
   });
 

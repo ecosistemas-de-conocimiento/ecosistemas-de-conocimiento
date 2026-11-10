@@ -359,15 +359,15 @@ export const rateLimits = {
    * sign-in (back to 0) or an expired lock (back to 1) resets it (measured,
    * `payload/dist/auth/strategies/local/incrementLoginAttempts.js`, 3.88). So
    * once this window rolls over, one IP can add 4 more and reach the lock. At
-   * 10 minutes that is a lock roughly every other 10 minutes against an account
-   * nobody signs in to (inferred from that code, not measured). A longer
-   * window shrinks it, at the price of a person who mistyped their own password
-   * 4 times waiting that long on that connection.
+   * 10 minutes that was a lock roughly every other 10 minutes against an account
+   * nobody signs in to; at an hour, one 10-minute lock an hour (both inferred
+   * from that code, not measured). The price: a person who mistyped their own
+   * password 4 times waits up to an hour on that connection.
    */
   loginFailPerIpEmail: (): number => envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX', 4),
-  /** 600 s, Payload's lockout length (quoted above): the owner's choice for this wave. */
+  /** 3600 s: see the ⚠ above (the counter does not decay, so 600 s let one IP lock half the time). */
   loginFailPerIpEmailWindowMs: (): number =>
-    envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S', 600) * 1000,
+    envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S', 3600) * 1000,
 
   /**
    * Failed `POST /api/users/login` per client IP across EVERY email, per HOUR

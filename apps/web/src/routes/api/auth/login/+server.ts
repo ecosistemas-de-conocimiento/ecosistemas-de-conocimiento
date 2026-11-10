@@ -17,6 +17,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   }
   // Same helper as the `/sign-in` form action (the no-JS path).
   const result = await signIn(body?.email, body?.password, cookies, !dev);
-  if (!result.ok) return json({ error: result.error }, { status: result.status });
+  if (!result.ok) {
+    const headers: Record<string, string> =
+      result.status === 429 && result.retryAfterSeconds ? { 'Retry-After': String(result.retryAfterSeconds) } : {};
+    return json({ error: result.error }, { status: result.status, headers });
+  }
   return json({ user: result.user });
 };

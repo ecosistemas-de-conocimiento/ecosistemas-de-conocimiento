@@ -417,7 +417,7 @@ describe('configured limits', () => {
     expect(rateLimits.serviceAuthFailurePerIp()).toBe(20)
     expect(rateLimits.loginFailPerIp()).toBe(100)
     expect(rateLimits.loginFailPerIpEmail()).toBe(4)
-    expect(rateLimits.loginFailPerIpEmailWindowMs()).toBe(600_000)
+    expect(rateLimits.loginFailPerIpEmailWindowMs()).toBe(3_600_000)
   })
 
   it('is env-tunable, so ops can raise a ceiling without a code deploy', () => {

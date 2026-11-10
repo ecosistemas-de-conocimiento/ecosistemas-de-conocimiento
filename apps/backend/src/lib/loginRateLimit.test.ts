@@ -205,12 +205,12 @@ describe('defaults', () => {
     delete process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX
     delete process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX
     expect(rateLimits.loginFailPerIpEmail()).toBe(4)
-    expect(rateLimits.loginFailPerIpEmailWindowMs()).toBe(600_000)
+    expect(rateLimits.loginFailPerIpEmailWindowMs()).toBe(3_600_000)
     expect(rateLimits.loginFailPerIp()).toBe(100)
   })
 
   it('the window is env-tunable', () => {
-    process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S = '3600'
-    expect(rateLimits.loginFailPerIpEmailWindowMs()).toBe(3_600_000)
+    process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S = '600'
+    expect(rateLimits.loginFailPerIpEmailWindowMs()).toBe(600_000)
   })
 })
