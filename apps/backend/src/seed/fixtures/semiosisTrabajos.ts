@@ -3,7 +3,8 @@
  *
  * Owner decisions (2026-10-28): synthetic texts, 9 demo students, kept in the
  * repo so they can be reviewed. Every word here was written for the demo: no
- * real student work, no real student. The display names are invented. The only
+ * real student work, no real student. The display names are invented non-words
+ * (2026-11-09: realistic Mexican names replaced, so none can match a real person). The only
  * real people named are published authors, cited author-date
  * ("(Peirce, 1903)", "Verón (1987)") so `citedSurnames` (lib/student/logic.ts)
  * reads them and the corpus graph links them to the nodes "Semiosis práctica"
@@ -94,7 +95,7 @@ export const SEMIOSIS_STUDENTS: readonly SemiosisStudent[] = [
   {
     key: 'ESTUDIANTE1',
     email: 'estudiante1@ecosistemas.test',
-    displayName: 'Itzel Quiroz Arredondo',
+    displayName: 'Avrel Dunqo Silveth',
     sugerencias: [
       {
         kind: 'contenido',
@@ -172,7 +173,7 @@ Como cierre, considero que el agua embotellada es un buen caso para entender que
   {
     key: 'ESTUDIANTE2',
     email: 'estudiante2@ecosistemas.test',
-    displayName: 'Emiliano Villaseñor Bocanegra',
+    displayName: 'Brisko Tavenul Orquex',
     sugerencias: [
       { kind: 'arquitectura', text: 'Agrupar los textos de la biblioteca por género discursivo, además de por autor.' },
     ],
@@ -223,7 +224,7 @@ Concluyo que leer el discurso político desde la polifonía obliga a dejar de bu
   {
     key: 'ESTUDIANTE3',
     email: 'estudiante3@ecosistemas.test',
-    displayName: 'Ximena Zúñiga Ruelas',
+    displayName: 'Celvra Mondrak Ibzal',
     sugerencias: [
       { kind: 'contenido', text: 'Faltan lecturas introductorias sobre el valor saussureano antes de los textos más técnicos.' },
       { kind: 'interaccion', text: 'Que el asistente sugiera una lectura siguiente al terminar de responder.' },
@@ -295,7 +296,7 @@ Concluyo que los nombres de colores muestran a escala pequeña dos ideas central
   {
     key: 'ESTUDIANTE4',
     email: 'estudiante4@ecosistemas.test',
-    displayName: 'Citlali Quintanar Esquivel',
+    displayName: 'Dravik Olunse Pekzar',
     sugerencias: [
       { kind: 'contenido', text: 'Incluir más análisis de prensa y televisión en el corpus, no solo de publicidad.' },
     ],
@@ -346,7 +347,7 @@ Concluyo que el noticiero es un dispositivo enunciativo muy preciso, que reparte
   {
     key: 'ESTUDIANTE5',
     email: 'estudiante5@ecosistemas.test',
-    displayName: 'Yaretzi Huitrón Tepox',
+    displayName: 'Elvanu Kestrom Yuvlin',
     sugerencias: [
       { kind: 'interaccion', text: 'Poder guardar citas de los textos en una lista personal para usarlas después en mis trabajos.' },
       { kind: 'arquitectura', text: 'Una sección de análisis de anuncios con las imágenes junto al texto.' },
@@ -418,7 +419,7 @@ Concluyo que leer eslóganes desde la polifonía permite ver la publicidad como 
   {
     key: 'ESTUDIANTE6',
     email: 'estudiante6@ecosistemas.test',
-    displayName: 'Tenoch Cuapio Olguín',
+    displayName: 'Fendrel Quonax Varlis',
     sugerencias: [
       { kind: 'contenido', text: 'Agregar ejemplos de discurso referido en conversaciones reales, no solo en literatura.' },
     ],
@@ -469,7 +470,7 @@ Concluyo que la reseña de usuario es un género discursivo en consolidación, c
   {
     key: 'ESTUDIANTE7',
     email: 'estudiante7@ecosistemas.test',
-    displayName: 'Nayeli Pantoja Arzate',
+    displayName: 'Gorvai Lintrek Uzmeth',
     sugerencias: [
       { kind: 'interaccion', text: 'Mostrar en cada respuesta del asistente de qué texto viene cada idea.' },
       { kind: 'contenido', text: 'Un glosario breve con los tipos de interpretante y ejemplos.' },
@@ -541,7 +542,7 @@ Concluyo que los mensajes de voz son un caso interesante para la teoría de la e
   {
     key: 'ESTUDIANTE8',
     email: 'estudiante8@ecosistemas.test',
-    displayName: 'Tadeo Ahuactzin Nolasco',
+    displayName: 'Halvex Ombrino Tesqual',
     sugerencias: [
       { kind: 'arquitectura', text: 'Separar en la biblioteca los textos teóricos de los análisis de casos.' },
     ],
@@ -592,7 +593,7 @@ Concluyo que estudiar la mediatización de una protesta exige comparar dispositi
   {
     key: 'ESTUDIANTE9',
     email: 'estudiante9@ecosistemas.test',
-    displayName: 'Zyanya Coyotzi Popoca',
+    displayName: 'Ivrena Zoltrup Kanvez',
     sugerencias: [
       { kind: 'interaccion', text: 'Que se puedan comparar dos textos lado a lado dentro del ecosistema.' },
       { kind: 'arquitectura', text: 'Un mapa de conceptos que conecte a cada autor con sus nociones principales.' },
