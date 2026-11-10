@@ -100,6 +100,9 @@ export {
   EMPTY_ANSWER_CODE,
   EmptyAnswerError,
   isEmptyAnswerCode,
+  ANSWER_TRUNCATED_CODE,
+  AnswerTruncatedError,
+  isTruncatedAnswerCode,
   assertAnswer,
   streamOutcome,
 } from './generation.js';

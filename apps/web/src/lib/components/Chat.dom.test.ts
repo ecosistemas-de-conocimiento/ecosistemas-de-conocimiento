@@ -16,7 +16,7 @@ vi.mock('$env/dynamic/public', () => ({ env: {} }));
 
 import Chat from './Chat.svelte';
 import { app } from '$lib/stores/app.svelte';
-import { EMPTY_ANSWER_MESSAGE } from '$lib/api';
+import { ANSWER_TRUNCATED_MESSAGE, EMPTY_ANSWER_MESSAGE } from '$lib/api';
 
 interface Sent {
   url: string;
@@ -119,5 +119,21 @@ describe('🔴 Chat: an empty answer is a failed answer with "Reintentar"', () =
     expect(root.textContent).toContain('Acompañan los nacimientos.');
     expect(root.textContent).not.toContain(EMPTY_ANSWER_MESSAGE);
     expect(retryButton(root)).toBeNull();
+  });
+});
+
+describe('🔴 Chat: an answer cut at the output limit has no "Reintentar"', () => {
+  it.each([
+    ['an answer_truncated error frame', sse({ type: 'error', code: 'answer_truncated', message: 'x' })],
+    [
+      'a 502 answer_truncated before the stream',
+      () => new Response(JSON.stringify({ code: 'answer_truncated', message: 'x' }), { status: 502 }),
+    ],
+  ])('%s: one short line, no Reintentar, no second ask', async (_label, first) => {
+    answers = [first];
+    const root = await ask('¿Qué hacen las parteras?');
+    expect(root.textContent).toContain(ANSWER_TRUNCATED_MESSAGE);
+    expect(retryButton(root)).toBeNull();
+    expect(generates()).toHaveLength(1);
   });
 });
