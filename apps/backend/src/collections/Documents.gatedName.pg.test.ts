@@ -28,6 +28,7 @@ vi.mock('@/lib/aiClient', () => {
 })
 
 import { bootPayload, dockerOk, shutdown, startRealPostgres, type RealPostgres } from '@/lib/testing/realPostgres'
+import { gatedNameFor } from './Documents'
 
 const PASSWORD = 'gated-name-pw'
 let pg: RealPostgres
@@ -224,6 +225,77 @@ describe.skipIf(!dockerOk)('documents: a gated documento name over REST (real Po
     }
   })
 
+  // ── P-13: the gate's redacted title ──────────────────────────────────────
+
+  const setReport = (id: number, report: string | null) =>
+    pg.db.execute(sql.raw(`UPDATE documents SET anonymisation_report = ${report === null ? 'NULL' : `'${report}'::jsonb`} WHERE id = ${id}`))
+  const nameFor = async (who: string, id: number, query = ''): Promise<{ name: unknown; text: string }> => {
+    const text = await (await rest('GET', `/api/documents/${id}?depth=0${query}`, tokens[who])).text()
+    return { name: (JSON.parse(text) as Row).name, text }
+  }
+
+  it('a gated documento with a redacted title shows that title to a colleague, the file name to its uploader', async () => {
+    try {
+      for (const id of [GATED, NULLED]) {
+        await setReport(id, '{"redactedTitle":"Entrevista [Persona A].pdf"}')
+        const ben = await nameFor('ben', id)
+        expect(ben.name).toBe('Entrevista [Persona A].pdf')
+        expect(ben.text).not.toMatch(RAW)
+        // An exclude-mode select drops `anonymise`: still the redacted title.
+        const dropped = await nameFor('ben', id, '&select[anonymise]=false')
+        expect(dropped.name).toBe('Entrevista [Persona A].pdf')
+        expect(dropped.text).not.toMatch(RAW)
+        const r = await list('ben', '')
+        expect(r.text).toContain('Entrevista [Persona A].pdf')
+        expect(r.text).not.toMatch(RAW)
+      }
+      expect((await nameFor('ana', GATED)).name).toBe(GATED_NAME)
+    } finally {
+      await setReport(GATED, null)
+      await setReport(NULLED, null)
+    }
+  })
+
+  it('a report without a usable redacted title gives a colleague "Documento", never the file name', async () => {
+    try {
+      for (const report of ['{}', '{"settings":{}}', '{"redactedTitle":null}', '{"redactedTitle":""}', '{"redactedTitle":"   "}', '{"redactedTitle":42}', '[]']) {
+        await setReport(GATED, report)
+        for (const q of ['', '&select[anonymise]=false']) {
+          const ben = await nameFor('ben', GATED, q)
+          expect(ben.name, `${report}${q}`).toBe('Documento')
+          expect(ben.text).not.toMatch(RAW)
+        }
+      }
+    } finally {
+      await setReport(GATED, null)
+    }
+  })
+
+  // ⚠ The gate's verdict, not a leak: it cleared the title and found nothing
+  // to redact. Only the gate writes the report (`gateWritesOnly`).
+  it('a redacted title the gate left equal to the file name is shown as the gate cleared it', async () => {
+    try {
+      await setReport(GATED, `{"redactedTitle":"${GATED_NAME}"}`)
+      expect((await nameFor('ben', GATED)).name).toBe(GATED_NAME)
+    } finally {
+      await setReport(GATED, null)
+    }
+  })
+
+  it('a testimonio keeps its neutral title, whatever its report says', async () => {
+    const TESTIMONIO = 24
+    await pg.db.execute(sql.raw(`
+      INSERT INTO documents (id, organization_id, uploaded_by_id, publication_status, kind, content_kind, anonymise, anonymisation_status, redacted_text, extracted_text, name, anonymisation_report)
+        VALUES (${TESTIMONIO}, 1, ${ANA}, 'published', 'audio', 'testimonio', false, 'ready', 'TEXTO [PERSONA]', 'RAW', 'Testimonio Juana Perez.mp3', '{"redactedTitle":"Testimonio [Persona A].mp3"}'::jsonb)`))
+    try {
+      const ben = await nameFor('ben', TESTIMONIO)
+      expect(ben.name).toBe('Testimonio')
+      expect(ben.text).not.toMatch(RAW)
+    } finally {
+      await pg.db.execute(sql.raw(`DELETE FROM documents WHERE id = ${TESTIMONIO}`))
+    }
+  })
+
   it('the uploader and a platform admin read the file name', async () => {
     for (const who of ['ana', 'platform']) {
       const row = (await (await rest('GET', `/api/documents/${GATED}?depth=0`, tokens[who])).json()) as Row
@@ -277,5 +349,18 @@ describe.skipIf(!dockerOk)('documents: a gated documento name over REST (real Po
     const byName = await rest('GET', '/api/anonymisation-reviews?depth=0&where[document.name][like]=Juana', tokens.rita)
     expect(byName.status).toBe(200)
     expect(((await byName.json()) as { docs: Row[] }).docs).toEqual([])
+  })
+})
+
+describe('gatedNameFor (the title a refused caller gets)', () => {
+  it('a gated documento: its redacted title, else "Documento"; other kinds their neutral title', () => {
+    expect(gatedNameFor({ contentKind: 'documento', anonymisationReport: { redactedTitle: 'Acta [Persona A]' } })).toBe('Acta [Persona A]')
+    for (const anonymisationReport of [undefined, null, {}, { redactedTitle: null }, { redactedTitle: ' ' }]) {
+      expect(gatedNameFor({ contentKind: 'documento', anonymisationReport })).toBe('Documento')
+    }
+    const report = { redactedTitle: 'Acta [Persona A]' }
+    expect(gatedNameFor({ contentKind: 'testimonio', anonymisationReport: report })).toBe('Testimonio')
+    expect(gatedNameFor({ contentKind: 'conversacion', anonymisationReport: report })).toBe('Conversación')
+    expect(gatedNameFor({ anonymisationReport: report })).toBe('Documento')
   })
 })

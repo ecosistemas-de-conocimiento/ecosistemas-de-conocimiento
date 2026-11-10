@@ -24,6 +24,7 @@ import {
   CONTENT_KINDS,
   chunkMetadata,
   contentKindOf,
+  documentTitleFor,
   knownContentKind,
   titleFor,
   DEFAULT_CONTENT_KIND,
@@ -439,16 +440,18 @@ export const contributorReadable: FieldAccess = (args) => {
 }
 
 /**
- * 🔴 THE NEUTRAL TITLE A CALLER GETS IN PLACE OF A GATED ROW'S `name` (R4-01,
- * audit 2026-11-10). The field is kept, so every reader still has a title to
- * show; it is never the uploader's file name.
+ * 🔴 THE TITLE A CALLER GETS IN PLACE OF A GATED ROW'S `name` (R4-01, audit
+ * 2026-11-10): `documentTitleFor`, so a gated documento shows the gate's
+ * redacted title (P-13), else "Documento"; a testimonio or a conversation its
+ * neutral title. The field is kept, so every reader still has a title to show;
+ * it is never the uploader's file name.
  *
- * Seam: becomes `documentTitleFor(row)` from `lib/contentKind.ts` once that
- * lands.
+ * ⚠ `anonymise` IS FORCED ON. Only a caller {@link mayReadGatedOriginal} refused
+ * gets here, and it refuses an ABSENT `anonymise` (an exclude-mode select);
+ * `titleIsGated` reads absent as ungated and would hand back `name`.
  */
-export function gatedNameFor(row: { contentKind?: unknown }): string {
-  const kind = knownContentKind(row)
-  return kind === 'documento' ? 'Documento' : titleFor(kind, null)
+export function gatedNameFor(row: { contentKind?: unknown; anonymisationReport?: unknown }): string {
+  return documentTitleFor({ contentKind: row.contentKind, anonymise: true, anonymisationReport: row.anonymisationReport })
 }
 
 /**
@@ -460,7 +463,7 @@ export function gatedNameFor(row: { contentKind?: unknown }): string {
  */
 export const neutralNameForCaller: FieldHook = ({ value, data, req, overrideAccess }) => {
   if (overrideAccess === true || value === undefined || value === null) return value
-  const row = (data ?? {}) as Parameters<typeof mayReadGatedOriginal>[1] & { contentKind?: unknown }
+  const row = (data ?? {}) as Parameters<typeof mayReadGatedOriginal>[1] & Parameters<typeof gatedNameFor>[0]
   return mayReadGatedOriginal(req.user, row, 'identity') ? value : gatedNameFor(row)
 }
 
@@ -2174,6 +2177,8 @@ export async function scheduleGraphExtractionForDoc(args: {
       anonymisationStatus?: unknown
       publicationStatus?: unknown
       consentHeld?: unknown
+      /** 🔴 Carries the gate's redacted title (P-13, `titleFor`). */
+      anonymisationReport?: unknown
     }
 
     // 🔴 Retenido por consentimiento: no graph run, and nothing written (`lib/consentHold.ts`).
@@ -2219,7 +2224,9 @@ export async function scheduleGraphExtractionForDoc(args: {
        * nearly reached the shared corpus. `titleFor` gives gated material a
        * neutral title; the graph surfaces titles, so it needs the same rule.
        */
-      title: titleFor(knownContentKind(fresh), fresh.name),
+      // 🔴 P-13: a gated documento's redacted title, never `name` (`row` is
+      // re-read after the gate, so it carries the report this run wrote).
+      title: titleFor(knownContentKind(fresh), fresh.name, row),
     })
   } catch (err) {
     console.error('[graph] could not schedule extraction for doc', docId, safeErrMessage(err))
@@ -2276,6 +2283,8 @@ export async function enqueueIngestForDoc(args: {
     keepCitedAuthors?: unknown
     anonymisationStatus: string | null | undefined
     redactedText?: string | null
+    /** 🔴 The stored report: an approved gated documento keeps its redacted title (P-13). */
+    anonymisationReport?: unknown
     /** For the retrieval filter. `chunkMetadata` keeps it on a documento only. */
     lengua?: string | null
     /** 🔴 Read again from the database anyway: a hand-built slice may lack it. */
@@ -2383,6 +2392,9 @@ export async function enqueueIngestForDoc(args: {
      */
     contentKind: fresh.contentKind,
     anonymise: fresh.anonymise,
+    // 🔴 P-13: a gated documento's title is redacted with its text.
+    name: fresh.name,
+    anonymisationReport: fresh.anonymisationReport,
     text: extractedText,
     /**
      * 🔴 THE HUMAN OVERRIDE, AND THE ONLY ONE.
@@ -2577,7 +2589,8 @@ export async function enqueueIngestForDoc(args: {
               // back on retrieve, but it IS stored at ai-service — and for a
               // testimony the uploader's filename is exactly the identifier the
               // gate just spent two model calls removing from the body.
-              title: titleFor(knownContentKind(fresh), fresh.name),
+              // 🔴 P-13: `gated.title` — a gated documento's redacted title.
+              title: gated.title,
               /**
                * ⚠ BUILT BY `chunkMetadata`, NOT INLINE. It is the same builder the
                * publish move uses, which is what stops `kind` from being silently
@@ -2590,7 +2603,7 @@ export async function enqueueIngestForDoc(args: {
                 contentKind,
                 format: fresh.kind,
                 publication: 'draft',
-                title: fresh.name,
+                title: gated.title,
                 // `chunkMetadata` drops it on anything but a documento.
                 lengua: fresh.lengua,
               }),
