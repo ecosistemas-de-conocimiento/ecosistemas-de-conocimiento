@@ -32,8 +32,8 @@ Una cuenta inactiva (`isActive = false`) no tiene ningún rol: el servidor la tr
 | `estudiante` | estudiante | Est. | 0 | Conversa, sube y escribe notas. Con la función `studentView` tiene la vista Mi investigación. |
 | `member` | participante | Part. | 1 | Conversa, sube documentos y audio, valora respuestas. Lo que sube se publica solo si `autoPublishMembers` está encendida. Es el rol por defecto (`DEFAULT_ORG_ROLE`). |
 | `admin` | administra | (no aparece) | 2 | Lo del participante, más subir testimonios, revisar documentos retenidos, leer comentarios de valoraciones, borrar documentos y gestionar miembros. |
-| `investigador` | investigador | Inv. | 3 | Lo de `admin`, más los ajustes del ecosistema (`/ajustes`) y la Administración acotada a sus ecosistemas. |
-| `owner` | responsable | Resp. | 4 | Mismos permisos que investigador. El rango superior le deja gestionar investigadores, y solo él cambia la clave (`slug`) del ecosistema o lo apaga. |
+| `investigador` | investigador | Inv. | 3 | Lo de `admin`, más la Administración acotada a sus ecosistemas. Desde el 2026-11-10 ya no guarda los ajustes del ecosistema (`/ajustes`). |
+| `owner` | responsable | Resp. | 4 | Lo de investigador, más los ajustes del ecosistema (`/ajustes`, `organization:manage`). El rango superior le deja gestionar investigadores, y solo él cambia la clave (`slug`) del ecosistema o lo apaga. |
 
 Un rol de rango 0 por debajo de participante tiene un propósito: un estudiante nunca puede otorgar el rol participante a nadie (comentario en `apps/backend/src/lib/permissions.ts`).
 
@@ -57,8 +57,8 @@ Los conjuntos de permisos se construyen por acumulación hacia arriba: cada rang
 | `MEMBER_PERMISSIONS` | `documents:read`, `documents:write`, `chat:use`, `ratings:write` |
 | `ESTUDIANTE_PERMISSIONS` | Igual a participante. Lo que añade el estudiante es una vista (función `studentView`), no un permiso. |
 | `ADMIN_PERMISSIONS` | Participante más `voces:upload`, `ratings:read-comments`, `holds:review`, `documents:delete`, `members:manage` |
-| `INVESTIGADOR_PERMISSIONS` | `admin` más `organization:manage` |
-| `OWNER_PERMISSIONS` | Igual a investigador |
+| `INVESTIGADOR_PERMISSIONS` | Igual a `admin` |
+| `OWNER_PERMISSIONS` | Investigador más `organization:manage` (desde el 2026-11-10) |
 
 ## Matriz de capacidades por rol
 
@@ -75,7 +75,7 @@ Los conjuntos de permisos se construyen por acumulación hacia arriba: cada rang
 | `holds:review` | Ver, corregir, aprobar o rechazar documentos retenidos; retirar publicados | | | ● | ● | ● | ● |
 | `documents:delete` | Borrar documentos del ecosistema | | | ● | ● | ● | ● |
 | `members:manage` | Ver, agregar, cambiar de rol y quitar miembros | | | ● | ● | ● | ● |
-| `organization:manage` | Cambiar las funciones del ecosistema en `/ajustes` | | | | ● | ● | ● |
+| `organization:manage` | Cambiar las funciones del ecosistema en `/ajustes` | | | | | ● | ● |
 
 La matriz tiene una prueba contra Postgres real: `apps/backend/src/lib/roles.matrix.pg.test.ts`. Esa prueba se salta si no hay docker en la máquina que la corre.
 
@@ -174,7 +174,7 @@ Fuente: `plan/funcionalidades.md` (leído en código el 2026-10-27), contrastado
 | Estudiantes `/seguimiento` (función `studentView`) | | | | ● | ● | |
 | Revisión `/revision` | | | ● | ● | ● | ● |
 | Miembros `/miembros` | | | ● | ● | ● | ● |
-| Ajustes `/ajustes` | | | | ● | ● | ● |
+| Ajustes `/ajustes` | | | | | ● | ● |
 | Administración `/admin` | | | | ● | ● | ● |
 | Evaluaciones `/admin/evals` | | | | | | ● |
 
@@ -182,7 +182,7 @@ Notas por pantalla:
 - **Conversaciones.** Participante y estudiante ven primero la pantalla Iniciar, con un solo botón. Los demás roles entran directo a la interfaz completa.
 - **Panel Documentos dentro de la conversación.** Con `voces:upload` aparecen el selector de tipo de aporte, la casilla "Anonimizar" y el botón de publicar.
 - **Estudiantes.** El administrador de plataforma tiene `canAdminOrg`, así que el backend le daría los reportes con consentimiento, pero el menú no le muestra la sección porque no es investigador ni responsable en ese ecosistema (inferido de `nav.ts` y de `seguimiento/+page.server.ts`; no verificado en una sesión real).
-- **Ajustes.** Investigador y responsable ven `keepPublicFigures` y `studentTestimonios` bloqueados. La pestaña de estilo y la sección de plataforma solo son editables por el administrador de plataforma.
+- **Ajustes.** El responsable ve `keepPublicFigures` y `studentTestimonios` bloqueados. La pestaña de estilo y la sección de plataforma solo son editables por el administrador de plataforma.
 - **Administración.** Investigador y responsable solo ven sus ecosistemas; el administrador de plataforma ve el directorio completo.
 
 ## Anomalía: el rol `admin` de ecosistema

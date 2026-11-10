@@ -107,13 +107,14 @@ Esta sección enumera el texto concreto que sale de `edc-1` hacia fuera, en qué
 |---|---|---|---|---|---|
 | 1 | Gate, etapa 3 (detectar) | Texto después de las etapas 1 y 2: sin correos, teléfonos, CURP, RFC, códigos postales, URLs ni nombres de miembros conocidos, pero **con nombres de terceros, lugares y detalles**; en trozos de unas 250 palabras. Aplica a testimonios, documentos marcados "Anonimizar" y cada turno de conversación (pregunta y respuesta) | Spark directo | OpenRouter vía ai-service | Solo en el camino por ai-service |
 | 2 | Gate, etapa 4 (verificar) | El texto ya redactado | Spark directo | OpenRouter | Igual que 1 |
+| 2b | Gate, título de un `documento` con compuerta | Una llamada más al detector sobre el nombre del archivo, después de las reglas fijas y de los seudónimos del texto. Pendiente de activar: la compuerta aún no recibe el nombre | Spark directo | OpenRouter | Igual que 1 |
 | 3 | Títulos de testimonio | Solo el texto redactado (`redactedText`) o retenido (`heldText`); un registro retenido nunca va al hospedado | Spark | OpenRouter (solo no retenidos) | Sí, en el hospedado |
 | 4 | Embeddings de ingesta | `corpusTextFor(row)`: el texto anonimizado si pasó por el gate; el texto crudo de un `documento` normal | Spark (respaldo DeepInfra) | OpenRouter | Sí, en OpenRouter o DeepInfra |
 | 5 | Embeddings de consulta | La pregunta cruda del usuario | Spark (respaldo DeepInfra) | OpenRouter | Sí, en OpenRouter o DeepInfra |
 | 6 | Rerank | La pregunta y los pasajes candidatos (unos 40 como máximo) | No verificado | DeepInfra | Sí |
 | 7 | Condense y expansión | La pregunta del usuario y el historial reciente | OpenRouter | OpenRouter | Sí |
 | 8 | Respuesta de chat | Prompt del sistema y estilo del ecosistema; historial con las preguntas crudas; fragmentos recuperados (anonimizados si pasaron por el gate, crudos si son `documento`); documentos adjuntos o fijados completos; bloque de orientación con turnos anonimizados de otras personas; contexto del grafo | OpenRouter | OpenRouter | Sí |
-| 9 | Extracción del grafo | `corpusTextFor(row)`, nunca `extractedText`; solo filas en estado `ready` o `approved` | OpenRouter | OpenRouter | Sí |
+| 9 | Extracción del grafo | `corpusTextFor(row)`, nunca `extractedText`; solo filas en estado `ready` o `approved`. La re-extracción por lotes (`scripts/reextract-published-graph.ts`) solo lee filas publicadas | OpenRouter | OpenRouter | Sí |
 | 10 | Transcripción | El audio completo en trozos WAV de 16 kHz y las rebanadas del micrófono en vivo: voz cruda | Spark | No aplica | No aplica |
 | 11 | Preguntas para el estudiante | Títulos y datos de documentos, solo de tipo `documento` | OpenRouter | OpenRouter | Sí |
 | 12 | Juez de evals | Respuesta generada y pasajes citados (inferido del diseño del juez por par afirmación-cita) | OpenRouter | OpenRouter | Sí |
