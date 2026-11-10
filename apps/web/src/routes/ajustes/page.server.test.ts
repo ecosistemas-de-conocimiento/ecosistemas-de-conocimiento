@@ -213,3 +213,100 @@ describe('/ajustes actions', () => {
     expect(JSON.parse(String((mocked.mock.calls[1]![2] as RequestInit).body))).toEqual({ detectorFallback: 'none' });
   });
 });
+
+describe('/ajustes — the re-anonymisation backlog (I-01)', () => {
+  const editables = { ecosistemas: [{ id: '5', name: 'E', slug: 'e', features: null }], plataforma: null };
+
+  it('the load reads GET /api/organizations/:id/anonimizacion for the shown ecosistema', async () => {
+    mocked.mockImplementation(async (_t: string, path: string) =>
+      path === '/api/funciones/editables' ? json(editables) : json({ pendingRegate: 3, regating: false, unpublishedByRegate: 2 }),
+    );
+    const data = (await load(event())) as { anon: unknown };
+    expect(mocked.mock.calls[1]?.[1]).toBe('/api/organizations/5/anonimizacion');
+    expect((mocked.mock.calls[1]?.[2] as RequestInit).method).toBe('GET');
+    expect(data.anon).toEqual({ pendingRegate: 3, regating: false, unpublishedByRegate: 2 });
+  });
+
+  it('a refused or failed read says nothing (null)', async () => {
+    mocked.mockImplementation(async (_t: string, path: string) =>
+      path === '/api/funciones/editables' ? json(editables) : json({ errors: [{ message: 'No.' }] }, 403),
+    );
+    expect(((await load(event())) as { anon: unknown }).anon).toBeNull();
+    mocked.mockImplementation(async (_t: string, path: string) => {
+      if (path === '/api/funciones/editables') return json(editables);
+      if (path === '/api/organizations/5/anonimizacion') throw new Error('down');
+      return json({});
+    });
+    expect(((await load(event())) as { anon: unknown }).anon).toBeNull();
+  });
+
+  it('junk counts read as 0', async () => {
+    mocked.mockImplementation(async (_t: string, path: string) =>
+      path === '/api/funciones/editables' ? json(editables) : json({ pendingRegate: -1, regating: 'yes', unpublishedByRegate: '2' }),
+    );
+    expect(((await load(event())) as { anon: unknown }).anon).toEqual({ pendingRegate: 0, regating: false, unpublishedByRegate: 0 });
+  });
+
+  it('reintentar POSTs /api/organizations/:id/anonimizacion/reintentar', async () => {
+    mocked.mockResolvedValue(json({ started: true, pendingRegate: 3 }, 202));
+    const out = await actions.reintentar!(event('/ajustes', { organization: '5' }));
+    const [token, path, init] = mocked.mock.calls[0]!;
+    expect(token).toBe('tok');
+    expect(path).toBe('/api/organizations/5/anonimizacion/reintentar');
+    expect((init as RequestInit).method).toBe('POST');
+    expect(out).toEqual({ saved: true, scope: 'reintentar' });
+  });
+
+  it('reintentar passes the backend refusal through', async () => {
+    mocked.mockResolvedValue(json({ errors: [{ message: 'No administras este ecosistema.' }] }, 403));
+    const out = (await actions.reintentar!(event('/ajustes', { organization: '5' }))) as {
+      status: number;
+      data: { message: string; scope: string };
+    };
+    expect(out.status).toBe(403);
+    expect(out.data).toEqual({ message: 'No administras este ecosistema.', scope: 'reintentar' });
+  });
+});
+
+describe('/ajustes — only what moved is saved (I-12)', () => {
+  /** Every key as the page loaded it: `was-<k>` = the stored value, the box = what the person sees. */
+  const formFrom = (stored: Record<string, boolean>, edits: Record<string, boolean> = {}) => {
+    const f: Record<string, string> = { organization: '1' };
+    for (const k of FEATURE_KEYS) {
+      f[`was-${k}`] = stored[k] ? 'on' : 'off';
+      if ((k in edits ? edits[k] : stored[k])) f[k] = 'on';
+    }
+    return f;
+  };
+
+  it('sends only the switch that moved', async () => {
+    mocked.mockResolvedValue(json({ features: {} }));
+    await actions.funciones!(event('/ajustes', formFrom({ ...FEATURE_DEFAULTS }, { liveMic: false })));
+    const body = JSON.parse(String((mocked.mock.calls[0]![2] as RequestInit).body)) as { features: Record<string, boolean> };
+    expect(body.features).toEqual({ liveMic: false });
+  });
+
+  it('nothing moved: no call, still "saved"', async () => {
+    const out = await actions.funciones!(event('/ajustes', formFrom({ ...FEATURE_DEFAULTS })));
+    expect(mocked).not.toHaveBeenCalled();
+    expect(out).toEqual({ saved: true, scope: 'funciones' });
+  });
+
+  it('🔴 two people editing at once never undo each other\'s switch', async () => {
+    // The backend's stored switches; PATCH merges what it is sent (as /api/funciones does).
+    let store: Record<string, boolean> = { ...FEATURE_DEFAULTS, keepCitedAuthors: false };
+    mocked.mockImplementation(async (_t: string, path: string, init?: RequestInit) => {
+      if (path !== '/api/funciones' || !init) return json({});
+      store = { ...store, ...(JSON.parse(String(init.body)) as { features: Record<string, boolean> }).features };
+      return json({ features: store });
+    });
+    // A and B both load the page now.
+    const loaded = { ...store };
+    // B turns keepCitedAuthors on and saves first.
+    await actions.funciones!(event('/ajustes', formFrom(loaded, { keepCitedAuthors: true })));
+    // A, on the stale page (keepCitedAuthors shown off), turns liveMic off and saves.
+    await actions.funciones!(event('/ajustes', formFrom(loaded, { liveMic: false })));
+    expect(store.keepCitedAuthors).toBe(true);
+    expect(store.liveMic).toBe(false);
+  });
+});

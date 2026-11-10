@@ -14,7 +14,7 @@
 
 import type { PermissionGrant } from '$lib/uploadKind';
 
-export const SWITCH_KEYS = ['keepDocumentAuthor', 'keepCitedAuthors'] as const;
+export const SWITCH_KEYS = ['keepDocumentAuthor', 'keepCitedAuthors', 'keepPublicFigures'] as const;
 export type SwitchKey = (typeof SWITCH_KEYS)[number];
 export const isSwitchKey = (k: unknown): k is SwitchKey => typeof k === 'string' && (SWITCH_KEYS as readonly string[]).includes(k);
 
@@ -40,9 +40,17 @@ export interface AnonView {
   status: AnonStatus;
   /** A switch now off would remove a kept name, but the document was not re-checked yet. */
   pendingRegate: boolean;
+  /** `pendingRegate` or a failed re-check, and the row is free: the page offers "Reintentar". */
+  retryable: boolean;
+  /** A re-check put it back to draft, and it still is. */
+  unpublishedByRegate: boolean;
   kept: { authors: string[]; publicFigures: string[]; citedAuthors: string[] };
   counts: { stages: AnonStageCount[]; pseudonyms: number | null; addresses: number | null } | null;
-  switches: Record<SwitchKey, SwitchState>;
+  /**
+   * The two author switches are always here (missing = the ecosistema's off);
+   * `keepPublicFigures` only when the backend sends it.
+   */
+  switches: Record<Exclude<SwitchKey, 'keepPublicFigures'>, SwitchState> & Partial<Record<SwitchKey, SwitchState>>;
 }
 
 export type Regate = 'started' | 'not-needed' | 'saved-only';
@@ -72,6 +80,7 @@ export const STAGE_COUNT_LABELS: Record<string, string> = {
 export const SWITCH_LABELS: Record<SwitchKey, string> = {
   keepDocumentAuthor: 'Conservar al autor del documento',
   keepCitedAuthors: 'Conservar autores citados',
+  keepPublicFigures: 'Conservar figuras públicas',
 };
 
 export const ORIGIN_LABELS: Record<SwitchOrigin, string> = {
@@ -100,9 +109,14 @@ export const TESTIMONY_WARNING = 'En un testimonio, esto puede dejar visible a q
 
 /** `pendingRegate`: the kept names are STILL in the text. Never say they were removed. */
 export const PENDING_REGATE = 'Pendiente: los nombres conservados siguen visibles hasta la próxima revisión.';
+/** `pendingRegate` with no kept name: there is nothing "still visible" to speak of. */
+export const PENDING_REGATE_NONE_KEPT = 'Pendiente de volver a anonimizar.';
+export const UNPUBLISHED_BY_REGATE = 'Volvió a borrador.';
+export const RETRY_LABEL = 'Reintentar';
 
 export const SAVED = 'Guardado.';
 export const SAVED_REGATE = 'Guardado. Se está revisando de nuevo.';
+export const RETRIED = 'Se está revisando de nuevo.';
 export const UNCHANGED = 'Sin cambios.';
 export const BUSY = 'El documento se está procesando. Inténtalo en un momento.';
 export const SAVE_FAILED = 'No se pudo guardar.';
@@ -113,12 +127,23 @@ export const statusLabel = (s: AnonStatus): string => STATUS_LABELS[s];
 /** An unknown stage still reads as a plain word, never as the machine one. */
 export const stageCountLabel = (stage: string): string => STAGE_COUNT_LABELS[stage] ?? 'Otros';
 
+/** Only `pendingRegate` may say kept names are still visible; a failed re-check alone does not. */
+export const pendingRegateMessage = (view: AnonView): string =>
+  view.pendingRegate && keptLists(view).length > 0 ? PENDING_REGATE : PENDING_REGATE_NONE_KEPT;
+
+/** "Reintentar" answered: a started re-check, or there was nothing left to do. */
+export const retriedMessage = (regate: Regate | null | undefined): string => (regate === 'started' ? RETRIED : UNCHANGED);
+
 export function savedMessage(regate: Regate | null | undefined): string {
   return regate === 'started' ? SAVED_REGATE : SAVED;
 }
 
-/** The message for a refused PATCH, by status. */
-export function saveErrorMessage(status: number): string {
+/**
+ * The message for a refused PATCH or retry: the backend's own words when it
+ * sent any (`errors[0].message`, e.g. a failed erase), else one by status.
+ */
+export function saveErrorMessage(status: number, backendMessage?: string | null): string {
+  if (typeof backendMessage === 'string' && backendMessage.trim() !== '') return backendMessage;
   if (status === 409) return BUSY;
   if (status === 403) return SAVE_FORBIDDEN;
   if (status === 404) return SAVE_NOT_FOUND;
@@ -155,6 +180,8 @@ export function parseView(raw: unknown): AnonView | null {
     publicationStatus: typeof r.publicationStatus === 'string' ? r.publicationStatus : null,
     status: STATUSES.includes(r.status as AnonStatus) ? (r.status as AnonStatus) : 'n/a',
     pendingRegate: r.pendingRegate === true,
+    retryable: r.retryable === true,
+    unpublishedByRegate: r.unpublishedByRegate === true,
     kept: { authors: names(kept.authors), publicFigures: names(kept.publicFigures), citedAuthors: names(kept.citedAuthors) },
     counts: c
       ? {
@@ -166,7 +193,13 @@ export function parseView(raw: unknown): AnonView | null {
           addresses: count(c.addresses),
         }
       : null,
-    switches: { keepDocumentAuthor: switchFrom(sw.keepDocumentAuthor), keepCitedAuthors: switchFrom(sw.keepCitedAuthors) },
+    switches: {
+      keepDocumentAuthor: switchFrom(sw.keepDocumentAuthor),
+      keepCitedAuthors: switchFrom(sw.keepCitedAuthors),
+      ...(sw.keepPublicFigures && typeof sw.keepPublicFigures === 'object'
+        ? { keepPublicFigures: switchFrom(sw.keepPublicFigures) }
+        : {}),
+    },
   };
 }
 
@@ -182,7 +215,14 @@ export function keptLists(view: AnonView): Array<{ key: keyof AnonView['kept']; 
 
 /** Warn when a testimonio keeps any names: by the EFFECTIVE value, whatever its origin. */
 export const showTestimonyWarning = (view: AnonView): boolean =>
-  view.contentKind === 'testimonio' && SWITCH_KEYS.some((k) => view.switches[k].value);
+  view.contentKind === 'testimonio' && SWITCH_KEYS.some((k) => view.switches[k]?.value === true);
+
+/** The switches to draw: every one the backend sent, in a fixed order. */
+export const shownSwitches = (view: AnonView): Array<{ key: SwitchKey; sw: SwitchState }> =>
+  SWITCH_KEYS.flatMap((key) => {
+    const sw = view.switches[key];
+    return sw ? [{ key, sw }] : [];
+  });
 
 // ── The form ────────────────────────────────────────────────────────────────
 

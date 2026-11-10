@@ -5,14 +5,15 @@
  * 🔴 THE CONTROL IS THE BACKEND. It answers 403 to anyone who may not change
  * this document (only the uploader, `holds:review` in its ecosistema, or a
  * platform admin may) and 404 to an unknown id; this load turns those into the
- * normal error page. The save is a form action, so it works without JS.
+ * normal error page. The save and the retry are form actions, so they work
+ * without JS.
  */
 
 import { fail } from '@sveltejs/kit';
 
 import { CONVERSACIONES_HREF } from '$lib/inicio';
-import { backHref, patchFromForm, saveErrorMessage, savedMessage, UNCHANGED } from '$lib/anonimizacion';
-import { readAnonimizacion, saveAnonimizacion } from '$lib/server/anonimizacion';
+import { backHref, patchFromForm, retriedMessage, saveErrorMessage, savedMessage, UNCHANGED } from '$lib/anonimizacion';
+import { readAnonimizacion, retryAnonimizacion, saveAnonimizacion } from '$lib/server/anonimizacion';
 import { denyAccess, notFound } from '$lib/server/deny';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -37,7 +38,14 @@ export const actions: Actions = {
     const body = patchFromForm(await request.formData());
     if (Object.keys(body).length === 0) return { saved: true, message: UNCHANGED };
     const result = await saveAnonimizacion(locals.token, String(params.id ?? ''), body);
-    if (!result.ok) return fail(result.status, { message: saveErrorMessage(result.status) });
+    if (!result.ok) return fail(result.status, { message: saveErrorMessage(result.status, result.message) });
     return { saved: true, message: savedMessage(result.regate), regate: result.regate };
+  },
+  // A pending re-check, even one whose switch comes from the ecosistema (I-04).
+  reintentar: async ({ locals, params }) => {
+    if (!locals.user) return fail(401, { message: saveErrorMessage(401) });
+    const result = await retryAnonimizacion(locals.token, String(params.id ?? ''));
+    if (!result.ok) return fail(result.status, { message: saveErrorMessage(result.status, result.message) });
+    return { saved: true, message: retriedMessage(result.regate), regate: result.regate };
   },
 };

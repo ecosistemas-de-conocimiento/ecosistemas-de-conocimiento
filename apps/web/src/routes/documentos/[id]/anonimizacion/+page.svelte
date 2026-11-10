@@ -21,14 +21,16 @@
     SAVE_LABEL,
     stageCountLabel,
     statusLabel,
-    SWITCH_KEYS,
     SWITCH_LABELS,
     SWITCHES_TITLE,
     UNAVAILABLE,
     BACK_LABEL,
     showTestimonyWarning,
     TESTIMONY_WARNING,
-    PENDING_REGATE,
+    pendingRegateMessage,
+    RETRY_LABEL,
+    shownSwitches,
+    UNPUBLISHED_BY_REGATE,
   } from '$lib/anonimizacion';
   import type { ActionData, PageData } from './$types';
 
@@ -65,8 +67,19 @@
       </span>
     </header>
 
-    {#if view.pendingRegate}
-      <p class="warn callout" role="status" data-testid="anon-pending-regate">{PENDING_REGATE}</p>
+    {#if view.unpublishedByRegate}
+      <p class="warn callout" role="status" data-testid="anon-unpublished">{UNPUBLISHED_BY_REGATE}</p>
+    {/if}
+
+    {#if view.pendingRegate || view.retryable}
+      <div class="warn callout pending" role="status">
+        <p data-testid="anon-pending-regate">{pendingRegateMessage(view)}</p>
+        {#if view.retryable}
+          <form method="POST" action="?/reintentar" use:enhance={submit} data-testid="anon-retry-form">
+            <button type="submit" class="retry" disabled={pending} data-testid="anon-retry">{RETRY_LABEL}</button>
+          </form>
+        {/if}
+      </div>
     {/if}
 
     {#if keptLists(view).length > 0}
@@ -103,8 +116,7 @@
     <section class="card" aria-labelledby="anon-switches">
       <h2 id="anon-switches">{SWITCHES_TITLE}</h2>
       <form method="POST" action="?/guardar" use:enhance={submit} data-testid="anon-form">
-        {#each SWITCH_KEYS as key (key)}
-          {@const sw = view.switches[key]}
+        {#each shownSwitches(view) as { key, sw } (key)}
           <div class="row">
             <label class="label" for={`anon-${key}`}>{SWITCH_LABELS[key]}</label>
             <span class="origin" data-testid={`anon-origin-${key}`}>{ORIGIN_LABELS[sw.origin]}</span>
@@ -337,6 +349,30 @@
     border: 1px solid var(--edc-color-danger-outline);
     border-radius: var(--edc-radius-2);
     background: var(--edc-color-danger-soft);
+  }
+  .pending {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--edc-space-3);
+  }
+  .pending p {
+    margin: 0;
+  }
+  .retry {
+    padding: 0.3rem 0.8rem;
+    border: 1px solid var(--edc-color-danger-outline);
+    border-radius: var(--edc-radius-2);
+    background: var(--edc-color-surface-strong);
+    color: inherit;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .retry:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
   .save {
     padding: 0.45rem 1rem;

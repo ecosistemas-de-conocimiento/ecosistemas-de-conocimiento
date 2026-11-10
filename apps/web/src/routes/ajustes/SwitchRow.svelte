@@ -8,6 +8,9 @@
    * 🔴 A LOCKED SWITCH IS `disabled` AND SENDS `locked=<key>`. A disabled box
    * never posts, so without the marker the action would read it as "off". The
    * backend refuses a tampered marker anyway (`+page.server.ts`).
+   *
+   * 🔴 `was-<key>` IS THE LOADED VALUE. The action writes only a switch that
+   * moved from it, so a save never undoes someone else's change (I-12).
    */
   import { FEATURE_LABELS, type FeatureKey } from '$lib/features';
   import Icon from './Icon.svelte';
@@ -15,6 +18,7 @@
   let {
     key,
     checked,
+    was,
     locked,
     child = false,
     hidden = false,
@@ -22,6 +26,8 @@
   }: {
     key: FeatureKey;
     checked: boolean;
+    /** The value the page loaded. */
+    was: boolean;
     locked: boolean;
     child?: boolean;
     hidden?: boolean;
@@ -38,6 +44,8 @@
       <Icon name="lock" size={13} />Solo administración de la plataforma
     </span>
     <input type="hidden" name="locked" value={key} />
+  {:else}
+    <input type="hidden" name={`was-${key}`} value={was ? 'on' : 'off'} />
   {/if}
   <span class="switch">
     <input

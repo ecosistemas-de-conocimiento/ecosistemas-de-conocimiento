@@ -8,9 +8,12 @@ import {
   ORIGIN_LABELS,
   parseView,
   patchFromForm,
+  pendingRegateMessage,
+  retriedMessage,
   saveErrorMessage,
   savedMessage,
   showTestimonyWarning,
+  shownSwitches,
   stageCountLabel,
   STATUS_LABELS,
   SWITCH_LABELS,
@@ -63,6 +66,7 @@ describe('anonimización copy', () => {
     expect(SWITCH_LABELS).toEqual({
       keepDocumentAuthor: 'Conservar al autor del documento',
       keepCitedAuthors: 'Conservar autores citados',
+      keepPublicFigures: 'Conservar figuras públicas',
     });
     expect(ORIGIN_LABELS).toEqual({ ecosistema: 'Del ecosistema', documento: 'De este documento' });
   });
@@ -85,6 +89,15 @@ describe('anonimización copy', () => {
     expect(saveErrorMessage(409)).toMatch(/procesando/);
     expect(saveErrorMessage(403)).toBe('No puedes cambiar esto.');
     expect(saveErrorMessage(500)).toBe('No se pudo guardar.');
+    expect(retriedMessage('started')).toBe('Se está revisando de nuevo.');
+    expect(retriedMessage('not-needed')).toBe('Sin cambios.');
+  });
+
+  it('I-05: a refusal shows the backend\'s own words when it sent any', () => {
+    const erase = 'No se pudo borrar la copia anterior. Ya no aparece en el chat.';
+    expect(saveErrorMessage(502, erase)).toBe(erase);
+    expect(saveErrorMessage(502, '  ')).toBe('No se pudo guardar.');
+    expect(saveErrorMessage(502, null)).toBe('No se pudo guardar.');
   });
 });
 
@@ -113,6 +126,33 @@ describe('parseView', () => {
     expect(parseView({ ...wire, pendingRegate: false })!.pendingRegate).toBe(false);
     expect(parseView(wire)!.pendingRegate).toBe(false);
     expect(parseView({ ...wire, pendingRegate: 'true' })!.pendingRegate).toBe(false);
+  });
+
+  it('I-04: retryable is the backend\'s word, also after a failed re-check with nothing pending; I-02: unpublishedByRegate literally true only', () => {
+    expect(parseView({ ...wire, pendingRegate: true, retryable: true })!.retryable).toBe(true);
+    expect(parseView({ ...wire, pendingRegate: false, retryable: true })!.retryable).toBe(true);
+    expect(parseView({ ...wire, pendingRegate: true })!.retryable).toBe(false);
+    expect(parseView({ ...wire, pendingRegate: true, retryable: 'true' })!.retryable).toBe(false);
+    expect(parseView({ ...wire, unpublishedByRegate: true })!.unpublishedByRegate).toBe(true);
+    expect(parseView({ ...wire, unpublishedByRegate: 1 })!.unpublishedByRegate).toBe(false);
+  });
+
+  it('I-02: with no kept name, the pending line does not claim kept names are visible', () => {
+    const none = parseView({ ...wire, pendingRegate: true, kept: { authors: [], publicFigures: [], citedAuthors: [] } })!;
+    expect(pendingRegateMessage(none)).toBe('Pendiente de volver a anonimizar.');
+    expect(pendingRegateMessage(none)).not.toMatch(/visibles/);
+    expect(pendingRegateMessage(parseView({ ...wire, pendingRegate: true })!)).toMatch(/siguen visibles/);
+  });
+
+  it('I-13: keepPublicFigures is a switch when the backend sends it, and absent when it does not', () => {
+    expect(shownSwitches(parseView(wire)!).map((s) => s.key)).toEqual(['keepDocumentAuthor', 'keepCitedAuthors']);
+    const withFigures = parseView({
+      ...wire,
+      switches: { ...wire.switches, keepPublicFigures: { value: true, origin: 'documento' } },
+    })!;
+    expect(shownSwitches(withFigures).map((s) => s.key)).toEqual(['keepDocumentAuthor', 'keepCitedAuthors', 'keepPublicFigures']);
+    expect(withFigures.switches.keepPublicFigures).toEqual({ value: true, origin: 'documento' });
+    expect(patchFromForm(formOf({ 'was-keepPublicFigures': 'on' }))).toEqual({ keepPublicFigures: false });
   });
 
   it('the pending line never says the names were removed', () => {
@@ -152,7 +192,8 @@ describe('patchFromForm', () => {
     expect(
       patchFromForm(formOf({ reset: 'keepCitedAuthors', keepDocumentAuthor: 'on', 'was-keepDocumentAuthor': 'off' })),
     ).toEqual({ keepCitedAuthors: null });
-    expect(patchFromForm(formOf({ reset: 'keepPublicFigures', 'was-keepCitedAuthors': 'off' }))).toEqual({});
+    expect(patchFromForm(formOf({ reset: 'keepPublicFigures', 'was-keepCitedAuthors': 'off' }))).toEqual({ keepPublicFigures: null });
+    expect(patchFromForm(formOf({ reset: 'otraCosa', 'was-keepCitedAuthors': 'off' }))).toEqual({});
   });
 });
 

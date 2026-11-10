@@ -121,7 +121,7 @@ describe('/documentos/[id]/anonimizacion guardar', () => {
   });
 
   it('409: the document is busy — a short message', async () => {
-    mocked.mockResolvedValue(json({ errors: [{ message: 'busy' }] }, 409));
+    mocked.mockResolvedValue(json({}, 409));
     const out = (await actions.guardar!(event({ 'was-keepDocumentAuthor': 'off', keepDocumentAuthor: 'on' }))) as {
       status: number;
       data: { message: string };
@@ -145,9 +145,56 @@ describe('/documentos/[id]/anonimizacion guardar', () => {
     expect(out.data.message).toBe(message);
   });
 
+  it('I-05: a 502 shows the backend\'s message, not a generic one', async () => {
+    const message = 'No se pudo borrar la copia anterior. Ya no aparece en el chat.';
+    mocked.mockResolvedValue(json({ errors: [{ message }] }, 502));
+    const out = (await actions.guardar!(event({ 'was-keepDocumentAuthor': 'off', keepDocumentAuthor: 'on' }))) as {
+      status: number;
+      data: { message: string };
+    };
+    expect(out.status).toBe(502);
+    expect(out.data.message).toBe(message);
+  });
+
   it('a signed-out caller is refused without a call', async () => {
     const out = (await actions.guardar!(event({ keepDocumentAuthor: 'on' }, undefined, null))) as { status: number };
     expect(out.status).toBe(401);
     expect(mocked).not.toHaveBeenCalled();
+  });
+});
+
+describe('/documentos/[id]/anonimizacion reintentar (I-04)', () => {
+  it('POSTs the retry, even with no switch moved, and says it is being checked again', async () => {
+    mocked.mockResolvedValue(json({ ...view, pendingRegate: true, retryable: false, regate: 'started' }));
+    const out = await actions.reintentar!(event({ 'was-keepDocumentAuthor': 'off', 'was-keepCitedAuthors': 'on', keepCitedAuthors: 'on' }));
+    const [token, path, init] = mocked.mock.calls[0]!;
+    expect(token).toBe('tok');
+    expect(path).toBe('/api/documents/42/anonimizacion/reintentar');
+    expect((init as RequestInit).method).toBe('POST');
+    expect(out).toEqual({ saved: true, message: 'Se está revisando de nuevo.', regate: 'started' });
+  });
+
+  it.each([
+    [400, 'No hay nada pendiente.'],
+    [409, 'El documento se está procesando. Inténtalo en un momento.'],
+    [502, 'No se pudo volver a anonimizar el documento.'],
+  ])('%i: the backend\'s message', async (status, message) => {
+    mocked.mockResolvedValue(json({ errors: [{ message }] }, status));
+    const out = (await actions.reintentar!(event())) as { status: number; data: { message: string } };
+    expect(out.status).toBe(status);
+    expect(out.data.message).toBe(message);
+  });
+
+  it('a signed-out caller is refused without a call', async () => {
+    const out = (await actions.reintentar!(event(undefined, undefined, null))) as { status: number };
+    expect(out.status).toBe(401);
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it('retryable and unpublishedByRegate pass through the load', async () => {
+    mocked.mockResolvedValue(json({ ...view, pendingRegate: true, retryable: true, unpublishedByRegate: true }));
+    const data = (await load(event())) as { view: { retryable: boolean; unpublishedByRegate: boolean } };
+    expect(data.view.retryable).toBe(true);
+    expect(data.view.unpublishedByRegate).toBe(true);
   });
 });

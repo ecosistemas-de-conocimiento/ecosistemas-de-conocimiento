@@ -82,6 +82,46 @@ describe('/documentos/[id]/anonimizacion page', () => {
     expect(body()).not.toContain('anon-pending-regate');
   });
 
+  it('I-04: a retryable pending re-check offers "Reintentar", whatever the switch origin', () => {
+    const b = body(null, { ...view, pendingRegate: true, retryable: true });
+    expect(b).toMatch(/action="\?\/reintentar"/);
+    expect(b).toMatch(/data-testid="anon-retry"[^>]*>Reintentar/);
+    expect(body(null, { ...view, pendingRegate: true, retryable: false })).not.toContain('anon-retry');
+    expect(body()).not.toContain('anon-retry');
+  });
+
+  it('I-04: a failed re-check with nothing pending still offers "Reintentar", without claiming kept names are visible', () => {
+    const b = body(null, { ...view, pendingRegate: false, retryable: true });
+    expect(b).toMatch(/data-testid="anon-retry"[^>]*>Reintentar/);
+    expect(b).toMatch(/data-testid="anon-pending-regate"[^>]*>Pendiente de volver a anonimizar\./);
+    expect(b).not.toContain('siguen visibles');
+  });
+
+  it('I-02: no kept name — the pending line does not say kept names are visible', () => {
+    const none = { ...view, pendingRegate: true, kept: { authors: [], publicFigures: [], citedAuthors: [] } };
+    const b = body(null, none);
+    expect(b).toMatch(/data-testid="anon-pending-regate"[^>]*>Pendiente de volver a anonimizar\./);
+    expect(b).not.toContain('siguen visibles');
+  });
+
+  it('I-02: unpublishedByRegate shows that it went back to draft', () => {
+    expect(body(null, { ...view, unpublishedByRegate: true })).toMatch(/data-testid="anon-unpublished"[^>]*>Volvió a borrador\./);
+    expect(body()).not.toContain('anon-unpublished');
+  });
+
+  it('I-13: keepPublicFigures is drawn when the backend sends it', () => {
+    const v = parseView({
+      id: '42',
+      switches: { keepDocumentAuthor: off, keepCitedAuthors: off, keepPublicFigures: { value: true, origin: 'documento' } },
+    })!;
+    const b = body(null, v);
+    expect(b).toMatch(/<input[^>]*name="keepPublicFigures"[^>]*checked/);
+    expect(b).toMatch(/<input[^>]*name="was-keepPublicFigures"[^>]*value="on"|<input[^>]*value="on"[^>]*name="was-keepPublicFigures"/);
+    expect(b).toContain('Conservar figuras públicas');
+    expect(b).toContain('data-testid="anon-reset-keepPublicFigures"');
+    expect(body()).not.toContain('keepPublicFigures');
+  });
+
   it('a neutral name ("Testimonio") is shown as sent, nothing more', () => {
     expect(body(null, { ...view, name: 'Testimonio' })).toMatch(/anon-title"[^>]*>Testimonio<\/h1>/);
   });
