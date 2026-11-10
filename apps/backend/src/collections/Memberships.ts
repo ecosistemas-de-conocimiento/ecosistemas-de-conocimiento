@@ -699,6 +699,9 @@ export const Memberships: CollectionConfig = {
       required: true,
       index: true,
       access: { read: readMembershipUser },
+      // A `where` / `sort` on it is judged by `limitQueriesOnUser`, not by the
+      // field rule of `access/relationFilters.ts`: `user equals <me>` must pass.
+      custom: { queryJudgedBy: 'limitQueriesOnUser' },
       admin: { description: 'The account this membership grants access to.' },
     },
     {

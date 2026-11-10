@@ -12,7 +12,7 @@
  * the real substring returned the row, 'Zzzz' returned nothing.
  *
  * A path that crosses into another collection only matches rows of it the
- * caller may read there (`resolvePrivateCrossings`); a sort through one is
+ * caller may read there (`resolveRelationCrossings`); a sort through one is
  * stripped. A filter on the relation's id is untouched.
  *
  * Driven through Payload's REST router (`handleEndpoints`, real JWT). Harness:

@@ -11,10 +11,10 @@
 import { describe, expect, it } from 'vitest'
 import type { PayloadRequest } from 'payload'
 
+import { relationFilterHook } from '../access/relationFilters'
 import { AnonymisationReviews } from './AnonymisationReviews'
 import {
   bindDocumentToEcosystem,
-  constrainGatedQueries,
   constrainGatedQueriesAt,
   contributorReadable,
   narrowGatedQueriesAt,
@@ -332,11 +332,13 @@ describe('🔴 the same rule on a relationship path from another collection (L3)
   })
 
   it('is wired on anonymisation-reviews', async () => {
-    expect(AnonymisationReviews.hooks?.beforeOperation?.length ?? 0).toBeGreaterThan(0)
-    const out = (await AnonymisationReviews.hooks!.beforeOperation![0]!({
+    // `relationFilterHook` is on every collection (`relationFilters.pg.test.ts`);
+    // this prefix routes it here.
+    expect(AnonymisationReviews.custom?.gatedQueryPrefix).toBe('document.')
+    const out = (await relationFilterHook({
       args: { where: { 'document.name': { like: 'Mar' } } },
       operation: 'read',
-      collection: reviewsCollection,
+      collection: { ...reviewsCollection, custom: AnonymisationReviews.custom },
       req: { user: ben, payload: fakePayload } as unknown as PayloadRequest,
     } as never)) as { where?: unknown }
     expect(JSON.stringify(out.where)).toContain('document.uploadedBy')
@@ -395,10 +397,10 @@ describe('🔴 who recorded a testimonio stays with the uploader', () => {
 
   it('on anonymisation-reviews, `document.uploadedBy` is narrowed too', async () => {
     const where = { 'document.uploadedBy': { equals: ANA } }
-    const out = (await AnonymisationReviews.hooks!.beforeOperation![0]!({
+    const out = (await relationFilterHook({
       args: { where },
       operation: 'read',
-      collection: reviewsCollection,
+      collection: { ...reviewsCollection, custom: AnonymisationReviews.custom },
       req: { user: ben, payload: fakePayload } as unknown as PayloadRequest,
     } as never)) as { where?: unknown }
     expect(out.where).toEqual({
@@ -531,7 +533,8 @@ describe('🔴 the collection config actually wires the gate', () => {
   })
 
   it('constrainGatedQueries runs before every operation', () => {
-    expect(Documents.hooks?.beforeOperation).toContain(constrainGatedQueries)
+    // Through `relationFilterHook`, which `payload.config.ts` adds to every collection.
+    expect(Documents.custom?.gatedQueryPrefix).toBe('')
   })
 })
 

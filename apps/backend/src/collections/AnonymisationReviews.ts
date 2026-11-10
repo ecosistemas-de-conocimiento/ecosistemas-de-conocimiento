@@ -48,7 +48,7 @@
  * collection with different access rules is a second thing to get wrong.
  */
 
-import type { CollectionBeforeOperationHook, CollectionConfig } from 'payload'
+import type { CollectionConfig } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { organizationIdsForUserWithPermission, PERMISSIONS, relationId } from '../lib/permissions'
@@ -67,6 +67,16 @@ export const AnonymisationReviews: CollectionConfig = {
     description:
       'Every human decision on a document the anonymisation gate held. Append-only.',
   },
+  /**
+   * 🔴 `where[document.name]` / `sort=document.name` reach the gated
+   * `documents.name` through the relationship, and the narrowing on
+   * `documents` never sees them. Same for `document.uploadedBy` and
+   * `document.session` (who recorded a testimonio). Same rule, applied at
+   * this path.
+   * `relationFilterHook` (`access/relationFilters.ts`, on every collection)
+   * runs `constrainGatedQueriesAt('document.')` here through this prefix.
+   */
+  custom: { gatedQueryPrefix: 'document.' },
   hooks: {
     // The snapshot is the document id at decision time, whoever writes the row.
     beforeChange: [
@@ -75,20 +85,6 @@ export const AnonymisationReviews: CollectionConfig = {
         const id = relationId(data.document)
         return { ...data, documentIdSnapshot: id == null ? null : Number(id) }
       },
-    ],
-    /**
-     * 🔴 `where[document.name]` / `sort=document.name` reach the gated
-     * `documents.name` through the relationship, and the narrowing on
-     * `documents` never sees them. Same for `document.uploadedBy` and
-     * `document.session` (who recorded a testimonio). Same rule, applied at
-     * this path.
-     * Imported lazily: `Documents.ts` is a large module graph.
-     */
-    beforeOperation: [
-      (async (hookArgs: Parameters<CollectionBeforeOperationHook>[0]) =>
-        (await import('./Documents')).constrainGatedQueriesAt('document.')(
-          hookArgs,
-        )) as CollectionBeforeOperationHook,
     ],
   },
   access: {

@@ -26,6 +26,7 @@ import { EvalItems } from './collections/EvalItems'
 import { EvalRuns } from './collections/EvalRuns'
 import { withoutDuplicate } from './collections/hooks/refuseDuplicate'
 import { lockDownPayloadInternals } from './access/payloadInternals'
+import { applyRelationFilters } from './access/relationFilters'
 import { guardStaleUserRows } from './lib/staleUserRow'
 
 import { PlatformSettings } from './globals/PlatformSettings'
@@ -96,6 +97,11 @@ const allowedOrigins = envOrigins.length > 0 ? envOrigins : LOCAL_DEV_ORIGINS
  * 🔴 `.then(lockDownPayloadInternals)`: Payload's own lock and preference
  * collections only exist AFTER sanitize, and ship open to any signed-in user.
  * See `access/payloadInternals.ts`.
+ *
+ * 🔴 `.then(applyRelationFilters)`: a `where` or `sort` through a relationship
+ * only reads rows the caller may read there, and never a field they may not
+ * read, on EVERY collection, those two included. See
+ * `access/relationFilters.ts`.
  */
 export default buildConfig({
   admin: {
@@ -468,4 +474,6 @@ export default buildConfig({
      */
     push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_ALLOW_PUSH === '1',
   })),
-}).then(lockDownPayloadInternals)
+})
+  .then(lockDownPayloadInternals)
+  .then(applyRelationFilters)
