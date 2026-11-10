@@ -1,9 +1,9 @@
 # ADR-0016. Infraestructura propia: una caja Hetzner, solo dev y staging, RustFS en todos los entornos
 
-- **Versión:** 1.1
-- **Fecha del documento:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
-- **Estado de la decisión:** aceptada e implementada (dev en uso; staging sin actualizar desde el 2026-10-25, según el último registro)
+- **Estado de la decisión:** aceptada e implementada (dev en uso; staging sin desplegar desde el 2026-10-17, ver "Estado al 2026-11-10")
 - **Fecha de la decisión:** 2026-10-15 (desmontaje del despliegue provisional), 2026-10-16 y 2026-10-17 (caja propia); RustFS desde el 2026-08-14
 - **Quién decidió:** responsable de desarrollo; el equipo de desarrollo lo ejecutó
 - **Fuentes:** lista de pendientes del proyecto ("Decidido: RustFS…", "Decidido: una caja propia…"); `infra/fleet/edc-1.md`; registro del proyecto del 2026-10-17; `plan/deploy-and-local-demo.md` §2 (reemplazado)
@@ -58,6 +58,12 @@ Antecedente: la propuesta inicial v0 sugería Next.js con React o FastAPI (no ve
 ### RustFS como almacén de archivos (2026-08-14)
 
 RustFS entró en local y dev el 2026-08-14. El 2026-10-17 se fijó como regla para todos los entornos (lista de pendientes del proyecto). No consta qué alternativas (por ejemplo MinIO) se compararon.
+
+## Estado al 2026-11-10
+
+- **Staging.** El registro de la caja no tiene ningún despliegue de staging posterior al 2026-10-17: todas las entradas desde entonces dicen "dev only" (citado de `infra/fleet/edc-1.md`, §4). La versión anterior de este ADR decía "sin actualizar desde el 2026-10-25"; esa fecha no tiene respaldo en el registro.
+- **Dev.** Corre 367c2698, desplegado el 2026-11-10 a las 18:27 UTC (citado de `infra/fleet/edc-1.md`, entrada 4zzzzzzzz).
+- **Volcados.** Se conservan los 7 más recientes de cada entorno, en `/root/backups/` y en la copia fuera del servidor. Es un paso manual del procedimiento de despliegue, no una tarea programada. La primera purga, el 2026-11-10, borró 52 volcados de dev y liberó 1231.3 MB en cada lado (medido con `du -sb`; citado de `infra/fleet/edc-1.md`, §7 paso 7).
 
 ## Referencias
 

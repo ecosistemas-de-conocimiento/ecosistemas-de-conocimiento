@@ -1,11 +1,11 @@
 # ADR-0001. El grafo del corpus vive en `edc_backend` como colecciones Payload
 
-- **Versión:** 1.1
-- **Fecha del documento:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada e implementada
 - **Fecha de la decisión:** 2026-08-28
-- **Quién decidió:** responsable de desarrollo ([responsable de desarrollo]), sobre la propuesta del equipo de desarrollo que escribió el ADR del grafo
+- **Quién decidió:** responsable de desarrollo, sobre la propuesta del equipo de desarrollo que escribió el ADR del grafo
 - **Fuentes:** `plan/adr-corpus-graph.md` §1, §2 (D2), §4 y §10; `apps/backend/src/lib/corpus.ts`; `apps/backend/src/lib/graph/queries.ts`
 
 **Para quién es y qué responde.** Para quien mantenga el grafo de conexiones o piense en moverlo a otra base. Responde dónde se guardan las entidades, menciones y relaciones del corpus, y por qué ahí.

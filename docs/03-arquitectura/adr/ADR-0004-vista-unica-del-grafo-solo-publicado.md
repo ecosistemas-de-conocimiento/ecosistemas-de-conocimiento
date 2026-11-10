@@ -1,7 +1,7 @@
 # ADR-0004. Vista única del grafo, solo con lo publicado y con soporte mínimo
 
-- **Versión:** 1.1
-- **Fecha del documento:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada e implementada, **enmendada el 2026-10-21** (el umbral de soporte bajó de 3 a 1)
 - **Fecha de la decisión:** 2026-08-28; enmienda el 2026-10-21
@@ -55,6 +55,14 @@ Ese mismo día se agregó el grafo combinado "Todos mis ecosistemas": quien pert
 - 🔴 Las garantías de reidentificación del ADR del grafo (§7.3) descansaban en el umbral de 3. Con umbral 1, una arista puede apoyarse en un solo testimonio publicado. La protección pasa a depender del gate de anonimización y de la regla de persona. Si el proyecto recibe testimonios reales, conviene revisar el umbral (inferido del cambio de razonamiento, no medido).
 - La pregunta de privacidad "testimonio bajo una lengua" en `/grafo` quedó diferida por decisión del responsable de desarrollo del 2026-10-17 y sigue latente (pregunta abierta).
 - Los umbrales viven en variables de entorno; subirlos no requiere código.
+
+## Estado al 2026-11-10
+
+Sin cambio en los tres filtros. En `main`, pendiente de desplegar en dev:
+
+- El backfill del grafo solo extrae documentos publicados y no retenidos por consentimiento (commit feae7e18). La extracción en vivo de un borrador sigue como en la decisión original. La re-extracción de todo lo publicado está preparada en `apps/backend/scripts/reextract-published-graph.ts` y no se ha corrido.
+- El grafo, también el combinado y el de la vista de estudiante, muestra el título con compuerta de un `documento` ([ADR-0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md); commit 2dda9a8b).
+- Una fila retenida por consentimiento no se grafica ([ADR-0022](ADR-0022-retencion-por-consentimiento.md)).
 
 ## Fuentes
 

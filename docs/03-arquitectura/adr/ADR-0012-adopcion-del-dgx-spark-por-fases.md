@@ -1,7 +1,7 @@
 # ADR-0012. Adopción del DGX Spark por fases, con falla cerrada como principio
 
-- **Versión:** 1.1
-- **Fecha del documento:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada, implementada en parte en dev. **La falla cerrada del detector está suspendida en dev** mientras los datos sean sintéticos (decisión del 2026-10-21)
 - **Fecha de la decisión:** plan del 2026-10-17; elecciones de modelos del 2026-10-21 al 2026-10-23
@@ -60,6 +60,14 @@ En el código, audio-service conserva la cola, el troceo y los callbacks, y con 
 El responsable de desarrollo revirtió la falla cerrada del detector mientras el corpus no tenga testimonios reales: un Spark caído no debe detener el gate. Si el Spark no responde (error de red, tiempo agotado, 5xx o 429), la llamada va a ai-service y de ahí a OpenRouter **con el texto crudo**. Está escrito en la cabecera de `apps/backend/src/lib/anonymise/fallbackGenerator.ts`. En la verificación registrada en `infra/fleet/edc-1.md`, las 6 llamadas del detector las sirvió el Spark, sin respaldo. Queda abierta la pregunta de si el detector alojado puede ver direcciones, teléfonos, CURP y RFC en crudo.
 
 Nota: el arnés de medición Q24 corre con `GATE_BACKEND=spark` y sin respaldo; eso describe la medición, no la configuración de dev (`apps/backend/scripts/measurements/q24/README.md`).
+
+## Estado al 2026-11-10
+
+- **Respaldo del detector en dev.** Dev usó `none` del 2026-11-06 al 2026-11-09 y volvió a `hosted` el 2026-11-09 (citado de `infra/fleet/edc-1.md`, entradas 4zzzzzz y 4zzzzzzz). La falla cerrada sigue suspendida en dev.
+- **Interruptor en tiempo de ejecución.** El global `platform-settings.detectorFallback` (`hosted` o `none`), que la administración de plataforma cambia en Ajustes, le gana a `ANONYMISE_DETECT_FALLBACK` (`apps/backend/src/lib/platformSettings.ts`, caché de 60 s como máximo). En dev el global está vacío y rige la variable (citado de `infra/fleet/edc-1.md`, 4zzzzzzz).
+- **`none` sin Spark.** Desde el 2026-11-10 (commit 14e958e2, desplegado en dev), `none` también impide la llamada hospedada cuando no hay `ANONYMISE_DETECT_URL`, como en staging: el documento queda retenido con motivo `sin-detector`. Antes, staging mandaba todo al hospedado aunque el modo fuera `none`.
+- **ZDR.** Toda llamada de ai-service a OpenRouter pide retención cero de datos (`provider.zdr: true`) y falla cerrada si ningún proveedor la cumple (commit 9b755298, desplegado en dev el 2026-11-10). El respaldo hospedado del detector va por ese camino. Las llamadas directas a DeepInfra no llevan ZDR.
+- Los títulos de testimonios y el título de un `documento` con compuerta siguen el mismo modo ([ADR-0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md)).
 
 ## Referencias
 
