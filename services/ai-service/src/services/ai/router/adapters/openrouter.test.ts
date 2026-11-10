@@ -1090,6 +1090,38 @@ describe('streamingCallOpenRouter — only model output resets the stall window'
     expect((out as { contentText: string }).contentText).toBe(`${'a'.repeat(30)}fin`);
   });
 
+  async function withWindows<T>(stall: number, first: number, fn: () => Promise<T>): Promise<T> {
+    const { env } = (await import('../../../../config/env.js')) as unknown as {
+      env: { LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS?: number };
+    };
+    const prev = env.LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS;
+    env.LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS = first;
+    try {
+      return await withStall(stall, fn);
+    } finally {
+      env.LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS = prev;
+    }
+  }
+
+  // Measured on dev 2026-11-10: one answer's first token came at 58.3 s and it finished.
+  it('keepalives before the first output get the longer first-output window', async () => {
+    fetchMock.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) =>
+      // ≈100 ms of keepalives against a 40 ms stall window and a 300 ms first-output window.
+      Promise.resolve(tickingResponse(init.signal, ': OPENROUTER PROCESSING\n\n', 5, 20)),
+    );
+    const out = await withWindows(40, 300, call);
+    expect((out as { contentText: string }).contentText).toBe('fin');
+  });
+
+  it('keepalives past the first-output window still end as a stall', async () => {
+    fetchMock.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) =>
+      Promise.resolve(tickingResponse(init.signal, ': OPENROUTER PROCESSING\n\n', 5, 60)),
+    );
+    const err = await withWindows(40, 100, call);
+    expect(err).toBeInstanceOf(OpenRouterAbortError);
+    expect(((err as { cause?: Error }).cause as Error)?.name).toBe('TimeoutError');
+  });
+
   it('reasoning chunks keep resetting it too: they are model output', async () => {
     fetchMock.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) =>
       Promise.resolve(

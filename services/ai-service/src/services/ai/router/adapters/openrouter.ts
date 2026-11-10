@@ -42,6 +42,18 @@ function stallTimeoutMs(): number {
   return env.LLM_STREAM_STALL_TIMEOUT_MS;
 }
 
+/**
+ * The window BEFORE the first output chunk, when it is longer than the stall
+ * window. A slow provider holds the socket with keepalives and only then
+ * starts: on dev 2026-11-10 one answer's first token came at 58.3 s and it
+ * still finished (measured), which a 45 s stall window from the response head
+ * would have cut. 0 or unset = the stall window alone.
+ */
+function firstOutputTimeoutMs(): number {
+  const ms = (env as { LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS?: number }).LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS;
+  return Number.isFinite(ms) && (ms as number) > 0 ? (ms as number) : 0;
+}
+
 // Config-driven like `EMBEDDINGS_URL`. Read once at module load from the
 // validated env; defaults to OpenRouter.
 const OPENROUTER_URL = env.CHAT_COMPLETIONS_URL;
@@ -482,17 +494,17 @@ export async function* callOpenRouterStream(
       : stallCtrl.signal
     : opts.signal;
   let stallTimer: ReturnType<typeof setTimeout> | undefined;
-  const armStallTimer = (): void => {
+  const armStallTimer = (ms: number = stallMs): void => {
     if (!stallEnabled) return;
     if (stallTimer) clearTimeout(stallTimer);
     stallTimer = setTimeout(() => {
       stallCtrl.abort(
         new DOMException(
-          `OpenRouter stream stalled: no frame for ${stallMs}ms`,
+          `OpenRouter stream stalled: no model output for ${ms}ms`,
           'TimeoutError',
         ),
       );
-    }, stallMs);
+    }, ms);
     (stallTimer as { unref?: () => void }).unref?.();
   };
   const clearStallTimer = (): void => {
@@ -531,7 +543,8 @@ export async function* callOpenRouterStream(
   let streamError: { message: string; status: number } | undefined;
 
   try {
-  armStallTimer();
+  // Until the first output chunk the window is the longer of the two.
+  armStallTimer(Math.max(stallMs, firstOutputTimeoutMs()));
   read: while (true) {
     const { done, value } = await reader.read();
     if (done) break;
