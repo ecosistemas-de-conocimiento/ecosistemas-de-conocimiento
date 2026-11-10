@@ -101,10 +101,74 @@ function gluedIntoIdentifier(text: string, at: number, end: number): boolean {
 }
 
 /** `15 de agosto de 2026` → `agosto de 2026`. Also `15 de agosto del 2026`. */
+/**
+ * The first day of a range before the day a rule takes: `1-7 junio`, `del 1 al
+ * 15 de agosto`, `entre 3 y 5 de mayo`. Without it the first day stayed
+ * ("1-junio", measured on the repo's own docs, ola 4).
+ */
+const DAY_RANGE = String.raw`(?:\d{1,2}\s*[-–]\s*|\d{1,2}\s+(?:al|a|y)\s+)?`
+
 const LONG_DATE = new RegExp(
-  String.raw`\b\d{1,2}\s+de\s+(${MONTHS.join('|')})\s+de[l]?\s+(\d{4})\b`,
+  String.raw`\b${DAY_RANGE}\d{1,2}\s+de\s+(${MONTHS.join('|')})\s+de[l]?\s+(\d{4})\b`,
   'gi',
 )
+
+/*
+ * ── OLA 4 (carril F, 2026-11-10): THE FORMS THE RULES ABOVE NEVER READ ─────
+ *
+ * Same policy as above: the DAY goes, month and year stay; a date glued into
+ * an identifier by `-`/`_` goes whole (D2). An impossible day or month is not
+ * a date and is left as written, which is what keeps versions, times and
+ * amounts out: `1.2.3` (one-digit year), `10.30` and `3.50` (two parts),
+ * `10.10.2010.1` (a fourth part).
+ */
+
+/** `1990/05/03`, `1990.05.03`, `1990-5-3` → `1990/05`, `1990.05`, `1990-05`. ISO runs first. */
+const YMD_DATE = /(?<![A-Za-z0-9]|\d[./-])((?:19|20)\d{2})([/.-])(\d{1,2})\2(\d{1,2})(?![A-Za-z0-9]|\2\d)/g
+
+/**
+ * `03.05.1990` → `05.1990`, `03.05.90` → `05.90`. Day first, like
+ * {@link SLASH_DATE}; the year stays as written (no century is guessed). A
+ * two-digit year only with a two-digit day and month: `1.2.10` is a version.
+ */
+const DOT_DATE = /(?<![A-Za-z0-9]|\d\.)(?:(\d{1,2})\.(\d{1,2})\.((?:19|20)\d{2})|(\d{2})\.(\d{2})\.(\d{2}))(?![A-Za-z0-9]|\.\d)/g
+
+const validDayMonth = (day: string, month: string): boolean =>
+  Number(day) >= 1 && Number(day) <= 31 && Number(month) >= 1 && Number(month) <= 12
+
+/**
+ * The day before a month in words, whatever follows: `3 de mayo del 90`,
+ * `3 de mayo`, `3 mayo 1990`, `1º de mayo`, `primero de mayo`. Only the day
+ * (and its "de") is removed: `3 de mayo del 90` → `mayo del 90`. A month with
+ * no day ("mayo del 90") is already at month granularity and is left alone.
+ * Runs after {@link LONG_DATE}, which keeps its own output for a 4-digit year.
+ *
+ * ⚠ A STREET OR A SCHOOL IS NOT A DATE: "Calle 5 de Mayo", "Escuela 16 de
+ * Septiembre". A capitalised month after a capitalised word or an
+ * abbreviation ("Av.") is left as written (see the replace below).
+ */
+const DAY_MONTH = new RegExp(
+  String.raw`(?<![\p{L}\p{M}\p{N}])${DAY_RANGE}(?:\d{1,2}(?:[º°ª]|o(?=\s))?|primero)\s+(?:de\s+)?(?=(?:${MONTHS.join('|')})(?![\p{L}\p{M}]))`,
+  'giu',
+)
+/** The word before a day that makes "5 de Mayo" a name: capitalised, or an abbreviation. */
+const NAME_BEFORE = /(?:^|[^\p{L}\p{M}])(\p{Lu}[\p{L}\p{M}]*\.?|\p{L}+\.)\s*$/u
+/** Capitalised words that still introduce a date ("El 3 De Mayo", "Desde el 5 de Mayo"). */
+const DATE_LEADERS: ReadonlySet<string> = new Set([
+  'el', 'la', 'los', 'del', 'de', 'en', 'desde', 'hasta', 'para', 'por', 'a', 'al', 'y', 'o', 'e', 'que',
+  'dia', 'hoy', 'fue', 'era', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo',
+])
+
+/** The rule name for a CURP removed here (`deterministic.ts` uses the same). */
+export const LABEL_CURP = 'curp'
+
+/**
+ * A CURP: 4 letters, 6 date digits, H/M, 5 letters, 1 letter or digit, 1
+ * digit. Case-insensitive. Stage 2 has one too, but with `\b` edges, so
+ * `curp_GOMA900503HDFRRN09` passed (an `_` is a word character). Here the
+ * edges are `[A-Za-z0-9]`, like the dates (D2).
+ */
+const CURP = /(?<![A-Za-z0-9])[A-Za-z]{4}\d{6}[HhMm][A-Za-z]{5}[A-Za-z0-9]\d(?![A-Za-z0-9])/g
 
 /**
  * A UUID in any casing, with or without dashes in the canonical positions.
@@ -555,10 +619,23 @@ export function structuralPass(
   const trusted = new Set((options.keepAuthors ?? []).filter((name) => namePartsOf(name).length >= 2))
   let out = text.replace(NONCHARACTERS, REPLACEMENT_CHARACTER)
 
+  let curps = 0
+  out = out.replace(CURP, () => {
+    curps += 1
+    return OMITTED_PLACEHOLDER
+  })
+
   out = out.replace(ISO_DATE, (m: string, year: string, month: string, _day: string, at: number, whole: string) => {
     dates += 1
     if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
     return `${year}-${month}`
+  })
+
+  out = out.replace(YMD_DATE, (m: string, year: string, sep: string, month: string, day: string, at: number, whole: string) => {
+    if (!validDayMonth(day, month)) return m
+    dates += 1
+    if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
+    return `${year}${sep}${month.padStart(2, '0')}`
   })
 
   out = out.replace(SLASH_DATE, (m: string, _day: string, month: string, year: string, at: number, whole: string) => {
@@ -571,9 +648,31 @@ export function structuralPass(
     return `${month.padStart(2, '0')}/${yyyy}`
   })
 
+  out = out.replace(
+    DOT_DATE,
+    (m: string, d4: string, m4: string, y4: string, d2: string, m2: string, y2: string, at: number, whole: string) => {
+      const [day, month, year] = d4 !== undefined ? [d4, m4, y4] : [d2, m2, y2]
+      if (!validDayMonth(day, month)) return m
+      dates += 1
+      if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
+      return `${month.padStart(2, '0')}.${year}`
+    },
+  )
+
   out = out.replace(LONG_DATE, (_m, month: string, year: string) => {
     dates += 1
     return `${month} de ${year}`
+  })
+
+  out = out.replace(DAY_MONTH, (m: string, at: number, whole: string) => {
+    const day = /^\d+/.exec(m)?.[0]
+    if (day !== undefined && (Number(day) < 1 || Number(day) > 31)) return m
+    // "Calle 5 de Mayo": a capitalised month after a name or an abbreviation.
+    const month = whole.charAt(at + m.length)
+    const before = NAME_BEFORE.exec(whole.slice(Math.max(0, at - 40), at))?.[1]
+    if (month === month.toUpperCase() && before !== undefined && !DATE_LEADERS.has(fold(before.replace(/\.$/u, '')))) return m
+    dates += 1
+    return ''
   })
 
   out = out.replace(UUID, () => {
@@ -842,6 +941,7 @@ export function structuralPass(
 
   pushCount(removed, LABEL_FECHA, dates)
   pushCount(removed, LABEL_ID, ids)
+  pushCount(removed, LABEL_CURP, curps)
   pushCount(removed, LABEL_AUTOR, authors)
 
   return { text: out, removed, bylines }
