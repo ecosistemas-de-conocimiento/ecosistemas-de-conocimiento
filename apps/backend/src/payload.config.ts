@@ -1,4 +1,4 @@
-import { buildConfig } from 'payload'
+import { buildConfig, defaultLoggerOptions } from 'payload'
 import { postgresAdapter } from '@payloadcms/db-postgres'
 import { lexicalEditor } from '@payloadcms/richtext-lexical'
 import path from 'node:path'
@@ -45,6 +45,8 @@ import { checkAIServiceCapabilities } from './lib/capabilityCheck'
 import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
 import { startEmbeddingJanitor } from './lib/embeddingJanitor'
+import { safeErrSerializer } from './lib/errorSummary'
+import { startGraphOrphanJanitor } from './lib/graph/orphanJanitor'
 import { startIngestRecoveryJanitor } from './lib/ingestRecovery'
 import { ensureEcosystemBudgets } from './lib/provisionEcosystem'
 import { registerPlatformSettings } from './lib/platformSettings'
@@ -396,6 +398,13 @@ export default buildConfig({
     //    and chat turns stuck at `embedding`, with a retryable reason.
     startIngestRecoveryJanitor(payload)
 
+    // 9b. Graph orphan sweep (lib/graph/orphanJanitor.ts, C-05). Daily
+    //     (GRAPH_ORPHAN_JANITOR_INTERVAL_MIN, default 1440). Deletes the
+    //     graph_entities (names) no mention or relation names any more, which
+    //     a deleted document leaves behind. GRAPH_ORPHAN_JANITOR_ENABLED=false
+    //     turns it off.
+    startGraphOrphanJanitor(payload)
+
     // 10. Every ecosistema has an ai-service budget row. The create hook in
     //     collections/Organizations.ts provisions once, fire-and-forget; a
     //     failure there left the ecosistema answering 402 forever. Reads
@@ -403,6 +412,14 @@ export default buildConfig({
     //     operator-raised cap is never reset. Not awaited: boot must not wait
     //     on ai-service. Never throws.
     void ensureEcosystemBudgets(payload, { logger: payload.logger })
+  },
+  // 🔴 P-07: a failed query's DrizzleQueryError carries its params (a whole
+  // testimony) in `message` and `stack`. Payload logs request errors as
+  // `{ err }`; this serializer keeps the type, the SQLSTATE and the frames.
+  // `destination` keeps Payload's default pretty output.
+  logger: {
+    options: { serializers: { err: safeErrSerializer } },
+    destination: defaultLoggerOptions,
   },
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {

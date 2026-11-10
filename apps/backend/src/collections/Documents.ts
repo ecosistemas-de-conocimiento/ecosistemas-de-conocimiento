@@ -43,6 +43,7 @@ import { refuseDisabledAudioUpload } from './hooks/featureGates'
 import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
 import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote, publishStudentNoteChanges } from '../lib/studentNotes'
 import { anonimizacionEndpoints } from '../lib/anonymisationControls'
+import { errSummary } from '../lib/errorSummary'
 import {
   consumeCorpusCleanupSkip,
   isOwnersMedia,
@@ -1440,7 +1441,7 @@ async function markExtractIngestFailed(row: DocumentRow, err: unknown): Promise<
       where: [{ ingestStatus: { in: ['pending', 'extracting'] } }],
     })
   } catch (writeErr) {
-    console.error('[documents] could not mark doc', docId, 'failed after extract+ingest threw', writeErr)
+    console.error('[documents] could not mark doc', docId, 'failed after extract+ingest threw', errSummary(writeErr))
   }
 }
 
@@ -1524,7 +1525,8 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
   // visible to a fresh `findByID` until commit).
   setImmediate(() => {
     void runExtractAndIngest(row).catch(async (err) => {
-      console.error('[documents] background extract+ingest failed', row.id, err)
+      // 🔴 P-07: never `err` — a failed `extracted_text` write's message is its params.
+      console.error('[documents] background extract+ingest failed', row.id, errSummary(err))
       await markExtractIngestFailed(row, err)
     })
   })
