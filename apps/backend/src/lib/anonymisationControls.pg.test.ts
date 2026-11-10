@@ -723,7 +723,8 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
     it('🔴 I-14: no more than ANONYMISE_REGATE_CONCURRENCY (2) gates at once', async () => {
       ecosystemRegate.deps = deps()
       await setFeatures({ keepDocumentAuthor: true })
-      await seedDoc({ redacted: withAuthor })
+      // Published: a draft the re-gate did not unpublish is not the job's (taller, 2026-11-10).
+      await seedDoc({ publication: 'published', redacted: withAuthor })
       await db.execute(sql.raw(`UPDATE documents SET anonymisation_report = ${settingsOn('keepDocumentAuthor')} WHERE id = ${DOC}`))
       for (const id of [11, 12, 13]) await cloneDoc(id)
       let live = 0
@@ -752,6 +753,146 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
       expect(startGate).toHaveBeenCalledTimes(1)
       expect(await row()).toMatchObject({ anonymisation_status: 'n/a' })
       expect(await docCol(11, 'anonymisation_status, publication_status')).toEqual({ anonymisation_status: 'ready', publication_status: 'published' })
+    })
+  })
+
+  /**
+   * 🔴 THE SEMIOSIS WORKSHOP DRAFTS (owner rule 2026-11-04; audit
+   * `taller-2026-11-10/rutas.md` #1-#3): a draft of org 8 whose verdict was
+   * made with a switch ON gets no call to the detector, embeddings or graph
+   * from any ecosistema trigger. `startGate` (the only way to the detector,
+   * the embeddings and `rebuildDocumentGraph`, `liveDeps`), `clientFor` (the
+   * corpus deletes) and `purgeGraph` are spies. Each test has the positive
+   * controls: the same verdict PUBLISHED is re-gated, and a draft the re-gate
+   * itself unpublished still is.
+   */
+  describe('🔴 the ecosistema re-gate never reprocesses a draft it did not unpublish (taller, 2026-11-10)', () => {
+    const TALLER = 8
+    const DRAFT = 80
+    const PUBLISHED = 81
+    const UNPUBLISHED_BY_REGATE = 82
+    const withNames = 'Autora: Ana Ruiz. Como mostró López (2020), [Persona B] habló.'
+    const REPORT_ON = JSON.stringify({
+      ...(JSON.parse(REPORT_OFF) as Record<string, unknown>),
+      settings: { keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: true },
+    })
+    const clientFor = vi.fn<ControlDeps['clientFor']>()
+    const purgeGraph = vi.fn<NonNullable<ControlDeps['purgeGraph']>>()
+    const spied = (): ControlDeps => ({ clientFor, startGate, purgeGraph })
+
+    const seedTaller = async (features: Record<string, boolean>) => {
+      clientFor.mockReset().mockImplementation(() => fake.client as never)
+      purgeGraph.mockReset().mockResolvedValue(undefined)
+      await db.execute(sql.raw(`
+        INSERT INTO organizations (id, name, slug, features) VALUES (${TALLER}, 'Taller', 'taller', '${JSON.stringify(features)}'::jsonb);
+        INSERT INTO memberships (id, user_id, organization_id, role, person_name) VALUES (5, ${INES}, ${TALLER}, 'investigador', null);`))
+      invalidateFeatures()
+      // The same verdict three times, made with every switch ON and keeping a name under each.
+      const kept = (name: string) => `'${JSON.stringify([{ name, model: 'static', at: '2026-11-04T00:00:00.000Z' }])}'::jsonb`
+      for (const [id, publication, report] of [
+        [DRAFT, 'draft', REPORT_ON],
+        [PUBLISHED, 'published', REPORT_ON],
+        [UNPUBLISHED_BY_REGATE, 'draft', JSON.stringify({ ...(JSON.parse(REPORT_ON) as Record<string, unknown>), regate: { unpublished: true } })],
+      ] as const) {
+        await db.execute(sql.raw(`
+          INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, content_kind, anonymise, ingest_status,
+            anonymisation_status, publication_status, extracted_text, redacted_text, anonymisation_report,
+            authors_kept, cited_authors_kept, public_figures_kept)
+          VALUES (${id}, ${TALLER}, ${ROOT}, 'caso-${id}.pdf', 'pdf', 'documento', true, 'ready', 'ready', '${publication}',
+            'Autora: Ana Ruiz. Como mostró López (2020), Pedro Gómez habló.', '${withNames}', '${report}'::jsonb,
+            ${kept('Ana Ruiz')}, ${kept('López')}, '[{"name":"López","motivo":"autor citado"}]'::jsonb)`))
+      }
+    }
+
+    const changeTaller = async (features: Record<string, boolean>, as: number) => {
+      await payload.update({
+        collection: 'organizations',
+        id: TALLER,
+        data: { features } as never,
+        overrideAccess: true,
+        user: await userDoc(as),
+      })
+      invalidateFeatures()
+      await ecosystemRegate.last
+    }
+
+    const gatedIds = () => startGate.mock.calls.map((c) => Number((c[1] as { id: unknown }).id)).sort()
+    const purgedIds = () => purgeGraph.mock.calls.map((c) => Number(c[1])).sort()
+    const corpusIds = () =>
+      [...fake.client.admin.setDocumentValidity.mock.calls, ...fake.client.admin.deleteDocument.mock.calls].map((c) => String(c[1]))
+
+    /** The draft: untouched, and nothing reached for it. Positive controls: 81 and 82 were re-gated. */
+    const expectOnlyControlsRegated = async () => {
+      expect(gatedIds()).toEqual([PUBLISHED, UNPUBLISHED_BY_REGATE])
+      expect(purgedIds()).toEqual([PUBLISHED, UNPUBLISHED_BY_REGATE])
+      expect(clientFor).toHaveBeenCalledTimes(2)
+      expect(corpusIds()).not.toContain(String(DRAFT))
+      expect(corpusIds()).toContain(String(PUBLISHED))
+      expect(await docCol(DRAFT, `anonymisation_status, publication_status, redacted_text, anonymisation_report->'regate' AS mark`)).toEqual({
+        anonymisation_status: 'ready',
+        publication_status: 'draft',
+        redacted_text: withNames,
+        mark: null,
+      })
+      for (const id of [PUBLISHED, UNPUBLISHED_BY_REGATE]) {
+        expect(await docCol(id, 'anonymisation_status, publication_status')).toEqual({ anonymisation_status: 'n/a', publication_status: 'draft' })
+      }
+    }
+
+    it('(a) keepDocumentAuthor / keepCitedAuthors ON→OFF in Ajustes', async () => {
+      ecosystemRegate.deps = spied()
+      const on = { studentView: true, keepPublicFigures: true, keepDocumentAuthor: true, keepCitedAuthors: true }
+      await seedTaller(on)
+      await changeTaller({ ...on, keepDocumentAuthor: false }, INES)
+      await expectOnlyControlsRegated()
+
+      // keepCitedAuthors too: the draft is still untouched (the controls are mid-gate now, `n/a`).
+      startGate.mockClear()
+      purgeGraph.mockClear()
+      await changeTaller({ ...on, keepDocumentAuthor: false, keepCitedAuthors: false }, INES)
+      expect(gatedIds()).not.toContain(DRAFT)
+      expect(purgedIds()).not.toContain(DRAFT)
+      expect(await docCol(DRAFT, 'anonymisation_status')).toEqual({ anonymisation_status: 'ready' })
+    })
+
+    it('(b) a platform admin turns keepPublicFigures OFF', async () => {
+      ecosystemRegate.deps = spied()
+      const on = { studentView: true, keepPublicFigures: true, keepDocumentAuthor: true, keepCitedAuthors: true }
+      await seedTaller(on)
+      await changeTaller({ ...on, keepPublicFigures: false }, ROOT)
+      await expectOnlyControlsRegated()
+    })
+
+    it('(c) the ecosistema "Reintentar": the draft is not counted and not re-gated', async () => {
+      ecosystemRegate.deps = spied()
+      // The author/cited defaults are OFF (unset) and every verdict kept names under them.
+      await seedTaller({ studentView: true, keepPublicFigures: true })
+      expect((await call('get', INES, { org: true, id: TALLER })).body).toEqual({ pendingRegate: 2, regating: false, unpublishedByRegate: 1 })
+      const res = await call('post', INES, { org: true, id: TALLER })
+      expect(res).toMatchObject({ status: 202, body: { started: true, pendingRegate: 2 } })
+      await ecosystemRegate.last
+      await expectOnlyControlsRegated()
+    })
+
+    it('(c) the document\'s "Reintentar": not on a draft the re-gate did not unpublish, unless its own re-gate failed', async () => {
+      await seedTaller({ studentView: true, keepPublicFigures: true })
+      // The screen still says the names are there, but offers no retry.
+      expect((await call('get', ROOT, { id: DRAFT })).body).toMatchObject({ pendingRegate: true, retryable: false })
+      const refused = await call('post', ROOT, { id: DRAFT })
+      expect(refused.status).toBe(400)
+      expect(startGate).not.toHaveBeenCalled()
+      expect(clientFor).not.toHaveBeenCalled()
+      expect(purgeGraph).not.toHaveBeenCalled()
+      // Positive controls: the published row and the one the re-gate unpublished are retried.
+      expect((await call('get', ROOT, { id: PUBLISHED })).body).toMatchObject({ retryable: true })
+      expect((await call('post', ROOT, { id: PUBLISHED })).body.regate).toBe('started')
+      expect((await call('post', ROOT, { id: UNPUBLISHED_BY_REGATE })).body.regate).toBe('started')
+      expect(gatedIds()).toEqual([PUBLISHED, UNPUBLISHED_BY_REGATE])
+      // An explicit re-gate on the draft itself that failed stays retryable.
+      await db.execute(sql.raw(`UPDATE documents SET anonymisation_report = jsonb_set(anonymisation_report, '{regate}',
+        '{"failedAt":"2026-11-10T00:00:00.000Z","reason":"erase-failed"}') WHERE id = ${DRAFT}`))
+      expect((await call('get', ROOT, { id: DRAFT })).body).toMatchObject({ retryable: true })
+      expect((await call('post', ROOT, { id: DRAFT })).body.regate).toBe('started')
     })
   })
 

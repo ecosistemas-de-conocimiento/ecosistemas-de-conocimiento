@@ -75,6 +75,8 @@
  * ({@link regateInheritors}): bounded in-process retries, rows mid-gate
  * waited for, a cap on concurrent gates. A row that still fails stays
  * `pendingRegate`/`retryable`; the ecosistema endpoint counts and retries them.
+ * 🔴 Never a draft the re-gate did not unpublish (`draftOutsideRegate`): only
+ * its own PATCH re-gates it, and its own "Reintentar" only after that failed.
  */
 
 import type { Endpoint, Payload, PayloadRequest } from 'payload'
@@ -122,7 +124,7 @@ export interface AnonimizacionView {
   switches: Switches
   /** True while the stored verdict keeps a name the current switches would remove. */
   pendingRegate: boolean
-  /** `pendingRegate` or a failed re-gate, and nobody else is writing the row: "Reintentar". */
+  /** A failed re-gate, or `pendingRegate` (not on a draft the re-gate did not unpublish), and nobody else is writing the row: "Reintentar". */
   retryable: boolean
   /** A re-gate unpublished it and it is still a draft. */
   unpublishedByRegate: boolean
@@ -253,6 +255,22 @@ function keepsNameUnder(row: Row, key: AnonymiseSwitch): boolean {
   return row.anonymisationStatus !== 'ready' || keptUnder(row, key)
 }
 
+/**
+ * 🔴 A DRAFT THE RE-GATE DID NOT UNPUBLISH IS NOT THE ECOSISTEMA'S TO RE-GATE
+ * (owner rule 2026-11-04, the Semiosis workshop drafts held without their
+ * authors' consent; coordinator decision 2026-11-10, audit `taller-2026-11-10`
+ * routes #1-#3). Its text must not go to a model because a default changed or
+ * someone pressed the ecosistema's "Reintentar": the ecosistema job skips it
+ * ({@link settleOne}), the ecosistema count leaves it out
+ * ({@link organizationCounts}), and its own "Reintentar" only retries a re-gate
+ * that already failed on it ({@link retryableOf}). Only an explicit change on
+ * that document (the PATCH) re-gates it. A draft the re-gate itself took out of
+ * the shared corpus (`regate.unpublished`) is still the job's (I-01).
+ */
+function draftOutsideRegate(row: Row): boolean {
+  return row.publicationStatus === 'draft' && markOf(row).unpublished !== true
+}
+
 /** The stored verdict keeps a name some current switch would remove. */
 export function pendingRegateOf(row: Row, switches: Switches): boolean {
   if (!regatable(row)) return false
@@ -331,7 +349,8 @@ export function viewOf(
 }
 
 function retryableOf(row: Row, switches: Switches, pending = pendingRegateOf(row, switches)): boolean {
-  return regatable(row) && !busy(row) && (pending || typeof markOf(row).failedAt === 'string')
+  const failed = typeof markOf(row).failedAt === 'string'
+  return regatable(row) && !busy(row) && (failed || (pending && !draftOutsideRegate(row)))
 }
 
 export interface ControlDeps {
@@ -699,6 +718,8 @@ async function settleOne(payload: Payload, id: Id, org: Id, deps: ControlDeps, m
     const row = await readRow(payload, String(id))
     if (!row) return 'none'
     if (row.anonymisationStatus === 'pending') return 'pending'
+    // 🔴 Never purged, reset, gated or rebuilt by this job (`draftOutsideRegate`).
+    if (draftOutsideRegate(row)) return 'none'
     const switches = await effectiveSwitches(payload, org, row)
     const plan = regatable(row) && typeof markOf(row).failedAt === 'string' ? 'regate' : regatePlan(row, switches, { offOnly: true })
     if (plan === 'none') return 'none'
@@ -727,7 +748,8 @@ async function settleOne(payload: Payload, id: Id, org: Id, deps: ControlDeps, m
 /**
  * 🔴 AN ECOSISTEMA DEFAULT TURNED OFF RE-GATES WHAT KEPT A NAME UNDER IT
  * (coordinator decisions 2026-11-07 X7 and 2026-11-10 I-01/I-02/I-03/I-14).
- * Every gated `documento`/`testimonio` of the ecosistema is planned against
+ * Every gated `documento`/`testimonio` of the ecosistema, except a draft the
+ * re-gate did not unpublish ({@link draftOutsideRegate}), is planned against
  * its CURRENT effective switches ({@link settleOne}): a verdict that kept a
  * name under a switch now off goes through {@link regateRow}; one that kept
  * nobody only gets its `settings` updated (not unpublished); a stamped
@@ -923,7 +945,7 @@ export async function organizationCounts(payload: Payload, organizationId: Id): 
   let unpublishedByRegate = 0
   for (const row of found.docs ?? []) {
     if (markOf(row).unpublished === true && row.publicationStatus === 'draft') unpublishedByRegate++
-    if (!regatable(row)) continue
+    if (!regatable(row) || draftOutsideRegate(row)) continue
     if (typeof markOf(row).failedAt === 'string' || pendingRegateOf(row, await effectiveSwitches(payload, organizationId, row))) {
       pendingRegate++
     }
