@@ -37,6 +37,7 @@
 import pino, { type Logger } from 'pino';
 
 import { env } from './config/env.js';
+import { LOG_SAFE_OPTIONS } from './errors/log-safe.js';
 
 /**
  * The minimum a background component needs to be honest about what it did.
@@ -56,7 +57,8 @@ export interface FleetLogger extends ComponentLogger {
 
 /**
  * Root logger, configured to match the Fastify instance logger in
- * `server.ts` — same level from `LOG_LEVEL`, same redaction — so a line
+ * `server.ts` — same level from `LOG_LEVEL`, same redaction and `err`
+ * serializer (`errors/log-safe.ts`) — so a line
  * written from a worker looks the same in Coolify's stream as one written
  * from a route.
  *
@@ -65,5 +67,5 @@ export interface FleetLogger extends ComponentLogger {
  */
 export const rootLogger: Logger = pino({
   level: env.LOG_LEVEL,
-  redact: ['req.headers.authorization'],
+  ...LOG_SAFE_OPTIONS,
 });

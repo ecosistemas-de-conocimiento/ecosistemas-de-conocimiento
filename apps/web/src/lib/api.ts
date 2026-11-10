@@ -1,7 +1,7 @@
 import { safeErrMessage } from '$lib/errorSummary';
 import type { Message, WorkingDoc, ContextRef, ContextScope, Provenance } from './types';
 import { AI_UNAVAILABLE_MESSAGE, AI_UNAVAILABLE_CODE } from './aiMessages';
-import { EMPTY_ANSWER_CODE, isEmptyGeneration } from '@edc/chat-engine/core';
+import { ANSWER_TRUNCATED_CODE, EMPTY_ANSWER_CODE, isEmptyGeneration } from '@edc/chat-engine/core';
 
 /**
  * Client-side wrapper around the BFF endpoint at /api/generate.
@@ -104,6 +104,7 @@ export function userFacingError(err: unknown): string {
     return AI_UNAVAILABLE_MESSAGE;
   }
   if (err instanceof AIServiceError && err.code === EMPTY_ANSWER_CODE) return EMPTY_ANSWER_MESSAGE;
+  if (err instanceof AIServiceError && err.code === ANSWER_TRUNCATED_CODE) return ANSWER_TRUNCATED_MESSAGE;
   // Every other failure text is written for developers ("Network error: …",
   // "ai-service: …", "HTTP 502"). The people using this are not technical
   // (UX backlog #26), so they get one plain sentence and the detail goes to
@@ -120,6 +121,17 @@ export const CONNECTION_LOST_MESSAGE = 'Se perdió la conexión antes de recibir
 
 /** What it says when the model answered with no text (`EMPTY_ANSWER_CODE`). */
 export const EMPTY_ANSWER_MESSAGE = 'La respuesta llegó vacía.';
+
+/** What it says when the model spent the output limit before writing (`ANSWER_TRUNCATED_CODE`). */
+export const ANSWER_TRUNCATED_MESSAGE = 'La respuesta excedió el límite de longitud.';
+
+/**
+ * Whether "Reintentar" can help a failed turn. Not for `ANSWER_TRUNCATED_CODE`:
+ * the same question hits the same limit again.
+ */
+export function canRetryTurn(err: unknown): boolean {
+  return !(err instanceof AIServiceError && err.code === ANSWER_TRUNCATED_CODE);
+}
 
 /** An answer with no visible text is a failed turn, whichever transport brought it. */
 function emptyAnswerError(): AIServiceError {
@@ -318,7 +330,8 @@ export interface RunTurnOptions extends StreamGenerateOptions {
  *      way: ask again on sync (`generateSync`), the whole turn from scratch.
  *      A server-declared error after part of the answer is final, and so is
  *      an empty answer (`EMPTY_ANSWER_CODE`): no second wait on its own, the
- *      person asks again with "Reintentar". After a
+ *      person asks again with "Reintentar". An answer cut at the output limit
+ *      (`ANSWER_TRUNCATED_CODE`) is final too, with no "Reintentar". After a
  *      lost connection, look once in the saved conversation first: the
  *      server may have saved the answer, and asking again would pay twice.
  *   3. The sync request lost its connection too: the server may still finish
@@ -354,6 +367,7 @@ export async function runTurn(
     if (isAbort(err)) throw err;
     if (received && !(err instanceof ConnectionLostError)) throw err;
     if (err instanceof AIServiceError && err.code === EMPTY_ANSWER_CODE) throw err;
+    if (!canRetryTurn(err)) throw err;
     if (err instanceof ConnectionLostError) {
       const saved = await findSavedAnswer(input.sessionId, input.turnId, { ...opts, recoverAttempts: 1 });
       if (saved) return saved;

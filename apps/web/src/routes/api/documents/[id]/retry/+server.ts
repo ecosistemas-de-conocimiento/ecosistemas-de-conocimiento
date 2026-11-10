@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
+import { backendJson } from '$lib/server/backendResponse';
 
 /**
  * BFF proxy for re-running a FAILED ingest / transcription.
@@ -44,10 +45,10 @@ export const POST: RequestHandler = async ({ locals, params }) => {
   if (!res.ok) {
     // Pass the status through: 403 "not yours", 409 "nothing to retry" and a
     // 5xx are three different things the caller should not have to guess at.
-    return json(body, { status: res.status });
+    return backendJson(body, res);
   }
 
   // The backend accepted the re-run; the row is back at `pending` and the
   // afterChange hook has it. We report only that — never a completed state.
-  return json({ ok: true, ingestStatus: 'pending' }, { status: res.status });
+  return backendJson({ ok: true, ingestStatus: 'pending' }, res);
 };

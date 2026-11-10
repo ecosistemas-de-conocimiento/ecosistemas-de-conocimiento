@@ -118,7 +118,7 @@ vi.hoisted(() => {
 import { AiServiceError, CodedEnvelopeError } from './base.js';
 import { classifyStreamError, mapGenerateError } from './generate-map.js';
 import { ProviderUnavailable } from '../services/ai/router/router.js';
-import { EmptyCompletion } from '../services/ai/router/empty-completion.js';
+import { CompletionTruncated, EmptyCompletion } from '../services/ai/router/empty-completion.js';
 import {
   BudgetExceeded,
   BudgetMisconfigured,
@@ -268,6 +268,19 @@ describe('golden: mapGenerateError (JSON transports)', () => {
     });
   });
 
+  it('CompletionTruncated → 502 CompletionTruncated + code + traceId', () => {
+    const err = new CompletionTruncated({ traceId: 'trace-1' });
+    const mapped = mapGenerateError(err);
+    expect(mapped?.status).toBe(502);
+    expect(mapped?.headers).toBeUndefined();
+    expect(overWire(mapped?.body)).toEqual({
+      error: 'CompletionTruncated',
+      code: 'ERR_COMPLETION_TRUNCATED',
+      traceId: 'trace-1',
+      message: 'The LLM provider hit the output token limit before writing an answer.',
+    });
+  });
+
   it('an unmapped error returns undefined so Fastify produces the generic 500', () => {
     expect(mapGenerateError(new Error('internal detail: db password rejected'))).toBeUndefined();
     expect(mapGenerateError('not an error at all')).toBeUndefined();
@@ -300,6 +313,15 @@ describe('golden: classifyStreamError (SSE transport)', () => {
       errorCode: 'ERR_EMPTY_COMPLETION',
       traceId: 'trace-1',
       message: 'The LLM provider returned an empty answer.',
+    });
+  });
+
+  it('CompletionTruncated → typed code + errorCode + traceId', () => {
+    expect(classifyStreamError(new CompletionTruncated({ traceId: 'trace-1' }))).toEqual({
+      code: 'CompletionTruncated',
+      errorCode: 'ERR_COMPLETION_TRUNCATED',
+      traceId: 'trace-1',
+      message: 'The LLM provider hit the output token limit before writing an answer.',
     });
   });
 
@@ -933,7 +955,10 @@ describe('changed vs the earlier contract: an UNKNOWN error is redacted, not pub
     );
     expect(line).toBeDefined();
     expect(line?.['level']).toBe(50);
-    expect(JSON.stringify(line)).toContain('duplicate key value violates unique constraint');
+    // The log keeps the SQLSTATE, but a database error's text can quote the
+    // row, so `errors/log-safe.ts` keeps it out of the log line too.
+    expect(JSON.stringify(line)).not.toContain('duplicate key');
+    expect(JSON.stringify(line)).not.toContain('acme, chat, policies');
   });
 
   it('unchanged: a 4xx that is exposed BY DESIGN still ships its own envelope', async () => {

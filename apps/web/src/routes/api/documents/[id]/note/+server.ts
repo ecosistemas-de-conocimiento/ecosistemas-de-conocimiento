@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
+import { backendJson } from '$lib/server/backendResponse';
 
 /**
  * `PATCH /api/documents/[id]/note` — the note editor's autosave: name, body, pin.
@@ -22,5 +23,5 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
     body: JSON.stringify(body),
   });
   const out = await res.json().catch(() => ({}));
-  return json(out, { status: res.status });
+  return backendJson(out, res);
 };
