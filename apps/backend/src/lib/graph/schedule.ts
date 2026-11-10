@@ -20,7 +20,7 @@
  * is a missing feature; an upload that fails because of it is a broken product.
  */
 
-import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate, rowMustPassGate } from '@/lib/anonymiseDocument'
+import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/documentColumns'
 import { errSummary, isDatabaseError } from '@/lib/errorSummary'
 
@@ -429,7 +429,7 @@ async function readGraphableRow(
     contentKind: typeof row.contentKind === 'string' ? row.contentKind : null,
     anonymise: anonymiseRequested(row.anonymise),
     publicationStatus: row.publicationStatus,
-    seeds: wikiLinkSeedingEnabled(organizationId) ? wikiSeedsForRow(row, corpus.text, rowMustPassGate(row)) : null,
+    seeds: wikiLinkSeedingEnabled(organizationId) ? wikiSeedsForRow(row, corpus.text) : null,
     personaLabels: keptLogNames(row.publicFiguresKept),
     authorNames: blockedAuthorNames(row),
   }

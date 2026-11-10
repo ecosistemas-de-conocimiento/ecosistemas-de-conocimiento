@@ -167,11 +167,24 @@ describe('splitStoredSeedEntities', () => {
 describe('wikiSeedsForRow', () => {
   it('only reads a markdown row with a bodyMarkdown source', () => {
     const row = { kind: 'pdf', contentKind: 'documento', name: 'X', bodyMarkdown: '[[Semiótica]]' }
-    expect(wikiSeedsForRow(row, 'Semiótica', false)).toBeNull()
-    expect(wikiSeedsForRow({ ...row, kind: 'markdown' }, 'Semiótica', false)).toEqual({
+    expect(wikiSeedsForRow(row, 'Semiótica')).toBeNull()
+    expect(wikiSeedsForRow({ ...row, kind: 'markdown' }, 'Semiótica')).toEqual({
       title: null,
       links: [{ label: 'Semiótica', occurrences: 1 }],
     })
+  })
+  // 🔴 The title follows the TITLE rule (`titleIsGated`), not the body's: a
+  // documento whose `anonymise` is NULL or absent has a gated title, so its
+  // file name only seeds a node when the redacted text names it too.
+  it('🔴 a documento with anonymise NULL or absent gets a gated title; false gives the name', () => {
+    const note = { kind: 'markdown', contentKind: 'documento', name: 'Juan Pérez.md', bodyMarkdown: '[[Semiótica]]' }
+    const redacted = 'Semiótica, dijo [PERSONA].'
+    expect(wikiSeedsForRow({ ...note, anonymise: null }, redacted)?.title).toBeNull()
+    expect(wikiSeedsForRow(note, redacted)?.title).toBeNull()
+    expect(wikiSeedsForRow({ ...note, anonymise: true }, redacted)?.title).toBeNull()
+    expect(wikiSeedsForRow({ ...note, anonymise: false }, redacted)?.title).toBe('Juan Pérez')
+    // A gated title the redacted text still names passes, as before.
+    expect(wikiSeedsForRow({ ...note, anonymise: null }, 'Semiótica, dijo Juan Pérez.')?.title).toBe('Juan Pérez')
   })
 })
 
