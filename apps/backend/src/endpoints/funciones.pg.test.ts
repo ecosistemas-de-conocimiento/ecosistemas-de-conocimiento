@@ -73,7 +73,7 @@ async function waitForQueries(candidate: Db): Promise<void> {
 }
 
 // 1 root (platform admin) · 2 olga, owner of A · 3 adan, admin of A ·
-// 4 memo, member of A · 5 bea, owner of B · 6 ines, investigador of A.
+// 4 memo, member of A · 5 bea, owner of B · 6 ines, investigador of A (no Ajustes since 2026-11-10).
 const ROOT = 1
 const OLGA = 2
 const ADAN = 3
@@ -188,10 +188,10 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
     expect(await storedFeatures(ECO_A)).toEqual({ liveMic: false, studentView: true, graph: false })
   })
 
-  it('keepDocumentAuthor and keepCitedAuthors: organization:manage flips them, a member cannot', async () => {
+  it('keepDocumentAuthor and keepCitedAuthors: organization:manage (the responsable) flips them, a member cannot', async () => {
     expect((await flip(MEMO, ECO_A, { keepDocumentAuthor: true })).status).toBe(403)
     expect(await storedFeatures(ECO_A)).toBeNull()
-    const res = await flip(INES, ECO_A, { keepDocumentAuthor: true, keepCitedAuthors: true })
+    const res = await flip(OLGA, ECO_A, { keepDocumentAuthor: true, keepCitedAuthors: true })
     expect(res.status).toBe(200)
     expect(await storedFeatures(ECO_A)).toEqual({ keepDocumentAuthor: true, keepCitedAuthors: true })
     expect(await featureEnabled(payload, ECO_A, 'keepCitedAuthors')).toBe(true)
@@ -200,6 +200,27 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
   it('🔴 a responsable cannot flip another ecosistema', async () => {
     expect((await flip(BEA, ECO_A, { graph: false })).status).toBe(403)
     expect(await storedFeatures(ECO_A)).toBeNull()
+  })
+
+  it('🔴 the investigador does not save Ajustes (owner decision 2026-11-10): endpoint, collection API and editables', async () => {
+    for (const features of [{ graph: false }, { keepDocumentAuthor: true }, { keepCitedAuthors: true }]) {
+      const res = await flip(INES, ECO_A, features)
+      expect([features, res.status]).toEqual([features, 403])
+      expect((res.body.errors as Array<{ message: string }>)[0]?.message).toBe('No administras este ecosistema.')
+    }
+    await expect(
+      payload.update({
+        collection: 'organizations',
+        id: ECO_A,
+        data: { name: 'Eco A (inv)', features: { graph: false } } as never,
+        overrideAccess: false,
+        user: await userDoc(INES),
+      }),
+    ).rejects.toMatchObject({ status: 403 })
+    expect((await call('get', '/funciones/editables', INES)).status).toBe(403)
+    expect(await storedFeatures(ECO_A)).toBeNull()
+    // Reading the switches is still every member's.
+    expect((await call('get', '/funciones', INES, { query: { organization: String(ECO_A) } })).status).toBe(200)
   })
 
   it('🔴 an admin or a member of the ecosistema cannot flip anything', async () => {
@@ -293,8 +314,8 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
         ...(as === null ? {} : { user: await userDoc(as) }),
       })
 
-    it('/api/funciones: the responsable and the investigador get 403, and nothing moves', async () => {
-      for (const as of [OLGA, INES]) {
+    it('/api/funciones: the responsable gets 403, and nothing moves', async () => {
+      for (const as of [OLGA]) {
         const res = await flip(as, ECO_A, { keepPublicFigures: true })
         expect([as, res.status]).toEqual([as, 403])
         expect((res.body.errors as Array<{ message: string }>)[0]?.message).toBe(LOCKED)
@@ -312,7 +333,7 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
       invalidateFeatures()
       // The web page sends every key; an unchanged locked key is not a change.
       expect((await flip(OLGA, ECO_A, { keepPublicFigures: true, graph: false })).status).toBe(200)
-      expect((await flip(INES, ECO_A, { liveMic: false })).status).toBe(200)
+      expect((await flip(OLGA, ECO_A, { liveMic: false })).status).toBe(200)
       expect(await storedFeatures(ECO_A)).toEqual({ keepPublicFigures: true, graph: false, liveMic: false })
     })
 
@@ -488,8 +509,8 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
       expect(await featureEnabled(payload, ECO_A, 'studentTestimonios')).toBe(false)
     })
 
-    it('the responsable and the investigador get 403 with the switch\'s own message; nothing moves', async () => {
-      for (const as of [OLGA, INES]) {
+    it('the responsable gets 403 with the switch\'s own message; nothing moves', async () => {
+      for (const as of [OLGA]) {
         const res = await flip(as, ECO_A, { studentTestimonios: true })
         expect([as, res.status]).toEqual([as, 403])
         expect((res.body.errors as Array<{ message: string }>)[0]?.message).toBe(LOCKED_T)
@@ -541,8 +562,8 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
     const setStyle = (as: number, answerStyles: Record<string, unknown>, organization = ECO_A) =>
       call('patch', '/funciones/estilo', as, { body: { organization, answerStyles } })
 
-    it('collection API: the responsable and the investigador get 403 with the lock message; nothing moves', async () => {
-      for (const as of [OLGA, INES]) {
+    it('collection API: the responsable gets 403 with the lock message; nothing moves', async () => {
+      for (const as of [OLGA]) {
         let message: unknown
         try {
           await localUpdate(as, { answerStyleGenerales: 'Tono cálido.' })

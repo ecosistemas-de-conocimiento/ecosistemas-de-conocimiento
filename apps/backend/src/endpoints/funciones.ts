@@ -4,15 +4,15 @@
  *
  *   GET   /api/funciones?organization=<id>   { features, answerStyles }   member · platform admin
  *   GET   /api/funciones/editables           { ecosistemas, plataforma, answerStylesEditable }
- *   PATCH /api/funciones                     { organization, features }   responsable · investigador · platform admin
+ *   PATCH /api/funciones                     { organization, features }   responsable · platform admin
  *   PATCH /api/funciones/estilo              { organization, answerStyles }   platform admin
  *   PATCH /api/plataforma                    { detectorFallback }         platform admin
  *
  * 🔴 WHO MAY FLIP WHAT:
  *   · platform admin — every ecosistema, and the platform switches;
- *   · whoever holds `organization:manage` in that ecosistema — responsable
- *     (`owner`) or `investigador` (owner ruling 2026-10-27) — that ecosistema
- *     only, never the platform;
+ *   · whoever holds `organization:manage` in that ecosistema — the
+ *     responsable (`owner`; the investigador had it 2026-10-27 to 2026-11-10)
+ *     — that ecosistema only, never the platform;
  *   · `keepPublicFigures`, `studentTestimonios` — platform admin only (owner
  *     ruling Q16 A); the others see them read-only (`lockedFeatures` in
  *     editables) and get a 403 here if they change one. Sending one unchanged

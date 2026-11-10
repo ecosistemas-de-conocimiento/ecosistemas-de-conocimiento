@@ -73,12 +73,14 @@ async function waitForQueries(candidate: Db): Promise<void> {
 }
 
 // 1 root (platform admin) · 2 ana, member of A, the uploader · 3 memo, member of A ·
-// 4 ines, investigador of A (holds:review) · 5 bea, owner of B.
+// 4 ines, investigador of A (holds:review) · 5 bea, owner of B · 6 olga, owner of A
+// (`organization:manage`: Ajustes and the ecosistema endpoints, since 2026-11-10).
 const ROOT = 1
 const ANA = 2
 const MEMO = 3
 const INES = 4
 const BEA = 5
+const OLGA = 6
 const ECO_A = 1
 const DOC = 10
 
@@ -240,13 +242,14 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
       INSERT INTO users (id, email, display_name, is_platform_admin) VALUES
         (1, 'root@example.invalid', 'Root', true), (2, 'ana@example.invalid', 'Ana', false),
         (3, 'memo@example.invalid', 'Memo', false), (4, 'ines@example.invalid', 'Inés', false),
-        (5, 'bea@example.invalid', 'Bea', false);
-      SELECT setval('users_id_seq', 5);
+        (5, 'bea@example.invalid', 'Bea', false), (6, 'olga@example.invalid', 'Olga', false);
+      SELECT setval('users_id_seq', 6);
       INSERT INTO organizations (id, name, slug) VALUES (1, 'Eco A', 'eco-a'), (2, 'Eco B', 'eco-b');
       SELECT setval('organizations_id_seq', 2);
       INSERT INTO memberships (id, user_id, organization_id, role, person_name) VALUES
-        (1, 2, 1, 'member', 'Ana Ruiz'), (2, 3, 1, 'member', null), (3, 4, 1, 'investigador', null), (4, 5, 2, 'owner', null);
-      SELECT setval('memberships_id_seq', 4);
+        (1, 2, 1, 'member', 'Ana Ruiz'), (2, 3, 1, 'member', null), (3, 4, 1, 'investigador', null), (4, 5, 2, 'owner', null),
+        (5, 6, 1, 'owner', null);
+      SELECT setval('memberships_id_seq', 5);
     `))
   })
 
@@ -262,19 +265,21 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
 
   describe('GET: who may see it', () => {
     it.each([
-      ['the uploader', ANA],
-      ['a holds:review holder of the ecosistema', INES],
-      ['a platform admin', ROOT],
-    ])('%s → 200, the view, no text and no removed names', async (_who, as) => {
-      await seedDoc()
+      ['the uploader', ANA, false, 'draft'],
+      // A-07: a reviewer reaches a held or published row only.
+      ['a holds:review holder of the ecosistema', INES, false, 'published'],
+      ['a platform admin', ROOT, true, 'draft'],
+    ])('%s → 200, the view, no text and no removed names', async (_who, as, figures, publication) => {
+      await seedDoc({ publication })
       const res = await call('get', as)
       expect(res.status).toBe(200)
       expect(res.body).toEqual({
         id: DOC,
-        name: 'notas.pdf',
+        // 🔴 P-13: a gated documento with no redacted title on its report.
+        name: 'Documento',
         contentKind: 'documento',
         gated: true,
-        publicationStatus: 'draft',
+        publicationStatus: publication,
         status: 'ready',
         // "Ana Ruiz" is on the log but not in the text: not shown.
         kept: { authors: [], publicFigures: [], citedAuthors: ['López'] },
@@ -284,6 +289,7 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
           keepCitedAuthors: { value: false, origin: 'ecosistema' },
           keepPublicFigures: { value: false, origin: 'ecosistema' },
         },
+        editable: { keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: figures },
         pendingRegate: false,
         retryable: false,
         unpublishedByRegate: false,
@@ -318,7 +324,7 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
     })
 
     it('🔴 a testimonio\'s file name: shown to its uploader, the neutral title to a reviewer', async () => {
-      await seedDoc({ contentKind: 'testimonio' })
+      await seedDoc({ contentKind: 'testimonio', publication: 'published' })
       await db.execute(sql.raw(`UPDATE documents SET name = 'Entrevista con Rosa Ulloa.m4a' WHERE id = ${DOC}`))
       const reviewer = await call('get', INES)
       expect(reviewer.status).toBe(200)
@@ -331,6 +337,24 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
 
     it('a missing document → 404', async () => {
       expect((await call('get', ANA, { id: 999 })).status).toBe(404)
+    })
+
+    it('🔴 R-09: `editable` says which switches the caller may change, by the PATCH\'s rules', async () => {
+      await seedDoc({ contentKind: 'testimonio', publication: 'published' })
+      // keepPublicFigures never applies to a testimonio, not even for a platform admin.
+      expect((await call('get', ROOT)).body.editable).toEqual({ keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: false })
+      expect((await call('get', INES)).body.editable).toEqual({ keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: false })
+      await db.execute(sql.raw(`UPDATE documents SET content_kind = 'documento' WHERE id = ${DOC}`))
+      const reviewer = await call('get', INES)
+      expect(reviewer.body.editable).toEqual({ keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: false })
+      // What the view offers is exactly what the PATCH takes.
+      expect((await call('patch', INES, { body: { keepPublicFigures: true } })).status).toBe(403)
+      const patched = await call('patch', INES, { body: { keepCitedAuthors: false } })
+      expect(patched.status).toBe(200)
+      expect(patched.body.editable).toEqual({ keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: false })
+      expect((await call('get', ROOT)).body.editable).toEqual({ keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: true })
+      await db.execute(sql.raw(`UPDATE documents SET content_kind = 'conversacion' WHERE id = ${DOC}`))
+      expect((await call('get', ROOT)).body.editable).toEqual({ keepDocumentAuthor: false, keepCitedAuthors: false, keepPublicFigures: false })
     })
   })
 
@@ -366,7 +390,27 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
 
     it.each(['publishing', 'unpublishing'])('🔴 a %s row → 409', async (publication) => {
       await seedDoc({ publication })
-      expect((await call('patch', INES, { body: { keepCitedAuthors: true } })).status).toBe(409)
+      expect((await call('patch', ANA, { body: { keepCitedAuthors: true } })).status).toBe(409)
+    })
+
+    // 🔴 A-07 (audit 2026-11-10): a colleague's private draft is not a
+    // reviewer's to read or re-gate. Held or published rows only.
+    it.each([
+      ['a ready draft', 'ready', 'draft', 403],
+      ['a pending draft', 'pending', 'draft', 403],
+      ['a rejected draft', 'rejected', 'draft', 403],
+      ['a held draft', 'held', 'draft', 200],
+      ['a published row', 'ready', 'published', 200],
+    ])('A-07: a reviewer on %s (gate %s, %s) → %s', async (_what, status, publication, code) => {
+      await seedDoc({ status, publication })
+      expect((await call('get', INES)).status).toBe(code)
+      if (code === 403) {
+        expect((await call('patch', INES, { body: { keepCitedAuthors: true } })).status).toBe(403)
+        expect((await call('post', INES)).status).toBe(403)
+        expect((await row())?.keep_cited_authors).toBeNull()
+        expect(await audits()).toEqual([])
+        expect(fake.calls).toEqual([])
+      }
     })
 
     it('a conversation → 400: the switches never apply', async () => {
@@ -649,21 +693,25 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
       expect((await call('get', ANA)).body).toMatchObject({ pendingRegate: true, retryable: true })
       expect(await docCol(DOC, `anonymisation_report->'regate'->>'reason' AS r`)).toEqual({ r: 'erase-failed' })
 
-      const view = await call('get', INES, { org: true })
+      const view = await call('get', OLGA, { org: true })
       expect(view).toMatchObject({ status: 200, body: { pendingRegate: 1, regating: false, unpublishedByRegate: 0 } })
       expect((await call('get', MEMO, { org: true })).status).toBe(403)
+      // 🔴 2026-11-10: the ecosistema status and "Reintentar" follow Ajustes: the responsable, not the investigador.
+      expect((await call('get', INES, { org: true })).status).toBe(403)
+      expect((await call('post', INES, { org: true })).status).toBe(403)
+      expect(startGate).not.toHaveBeenCalled()
       expect((await call('get', BEA, { org: true })).status).toBe(404)
 
       fake = fakeAiService()
-      const retry = await call('post', INES, { org: true })
+      const retry = await call('post', OLGA, { org: true })
       expect(retry).toMatchObject({ status: 202, body: { started: true, pendingRegate: 1 } })
       await ecosystemRegate.last
       expect(startGate).toHaveBeenCalledTimes(1)
       expect(await row()).toMatchObject({ anonymisation_status: 'n/a', publication_status: 'draft' })
       // A staff row the re-gate took out of the shared corpus: still a draft, flagged.
-      expect((await call('get', INES, { org: true })).body).toEqual({ pendingRegate: 0, regating: false, unpublishedByRegate: 1 })
+      expect((await call('get', OLGA, { org: true })).body).toEqual({ pendingRegate: 0, regating: false, unpublishedByRegate: 1 })
       expect((await call('get', ANA)).body.unpublishedByRegate).toBe(true)
-      expect((await call('post', INES, { org: true })).body).toEqual({ started: false, pendingRegate: 0 })
+      expect((await call('post', OLGA, { org: true })).body).toEqual({ started: false, pendingRegate: 0 })
     })
 
     it('🔴 I-02: a verdict that kept nobody is NOT unpublished; one that kept a name is, and stays flagged after its gate', async () => {
@@ -785,7 +833,8 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
       purgeGraph.mockReset().mockResolvedValue(undefined)
       await db.execute(sql.raw(`
         INSERT INTO organizations (id, name, slug, features) VALUES (${TALLER}, 'Taller', 'taller', '${JSON.stringify(features)}'::jsonb);
-        INSERT INTO memberships (id, user_id, organization_id, role, person_name) VALUES (5, ${INES}, ${TALLER}, 'investigador', null);`))
+        INSERT INTO memberships (id, user_id, organization_id, role, person_name) VALUES (6, ${INES}, ${TALLER}, 'investigador', null),
+          (7, ${OLGA}, ${TALLER}, 'owner', null);`))
       invalidateFeatures()
       // The same verdict three times, made with every switch ON and keeping a name under each.
       const kept = (name: string) => `'${JSON.stringify([{ name, model: 'static', at: '2026-11-04T00:00:00.000Z' }])}'::jsonb`
@@ -867,8 +916,8 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
       ecosystemRegate.deps = spied()
       // The author/cited defaults are OFF (unset) and every verdict kept names under them.
       await seedTaller({ studentView: true, keepPublicFigures: true })
-      expect((await call('get', INES, { org: true, id: TALLER })).body).toEqual({ pendingRegate: 2, regating: false, unpublishedByRegate: 1 })
-      const res = await call('post', INES, { org: true, id: TALLER })
+      expect((await call('get', OLGA, { org: true, id: TALLER })).body).toEqual({ pendingRegate: 2, regating: false, unpublishedByRegate: 1 })
+      const res = await call('post', OLGA, { org: true, id: TALLER })
       expect(res).toMatchObject({ status: 202, body: { started: true, pendingRegate: 2 } })
       await ecosystemRegate.last
       await expectOnlyControlsRegated()

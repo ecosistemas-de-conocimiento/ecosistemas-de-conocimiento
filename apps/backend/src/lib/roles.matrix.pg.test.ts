@@ -178,9 +178,12 @@ describe.skipIf(!dockerOk)('roles: estudiante + investigador authorization matri
     expect(Object.keys(inv67).sort()).toEqual(['dengue-a', 'dengue-b'])
     for (const slug of ['dengue-a', 'dengue-b']) {
       expect(inv67[slug]!.permissions).toEqual(
-        expect.arrayContaining(['holds:review', 'members:manage', 'organization:manage', 'ratings:read-comments']),
+        expect.arrayContaining(['holds:review', 'members:manage', 'ratings:read-comments']),
       )
+      // 🔴 2026-11-10: /ajustes is the responsable's, not the investigador's.
+      expect(inv67[slug]!.permissions).not.toContain('organization:manage')
     }
+    expect((await grants(OWNER8))[SLUG[8]!]!.permissions).toContain('organization:manage')
     const est = (await grants(EST1))[SLUG[8]!]!
     expect(est.roles).toEqual(['estudiante'])
     expect(est.permissions).not.toContain('holds:review')
@@ -188,13 +191,13 @@ describe.skipIf(!dockerOk)('roles: estudiante + investigador authorization matri
     expect((await grants(ADMIN8))[SLUG[8]!]!.permissions).not.toContain('organization:manage')
   })
 
-  it('🔴 /api/funciones (ajustes): investigador only in their own ecosistemas; never the platform', async () => {
+  it('🔴 /api/funciones (ajustes): the responsable in their own ecosistema, never the investigador (2026-11-10); never the platform', async () => {
     const cases: Array<[number, number, number]> = [
       [ROOT, 9, 200],
       [OWNER8, 8, 200],
-      [INV8, 8, 200],
-      [INV67, 6, 200],
-      [INV67, 7, 200],
+      [INV8, 8, 403],
+      [INV67, 6, 403],
+      [INV67, 7, 403],
       [INV8, 6, 403],
       [INV8, 9, 403],
       [INV67, 8, 403],
@@ -212,16 +215,28 @@ describe.skipIf(!dockerOk)('roles: estudiante + investigador authorization matri
     }
   }, 60_000)
 
-  it('🔴 organizations: investigador renames their ecosistema, but slug and on/off stay the owner\'s', async () => {
+  it('🔴 organizations: only the responsable (or a platform admin) updates their ecosistema (2026-11-10)', async () => {
+    expect(
+      await tryWrite(
+        payload.update({
+          collection: 'organizations',
+          id: 8,
+          data: { name: 'Semiosis (inv)', description: 'x', features: { liveMic: true } } as never,
+          overrideAccess: false,
+          user: await asUser(INV8),
+        }),
+      ),
+    ).toBe('refused')
     await payload.update({
       collection: 'organizations',
       id: 8,
-      data: { name: 'Semiosis (inv)', slug: 'hijacked', isActive: false } as never,
+      data: { name: 'Semiosis (resp)' } as never,
       overrideAccess: false,
-      user: await asUser(INV8),
+      user: await asUser(OWNER8),
     })
-    const row = (await rowsOf(pg.db, sql.raw(`SELECT name, slug, is_active FROM organizations WHERE id = 8`)))[0]!
-    expect(row).toEqual({ name: 'Semiosis (inv)', slug: 'semiosis', is_active: true })
+    const row = (await rowsOf(pg.db, sql.raw(`SELECT name, slug, is_active, features FROM organizations WHERE id = 8`)))[0]!
+    expect(row).toMatchObject({ name: 'Semiosis (resp)', slug: 'semiosis', is_active: true })
+    expect((row.features as Record<string, unknown> | null)?.liveMic).toBeUndefined()
 
     expect(
       await tryWrite(

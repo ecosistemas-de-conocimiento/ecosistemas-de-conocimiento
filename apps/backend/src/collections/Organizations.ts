@@ -1,6 +1,7 @@
 import {
   APIError,
   ValidationError,
+  type Access,
   type CollectionAfterChangeHook,
   type CollectionBeforeChangeHook,
   type CollectionConfig,
@@ -15,22 +16,34 @@ import {
   normalizeAnswerStyle,
 } from '../lib/answerStyle'
 import { invalidateFeatures, lockedFeatureChange, lockedFeatureMessage, parseFeaturesPatch, resolveFeatures } from '../lib/features'
-import { roleInOrganization } from '../lib/permissions'
+import { organizationIdsForUserWithPermission, PERMISSIONS, roleInOrganization } from '../lib/permissions'
 
-import {
-  isPlatformAdmin,
-  isPlatformAdminUser,
-  withinMyOrganizations,
-  withinMyOrganizationsWithRole,
-} from '../access'
+import { isActiveUser, isPlatformAdmin, isPlatformAdminUser, principalId, withinMyOrganizations } from '../access'
 
 import { normalizedSlug } from './hooks/compoundUnique'
 
 /**
- * 🔴 THE SLUG AND THE ON/OFF SWITCH ARE THE OWNER'S. An investigador may update
- * the row (its settings, its name — /ajustes, owner ruling 2026-10-27), but a
- * new slug breaks every token in flight and switching the ecosistema off locks
- * out everyone in it. Owner or platform admin only. Payload strips a refused
+ * 🔴 WHO UPDATES AN ECOSISTEMA (name, description, `features` and the
+ * anonymisation switches in it — /ajustes): `organization:manage` there, i.e.
+ * the responsable (`owner`), or a platform admin (owner decision 2026-11-10,
+ * wave 4: the investigador no longer saves Ajustes). Asked by permission, the
+ * same question `/api/funciones` and the ecosistema anonimización endpoints ask.
+ * Fails closed: no user, an inactive one, or no such membership = nothing.
+ */
+export const manageableOrganizations: Access = async ({ req }) => {
+  if (isPlatformAdminUser(req.user)) return true
+  const id = principalId(req)
+  if (id === null || !isActiveUser(req.user)) return false
+  const ids = await organizationIdsForUserWithPermission(req.payload, id, PERMISSIONS.organizationManage)
+  return ids.length === 0 ? false : { id: { in: ids } }
+}
+
+/**
+ * 🔴 THE SLUG AND THE ON/OFF SWITCH ARE THE OWNER'S. A new slug breaks every
+ * token in flight and switching the ecosistema off locks out everyone in it.
+ * Owner or platform admin only (today the same people as
+ * {@link manageableOrganizations}; kept by role so a future grant of
+ * `organization:manage` does not hand them the slug). Payload strips a refused
  * field from the write, so an attempt is ignored rather than rejected — the
  * same contract as `platformAdminFieldAccess`.
  */
@@ -207,9 +220,10 @@ export const Organizations: CollectionConfig = {
     read: withinMyOrganizations('id'),
     // Creating a tenant is an installation-level act, not a self-service one.
     create: isPlatformAdmin,
-    // An owner or investigador may rename/reconfigure their own ecosistema;
-    // nobody else can. The slug and `isActive` stay the owner's (`ownerOnlyField`).
-    update: withinMyOrganizationsWithRole('investigador', 'id'),
+    // `organization:manage` (the responsable) or a platform admin
+    // (`manageableOrganizations`). The slug and `isActive` stay the owner's
+    // (`ownerOnlyField`).
+    update: manageableOrganizations,
     // Deleting a tenant takes its people, documents and history with it.
     delete: isPlatformAdmin,
   },
@@ -295,7 +309,7 @@ export const Organizations: CollectionConfig = {
     {
       // Per-ecosistema switches (owner ruling 2026-10-27). NULL / missing key =
       // the default in `lib/features.ts`, which is today's behaviour. Written by
-      // the responsable (owner), an investigador or a platform admin, via
+      // the responsable (owner) or a platform admin (2026-11-10), via
       // `/api/funciones`; `keepPublicFigures` and `studentTestimonios` by a
       // platform admin only (`refuseLockedFeatureChange`).
       name: 'features',

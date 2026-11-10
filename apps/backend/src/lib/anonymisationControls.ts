@@ -18,7 +18,10 @@
  * API write (`gateWritesOnly` in `collections/Documents.ts`), so this is their
  * only writer. 🔴 `keepPublicFigures` is a platform admin's only (owner ruling
  * Q16 A): anyone else sending it gets 403, and it applies to a `documento` only.
- * The ecosistema endpoints: `organization:manage` there, or a platform admin.
+ * The view's `editable` says which switches this caller may change (R-09).
+ * The ecosistema endpoints (status and "Reintentar"): `organization:manage`
+ * there — the responsable since 2026-11-10, the same people who save
+ * Ajustes — or a platform admin.
  *
  * 🔴 NEVER A RE-IDENTIFICATION MAP (ADR-0019): the view carries only names the
  * gate LEFT IN (`authorsKept`, `publicFiguresKept`, `citedAuthorsKept`) that the
@@ -83,7 +86,7 @@ import type { Endpoint, Payload, PayloadRequest } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { rowMustPassGate } from './anonymiseDocument'
-import { knownContentKind, titleFor } from './contentKind'
+import { anonymiseRequested, knownContentKind, titleFor } from './contentKind'
 import { errSummary } from './errorSummary'
 import { organizationIdsForUser, organizationIdsForUserWithPermission, PERMISSIONS, relationId } from './permissions'
 import {
@@ -122,6 +125,13 @@ export interface AnonimizacionView {
     addresses: number | null
   } | null
   switches: Switches
+  /**
+   * 🔴 May THIS caller change each switch here (R-09)? The page draws a
+   * `false` one read-only and never sends it; the PATCH refuses it anyway.
+   * `keepPublicFigures`: a platform admin, on a `documento`. The author
+   * switches: anyone who may open this view, on a kind they apply to.
+   */
+  editable: Record<AnonymiseSwitch, boolean>
   /** True while the stored verdict keeps a name the current switches would remove. */
   pendingRegate: boolean
   /** A failed re-gate, or `pendingRegate` (not on a draft the re-gate did not unpublish), and nobody else is writing the row: "Reintentar". */
@@ -151,8 +161,11 @@ export function parseSwitchPatch(raw: unknown): SwitchPatch | string {
  * 🔴 May this user see and change this document's switches?
  *   `ok`         an active platform admin, or an active account with an
  *                active membership in the document's ecosistema that is its
- *                uploader or holds `holds:review` there;
- *   `forbidden`  a colleague with an active membership there (403);
+ *                uploader, or holds `holds:review` there AND the row is held
+ *                or published (A-07, audit 2026-11-10: a colleague's private
+ *                draft is not a reviewer's to read or re-gate);
+ *   `forbidden`  a colleague with an active membership there (403), a
+ *                reviewer on a draft that is not held included;
  *   `not-found`  anyone else (404: another ecosistema learns nothing).
  */
 export async function controlAccess(payload: Payload, user: unknown, row: Row): Promise<'ok' | 'forbidden' | 'not-found'> {
@@ -166,6 +179,8 @@ export async function controlAccess(payload: Payload, user: unknown, row: Row): 
   if (!same(await organizationIdsForUser(payload, userId))) return 'not-found'
   const uploader = relationId(row.uploadedBy)
   if (uploader !== null && String(uploader) === String(userId)) return 'ok'
+  // 🔴 A-07: a reviewer reaches only what review is for — held or published rows.
+  if (row.anonymisationStatus !== 'held' && row.publicationStatus !== 'published') return 'forbidden'
   return same(await organizationIdsForUserWithPermission(payload, userId, PERMISSIONS.holdsReview)) ? 'ok' : 'forbidden'
 }
 
@@ -316,11 +331,27 @@ function refreshedReport(row: Row, switches: Switches): Record<string, unknown> 
   return { ...reportOf(row), settings }
 }
 
+/**
+ * {@link AnonimizacionView.editable}: the same rules the PATCH applies, so the
+ * page never offers a switch the PATCH would refuse. `user` already passed
+ * {@link controlAccess}.
+ */
+export function editableSwitches(user: unknown, row: Row): Record<AnonymiseSwitch, boolean> {
+  const applies = switchesApply(row.contentKind)
+  return {
+    keepDocumentAuthor: applies,
+    keepCitedAuthors: applies,
+    keepPublicFigures: applies && row.contentKind === 'documento' && isPlatformAdminUser(user),
+  }
+}
+
 export function viewOf(
   row: Row,
   switches: Switches,
   /** `mayReadGatedOriginal(user, row, 'identity')`: false → the neutral title. */
   mayReadName: boolean,
+  /** {@link editableSwitches}; omitted = nothing editable (fails closed). */
+  editable: Record<AnonymiseSwitch, boolean> = { keepDocumentAuthor: false, keepCitedAuthors: false, keepPublicFigures: false },
 ): AnonimizacionView {
   const status = statusOf(row)
   // 🔴 Only text every reader of the published document may see: a cleared result.
@@ -330,7 +361,12 @@ export function viewOf(
   const mark = markOf(row)
   return {
     id: row.id as Id,
-    name: mayReadName ? str(row.name) : titleFor(knownContentKind(row), null),
+    // 🔴 P-13: a gated documento shows its redacted title (else "Documento") to
+    // everyone here, its uploader too: this page never shows a removed name.
+    name:
+      mayReadName && !(knownContentKind(row) === 'documento' && anonymiseRequested(row.anonymise))
+        ? str(row.name)
+        : titleFor(knownContentKind(row), null, row),
     contentKind: str(row.contentKind),
     gated: rowMustPassGate(row),
     publicationStatus: str(row.publicationStatus),
@@ -342,6 +378,7 @@ export function viewOf(
     },
     counts: countsOf(row.anonymisationReport),
     switches,
+    editable,
     pendingRegate,
     retryable: retryableOf(row, switches, pendingRegate),
     unpublishedByRegate: mark.unpublished === true && row.publicationStatus === 'draft',
@@ -444,7 +481,10 @@ export async function getAnonimizacion(payload: Payload, user: unknown, id: stri
   const loaded = await loadForControl(payload, user, id, 'No puedes ver la anonimización de este documento.')
   if (isResult(loaded)) return loaded
   const { row, org } = loaded
-  return { status: 200, body: viewOf(row, await effectiveSwitches(payload, org, row), await mayReadName(user, row)) }
+  return {
+    status: 200,
+    body: viewOf(row, await effectiveSwitches(payload, org, row), await mayReadName(user, row), editableSwitches(user, row)),
+  }
 }
 
 /**
@@ -492,7 +532,7 @@ export async function patchAnonimizacion(
   for (const k of ANONYMISE_SWITCHES) if (k in patch) data[k] = patch[k]
   const respond = async (regate: RegateOutcome): Promise<ControlResult> => {
     const fresh = (await readRow(payload, String(row.id))) ?? next
-    return { status: 200, body: { ...viewOf(fresh, after, await mayReadName(user, fresh)), regate } }
+    return { status: 200, body: { ...viewOf(fresh, after, await mayReadName(user, fresh), editableSwitches(user, fresh)), regate } }
   }
 
   /**
@@ -569,7 +609,10 @@ export async function retryAnonimizacion(
   if (outcome === 'conflict') return CONFLICT
   if (outcome === 'started') {
     const fresh = (await readRow(payload, String(row.id))) ?? row
-    return { status: 200, body: { ...viewOf(fresh, switches, await mayReadName(user, fresh)), regate: 'started' } }
+    return {
+      status: 200,
+      body: { ...viewOf(fresh, switches, await mayReadName(user, fresh), editableSwitches(user, fresh)), regate: 'started' },
+    }
   }
   await stampFailure(payload, row, outcome, {})
   return { status: 502, message: failureMessage(outcome, null) }

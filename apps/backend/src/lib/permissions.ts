@@ -70,14 +70,22 @@ import type { CollectionSlug, Payload, Where } from 'payload'
  *    Revisión, no rating comments, nobody else's drafts. It ranks BELOW member
  *    so a student can never grant `member`.
  *  · `investigador` — "like admin, but only inside the ecosistemas they're
- *    assigned to": every grant of `admin` plus `organization:manage` (that
- *    ecosistema's /ajustes). It ranks ABOVE admin and BELOW owner, so the role
+ *    assigned to": every grant of `admin`. It ranks ABOVE admin and BELOW owner, so the role
  *    ceiling lets an investigador add, re-role and remove everyone except the
  *    responsable. Never the platform: `isPlatformAdmin` is a user flag no
  *    membership sets, and `PATCH /api/plataforma` asks for that flag alone.
- *  · `owner` ("responsable") — the same grants as investigador. The rank above
- *    it lets an owner manage investigadores, and only an owner changes the
- *    ecosistema's slug or switches it off (`collections/Organizations.ts`).
+ *  · `owner` ("responsable") — investigador's grants plus `organization:manage`
+ *    (that ecosistema's /ajustes: saving its switches, the ecosistema
+ *    re-anonymisation status and "Reintentar"). The rank above it lets an
+ *    owner manage investigadores, and only an owner changes the ecosistema's
+ *    slug or switches it off (`collections/Organizations.ts`).
+ *
+ * 🔴 /ajustes IS THE RESPONSABLE'S (owner decision 2026-11-10, wave 4): an
+ * investigador no longer saves Ajustes. From 2026-10-27 to 2026-11-10
+ * `organization:manage` came with investigador. Only Ajustes reads that
+ * permission (`/api/funciones`, `/api/organizations/:id/anonimizacion`, the
+ * web's `canEditFeatures`); /miembros (`members:manage`), Revisión and
+ * /admin (`canAdminOrg`, by role) are unchanged.
  *
  * Until 2026-10-27 `investigador` sat between member and admin and managed
  * nobody. The owner widened it: every rank-gated surface
@@ -234,17 +242,14 @@ const ADMIN_PERMISSIONS: readonly Permission[] = [
 ]
 
 /**
- * Admin plus `organization:manage` — the ecosistema's /ajustes. Scoped like
- * every membership to the ecosistemas the person is assigned to. See the
- * ladder in the `ORG_ROLES` header.
+ * Admin's grants, scoped like every membership to the ecosistemas the person
+ * is assigned to; the rank above admin is the difference. See the ladder in
+ * the `ORG_ROLES` header.
  */
-const INVESTIGADOR_PERMISSIONS: readonly Permission[] = [
-  ...ADMIN_PERMISSIONS,
-  PERMISSIONS.organizationManage,
-]
+const INVESTIGADOR_PERMISSIONS: readonly Permission[] = [...ADMIN_PERMISSIONS]
 
-/** Same grants as investigador; the rank above it is the difference. */
-const OWNER_PERMISSIONS: readonly Permission[] = [...INVESTIGADOR_PERMISSIONS]
+/** Investigador plus `organization:manage` — the ecosistema's /ajustes (owner decision 2026-11-10). */
+const OWNER_PERMISSIONS: readonly Permission[] = [...INVESTIGADOR_PERMISSIONS, PERMISSIONS.organizationManage]
 
 /**
  * Role → effective permissions. THE map; nothing else expands a role.

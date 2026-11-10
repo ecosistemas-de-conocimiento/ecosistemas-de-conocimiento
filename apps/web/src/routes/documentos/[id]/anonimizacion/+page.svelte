@@ -30,6 +30,7 @@
     pendingRegateMessage,
     RETRY_LABEL,
     shownSwitches,
+    anyEditable,
     UNPUBLISHED_BY_REGATE,
   } from '$lib/anonimizacion';
   import type { ActionData, PageData } from './$types';
@@ -116,23 +117,25 @@
     <section class="card" aria-labelledby="anon-switches">
       <h2 id="anon-switches">{SWITCHES_TITLE}</h2>
       <form method="POST" action="?/guardar" use:enhance={submit} data-testid="anon-form">
-        {#each shownSwitches(view) as { key, sw } (key)}
-          <div class="row">
+        {#each shownSwitches(view) as { key, sw, editable } (key)}
+          <!-- 🔴 R-09: a switch the backend says this caller may not change is read-only and posts nothing. -->
+          <div class="row" class:readonly={!editable}>
             <label class="label" for={`anon-${key}`}>{SWITCH_LABELS[key]}</label>
             <span class="origin" data-testid={`anon-origin-${key}`}>{ORIGIN_LABELS[sw.origin]}</span>
-            <input type="hidden" name={`was-${key}`} value={sw.value ? 'on' : 'off'} />
+            {#if editable}<input type="hidden" name={`was-${key}`} value={sw.value ? 'on' : 'off'} />{/if}
             <span class="switch">
               <input
                 id={`anon-${key}`}
                 type="checkbox"
                 role="switch"
-                name={key}
+                name={editable ? key : undefined}
                 checked={sw.value}
+                disabled={!editable}
                 data-testid={`anon-switch-${key}`}
               />
               <span class="thumb" aria-hidden="true"></span>
             </span>
-            {#if sw.origin === 'documento'}
+            {#if editable && sw.origin === 'documento'}
               <button
                 type="submit"
                 class="reset"
@@ -150,9 +153,11 @@
         <div class="foot">
           {#if failed}<p class="warn" role="alert" data-testid="anon-error">{failed}</p>{/if}
           {#if saved}<p class="ok" role="status" data-testid="anon-saved">{saved}</p>{/if}
-          <button type="submit" class="save" disabled={pending} aria-busy={pending || undefined} data-testid="anon-save"
-            >{SAVE_LABEL}</button
-          >
+          {#if anyEditable(view)}
+            <button type="submit" class="save" disabled={pending} aria-busy={pending || undefined} data-testid="anon-save"
+              >{SAVE_LABEL}</button
+            >
+          {/if}
         </div>
       </form>
     </section>
@@ -270,6 +275,13 @@
     grid-area: label;
     font-weight: var(--edc-weight-medium);
     cursor: pointer;
+  }
+  .readonly .label,
+  .readonly .switch input {
+    cursor: default;
+  }
+  .readonly .switch {
+    opacity: 0.6;
   }
   .origin {
     grid-area: origin;

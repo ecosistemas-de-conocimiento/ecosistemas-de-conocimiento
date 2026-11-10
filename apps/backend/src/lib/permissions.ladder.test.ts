@@ -109,17 +109,19 @@ describe('grants per role', () => {
     expect(grantForRole('estudiante').roles).toEqual(['estudiante'])
   })
 
-  it('🔴 investigador holds every admin grant plus organization:manage (/ajustes)', () => {
+  it('🔴 investigador holds every admin grant, and NOT organization:manage (/ajustes, owner decision 2026-11-10)', () => {
     const inv = grantForRole('investigador').permissions
     for (const p of ROLE_PERMISSIONS.admin) expect(inv).toContain(p)
-    expect(inv).toContain(PERMISSIONS.organizationManage)
+    expect(inv).not.toContain(PERMISSIONS.organizationManage)
     expect(inv).toContain(PERMISSIONS.membersManage)
     expect(inv).toContain(PERMISSIONS.holdsReview)
     expect(grantForRole('admin').permissions).not.toContain(PERMISSIONS.organizationManage)
   })
 
-  it('owner and investigador carry the same grants; rank is the difference', () => {
-    expect(grantForRole('owner').permissions).toEqual(grantForRole('investigador').permissions)
+  it('🔴 owner = investigador + organization:manage; nothing else differs', () => {
+    expect([...grantForRole('owner').permissions].sort()).toEqual(
+      [...grantForRole('investigador').permissions, PERMISSIONS.organizationManage].sort(),
+    )
   })
 
   it('every step of the ladder is a superset of the step below it', () => {
@@ -144,9 +146,9 @@ describe('organizationIdsForUserWithPermission — only where the role really ho
     }
   })
 
-  it('organization:manage: investigador and owner only', async () => {
+  it('organization:manage: owner only (2026-11-10)', async () => {
     const ids = await organizationIdsForUserWithPermission(fakePayload(ALL_ROLES), USER, PERMISSIONS.organizationManage)
-    expect(sorted(ids)).toEqual([30, 40])
+    expect(sorted(ids)).toEqual([40])
   })
 
   it('a permission every role holds returns every organization', async () => {

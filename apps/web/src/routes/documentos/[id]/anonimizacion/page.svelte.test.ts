@@ -20,6 +20,7 @@ const view = parseView({
     keepDocumentAuthor: { value: true, origin: 'documento' },
     keepCitedAuthors: { value: false, origin: 'ecosistema' },
   },
+  editable: { keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: false },
 })!;
 
 const body = (form: unknown = null, v = view) =>
@@ -50,6 +51,30 @@ describe('/documentos/[id]/anonimizacion page', () => {
     expect(b).toContain('data-testid="anon-reset-keepDocumentAuthor"');
     expect(b).not.toContain('data-testid="anon-reset-keepCitedAuthors"');
     expect(b).toMatch(/action="\?\/guardar"/);
+  });
+
+  it('🔴 R-09: a switch the backend marks not editable is drawn disabled, posts nothing and offers no reset', () => {
+    const v = {
+      ...view,
+      switches: { ...view.switches, keepPublicFigures: { value: true, origin: 'documento' as const } },
+    };
+    const b = body(null, v);
+    const tag = b.match(/<input[^>]*data-testid="anon-switch-keepPublicFigures"[^>]*>/)?.[0] ?? '';
+    expect(tag).toMatch(/\bdisabled\b/);
+    expect(tag).toMatch(/\bchecked\b/);
+    expect(b).not.toMatch(/name="keepPublicFigures"/);
+    expect(b).not.toContain('name="was-keepPublicFigures"');
+    expect(b).not.toContain('data-testid="anon-reset-keepPublicFigures"');
+    // The editable ones still post.
+    expect(b).toContain('name="was-keepDocumentAuthor"');
+    expect(b).toContain('data-testid="anon-save"');
+  });
+
+  it('🔴 R-09: nothing editable → no "Guardar"', () => {
+    const v = { ...view, editable: { keepDocumentAuthor: false, keepCitedAuthors: false, keepPublicFigures: false } };
+    const b = body(null, v);
+    expect(b).not.toContain('data-testid="anon-save"');
+    expect(b).not.toMatch(/name="was-/);
   });
 
   it('shows the save result and a refusal', () => {
@@ -113,6 +138,8 @@ describe('/documentos/[id]/anonimizacion page', () => {
     const v = parseView({
       id: '42',
       switches: { keepDocumentAuthor: off, keepCitedAuthors: off, keepPublicFigures: { value: true, origin: 'documento' } },
+      // A platform admin on a documento: the backend says all three are editable.
+      editable: { keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: true },
     })!;
     const b = body(null, v);
     expect(b).toMatch(/<input[^>]*name="keepPublicFigures"[^>]*checked/);

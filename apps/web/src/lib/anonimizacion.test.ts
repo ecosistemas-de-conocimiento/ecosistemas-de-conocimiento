@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import * as copy from './anonimizacion';
 import {
+  anyEditable,
   backHref,
   keptLists,
   mayOpenAnonimizacion,
@@ -153,6 +154,30 @@ describe('parseView', () => {
     expect(shownSwitches(withFigures).map((s) => s.key)).toEqual(['keepDocumentAuthor', 'keepCitedAuthors', 'keepPublicFigures']);
     expect(withFigures.switches.keepPublicFigures).toEqual({ value: true, origin: 'documento' });
     expect(patchFromForm(formOf({ 'was-keepPublicFigures': 'on' }))).toEqual({ keepPublicFigures: false });
+  });
+
+  it('🔴 R-09: editable is the backend\'s word per switch; missing or junk is read-only', () => {
+    expect(parseView(wire)!.editable).toEqual({ keepDocumentAuthor: false, keepCitedAuthors: false, keepPublicFigures: false });
+    const v = parseView({
+      ...wire,
+      switches: { ...wire.switches, keepPublicFigures: { value: false, origin: 'ecosistema' } },
+      editable: { keepDocumentAuthor: true, keepCitedAuthors: 'true', keepPublicFigures: false, otra: true },
+    })!;
+    expect(v.editable).toEqual({ keepDocumentAuthor: true, keepCitedAuthors: false, keepPublicFigures: false });
+    expect(shownSwitches(v).map((s) => [s.key, s.editable])).toEqual([
+      ['keepDocumentAuthor', true],
+      ['keepCitedAuthors', false],
+      ['keepPublicFigures', false],
+    ]);
+    expect(anyEditable(v)).toBe(true);
+    expect(anyEditable(parseView(wire)!)).toBe(false);
+  });
+
+  it('🔴 R-09: a switch with no `was-` (drawn read-only) is never sent, even if its box posts', () => {
+    expect(patchFromForm(formOf({ keepPublicFigures: 'on', 'was-keepCitedAuthors': 'off', keepCitedAuthors: 'on' }))).toEqual({
+      keepCitedAuthors: true,
+    });
+    expect(patchFromForm(formOf({ keepDocumentAuthor: 'on' }))).toEqual({});
   });
 
   it('the pending line never says the names were removed', () => {

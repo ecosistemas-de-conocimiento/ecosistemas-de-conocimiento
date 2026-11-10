@@ -51,6 +51,11 @@ export interface AnonView {
    * `keepPublicFigures` only when the backend sends it.
    */
   switches: Record<Exclude<SwitchKey, 'keepPublicFigures'>, SwitchState> & Partial<Record<SwitchKey, SwitchState>>;
+  /**
+   * 🔴 Which switches THIS caller may change, as the backend says (R-09): the
+   * page never guesses. Missing or junk = false (read-only).
+   */
+  editable: Record<SwitchKey, boolean>;
 }
 
 export type Regate = 'started' | 'not-needed' | 'saved-only';
@@ -200,8 +205,17 @@ export function parseView(raw: unknown): AnonView | null {
         ? { keepPublicFigures: switchFrom(sw.keepPublicFigures) }
         : {}),
     },
+    editable: editableFrom(r.editable),
   };
 }
+
+function editableFrom(v: unknown): Record<SwitchKey, boolean> {
+  const o = (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
+  return Object.fromEntries(SWITCH_KEYS.map((k) => [k, o[k] === true])) as Record<SwitchKey, boolean>;
+}
+
+/** Any switch this caller may change: else the page has no "Guardar". */
+export const anyEditable = (view: AnonView): boolean => shownSwitches(view).some(({ key }) => view.editable[key]);
 
 export const parseRegate = (v: unknown): Regate | null =>
   v === 'started' || v === 'not-needed' || v === 'saved-only' ? v : null;
@@ -217,11 +231,11 @@ export function keptLists(view: AnonView): Array<{ key: keyof AnonView['kept']; 
 export const showTestimonyWarning = (view: AnonView): boolean =>
   view.contentKind === 'testimonio' && SWITCH_KEYS.some((k) => view.switches[k]?.value === true);
 
-/** The switches to draw: every one the backend sent, in a fixed order. */
-export const shownSwitches = (view: AnonView): Array<{ key: SwitchKey; sw: SwitchState }> =>
+/** The switches to draw: every one the backend sent, in a fixed order; `editable` from the backend. */
+export const shownSwitches = (view: AnonView): Array<{ key: SwitchKey; sw: SwitchState; editable: boolean }> =>
   SWITCH_KEYS.flatMap((key) => {
     const sw = view.switches[key];
-    return sw ? [{ key, sw }] : [];
+    return sw ? [{ key, sw, editable: view.editable?.[key] === true }] : [];
   });
 
 // ── The form ────────────────────────────────────────────────────────────────
@@ -232,13 +246,15 @@ export type PatchBody = Partial<Record<SwitchKey, boolean | null>>;
  * What the form asks for. `reset=<key>` (the "Usar el del ecosistema" button)
  * sends only `{ key: null }`. Otherwise only a switch that moved is sent —
  * each box posts with `was-<key>`, the value the page showed — so saving one
- * switch never pins the other to this document.
+ * switch never pins the other to this document. 🔴 A read-only switch posts
+ * no `was-<key>` (R-09), so it is never sent: no `was-` = not this form's.
  */
 export function patchFromForm(form: FormData): PatchBody {
   const reset = form.get('reset');
   if (isSwitchKey(reset)) return { [reset]: null };
   const body: PatchBody = {};
   for (const k of SWITCH_KEYS) {
+    if (!form.has(`was-${k}`)) continue;
     const now = form.get(k) === 'on';
     const was = form.get(`was-${k}`) === 'on';
     if (now !== was) body[k] = now;
