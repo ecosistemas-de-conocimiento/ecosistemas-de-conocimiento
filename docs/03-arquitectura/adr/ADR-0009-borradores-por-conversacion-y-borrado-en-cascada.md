@@ -1,7 +1,7 @@
 # ADR-0009. Los borradores pertenecen a su conversación; borrar una conversación borra sus mensajes y valoraciones
 
-- **Versión:** 1.1
-- **Fecha del documento:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada e implementada
 - **Fecha de la decisión:** 2026-08-28; ampliada el 2026-10-17 y el 2026-10-20
@@ -47,6 +47,14 @@ Al revisar qué debía hacer el limpiador de sesiones apareció un segundo defec
 - ⚠ **Retirar no es borrar** en ai-service. Retirar cierra una ventana de validez; el fragmento y su vector siguen ahí y dejan de salir solo porque toda recuperación lleva `asOf`. Una recuperación sin `asOf` todavía los ve. Esto limita lo que "borrar" le puede prometer a un usuario. El hallazgo I-8 de la auditoría agregó después `deleteDocument`.
 - La sobre-recuperación gasta lugares de recuperación. Re-ingerir con `sessionId` en metadatos lo evitaría, solo si hace falta.
 - Borrar organizaciones y membresías tenía el mismo defecto de origen; si se corrigió en `memberships` y `teams` no está verificado en esta versión.
+
+## Estado al 2026-11-10
+
+Decisiones del 2026-11-10 sobre borrar documentos, en `main` y pendientes de desplegar en dev (commit 512dcc1f):
+
+- Quien subió un documento borra siempre su borrador. Algo publicado o en movimiento solo lo borra con un asiento `documents:write` en su ecosistema (`uploaderMayDelete` en `apps/backend/src/collections/Documents.ts`). La administración de plataforma pasa.
+- La decisión de quien revisó sobrevive al borrado: `anonymisation_reviews.document_id` pasa a `ON DELETE set null` y `documentIdSnapshot` guarda qué documento era (migración `20261110_181621_consent_held_reviews_keep`). Solo se van con el documento las filas de revisión de quien lo borra (`deleteOwnReviewRows`). Sigue la excepción del 2026-10-17: borrar una conversación que se lleva un documento retenido borra también sus filas.
+- Un documento retenido por consentimiento no se vuelve a anonimizar, purgar ni borrar desde los controles de anonimización ni desde el grafo (commit ccce6281; [ADR-0022](ADR-0022-retencion-por-consentimiento.md)).
 
 ## Fuentes
 

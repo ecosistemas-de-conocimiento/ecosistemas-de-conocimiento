@@ -1,9 +1,9 @@
 # Registro de decisiones de arquitectura (ADR)
 
-- **Versión:** 1.2
-- **Fecha:** 2026-11-07
+- **Versión:** 1.3
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `plan/adr-corpus-graph.md`; `plan/anonimizacion-y-voces.md`; `plan/borradores-por-conversacion.md`; `plan/audio-ingest-integration.md`; `plan/spark-ai-adopcion.md`; `plan/spark-chat-eval-2026-10-26.md`; `plan/auditoria-codigo-2026-10-28.md`; `apps/backend/src/migrations/README.md`; notas de contexto del equipo; lista de pendientes del proyecto; registro del proyecto del 2026-10-17 al 2026-10-28 y del 2026-11-07
+- **Fuentes:** `plan/adr-corpus-graph.md`; `plan/anonimizacion-y-voces.md`; `plan/borradores-por-conversacion.md`; `plan/audio-ingest-integration.md`; `plan/spark-ai-adopcion.md`; `plan/spark-chat-eval-2026-10-26.md`; `plan/auditoria-codigo-2026-10-28.md`; `apps/backend/src/migrations/README.md`; notas de contexto del equipo; lista de pendientes del proyecto; registro del proyecto del 2026-10-17 al 2026-10-28, del 2026-11-07 y del 2026-11-10; auditorías y revisiones del 2026-11-10
 
 **Para quién es y qué responde.** Para el equipo del proyecto, revisores institucionales y quien desarrolle Ecosistemas de Conocimiento (EDC) en la Etapa 2. Responde qué decisiones de arquitectura se tomaron en la Etapa 1 (cerrada el 2026-10-28) y después, cuándo, quién las tomó, qué se descartó y dónde está la evidencia.
 
@@ -29,7 +29,9 @@ Estos ADR usan una versión simplificada de MADR (*Markdown Architectural Decisi
 | Decisiones relacionadas | Cuando aplica: decisiones menores que no tienen ADR propio y viven junto al ADR más afín |
 | Fuentes y referencias | Archivos del repo, registro del proyecto y otros documentos de `docs/` |
 
-**Estados posibles:** aceptada; aceptada con enmienda; aceptada, implementada en parte; decidida sin construir; rechazada por ahora.
+**Estados posibles:** aceptada; aceptada con enmienda; aceptada, implementada en parte; decidida sin construir; rechazada por ahora. Un ADR nuevo puede tener el documento en estado **propuesto** mientras se revisa su texto.
+
+Cuando el código deja de cumplir lo que un ADR describe, el ADR no se reescribe: se agrega una sección "Estado al AAAA-MM-DD" o se marca "Sustituida por …".
 
 **Quién decide.** Se usan tres roles:
 
@@ -41,7 +43,7 @@ Estos ADR usan una versión simplificada de MADR (*Markdown Architectural Decisi
 
 ## Índice
 
-Veinte ADR, numerados en el orden en que se tomaron las decisiones.
+Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplegado en dev significa en 367c2698 (citado de `infra/fleet/edc-1.md`); `main` está en b7dc944f.
 
 | ADR | Decisión | Estado | Fecha |
 |---|---|---|---|
@@ -56,15 +58,17 @@ Veinte ADR, numerados en el orden en que se tomaron las decisiones.
 | [0009](ADR-0009-borradores-por-conversacion-y-borrado-en-cascada.md) | Borradores por conversación y borrado en cascada | Aceptada | 2026-08-28 |
 | [0010](ADR-0010-transcripcion-como-documento.md) | La transcripción es un `Document` de primera clase | Aceptada | 2026-08-14 |
 | [0011](ADR-0011-chat-con-recuperacion-densa-y-rerank.md) | Chat con recuperación densa y rerank, no híbrida | Aceptada | 2026-10-17 |
-| [0012](ADR-0012-adopcion-del-dgx-spark-por-fases.md) | Adopción del DGX Spark por fases, falla cerrada | Aceptada, implementada en parte; falla cerrada suspendida en dev | 2026-10-17; 2026-10-21 |
+| [0012](ADR-0012-adopcion-del-dgx-spark-por-fases.md) | Adopción del DGX Spark por fases, falla cerrada | Aceptada, implementada en parte; falla cerrada suspendida en dev; estado al 2026-11-10 | 2026-10-17; 2026-10-21 |
 | [0013](ADR-0013-chat-no-se-mueve-al-spark.md) | El chat no se mueve al Spark | Rechazada por ahora | 2026-10-26 |
 | [0014](ADR-0014-migraciones-baseline-push-opt-in-indices-a-mano.md) | Migraciones: baseline colapsada, `push` opcional, índices y llaves a mano | Aceptada | 2026-08-14; 2026-09-08 |
 | [0015](ADR-0015-un-operador-y-una-llave-de-ia.md) | Un operador y una sola llave de IA | Aceptada; varios servidores sin construir | 2026-09-04 |
-| [0016](ADR-0016-infraestructura-propia-caja-unica.md) | Infraestructura propia: caja única Hetzner, dev y staging, RustFS | Aceptada | 2026-10-15 a 2026-10-17 |
+| [0016](ADR-0016-infraestructura-propia-caja-unica.md) | Infraestructura propia: caja única Hetzner, dev y staging, RustFS | Aceptada; estado al 2026-11-10 | 2026-10-15 a 2026-10-17 |
 | [0017](ADR-0017-plataforma-de-ia-agnostica-del-dominio.md) | Plataforma de IA agnóstica del dominio | Aceptada | 2026-08-14 |
 | [0018](ADR-0018-lenguaje-llano-en-la-ui.md) | Lenguaje llano en la interfaz | Aceptada | 2026-08-29; 2026-10-21 |
-| [0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md) | Voces sin sujeto ni nivel de consentimiento | Aceptada con enmienda (ADR-0020) | 2026-08-28; 2026-11-07 |
-| [0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) | Anonimizar todo por omisión y conservar nombres por documento; enmienda ADR-0019 | Aceptada; sin desplegar | 2026-11-07 |
+| [0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md) | Voces sin sujeto ni nivel de consentimiento | Aceptada con enmienda (ADR-0020); relación con ADR-0022 | 2026-08-28; 2026-11-07 |
+| [0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) | Anonimizar todo por omisión y conservar nombres por documento; enmienda ADR-0019 | Aceptada; desplegada en dev, con agregados del 2026-11-10 pendientes de desplegar | 2026-11-07 |
+| [0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md) | El título de un `documento` con compuerta pasa por la compuerta y falla cerrado; enmienda ADR-0020 | Propuesto; decisión aceptada, pendiente de desplegar en dev | 2026-11-10 |
+| [0022](ADR-0022-retencion-por-consentimiento.md) | Retenido por consentimiento: una marca que detiene todo procesamiento | Propuesto; decisión aceptada, pendiente de desplegar en dev | 2026-11-10 |
 
 ## Decisiones relacionadas, por ADR anfitrión
 

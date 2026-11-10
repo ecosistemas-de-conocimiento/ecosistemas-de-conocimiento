@@ -1,9 +1,9 @@
 # Evaluaciones de IA
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `apps/web/src/lib/server/evals/` (`runner.ts`, `score.ts`, `judge.ts`), `apps/backend/src/eval/RESULTS.md`, `plan/adr-corpus-graph.md` §19, `plan/spark-chat-eval-2026-10-26.md`, `scripts/spark-chat-eval/`, `scripts/cite-eval/`, mensaje de commit del 2026-10-28, `apps/backend/scripts/measurements/q24/README.md`, `plan/spark-ai-adopcion.md`, resultados de la corrida del 2026-10-29 para los ecosistemas 6, 7 y 8 (fuera del repo).
+- **Fuentes:** `apps/web/src/lib/server/evals/` (`runner.ts`, `score.ts`, `judge.ts`), `apps/backend/src/eval/RESULTS.md`, `plan/adr-corpus-graph.md` §19, `plan/spark-chat-eval-2026-10-26.md`, `scripts/spark-chat-eval/`, `scripts/cite-eval/`, mensaje de commit del 2026-10-28, `apps/backend/scripts/measurements/q24/README.md`, `plan/spark-ai-adopcion.md`, resultados de la corrida del 2026-10-29 para los ecosistemas 6, 7 y 8 (fuera del repo), kit diferencial de la compuerta (kit3) y sus corridas del 2026-11-07 y del 2026-11-10 (fuera del repo, en la carpeta de trabajo de la flota), `plan/orchestration/auditoria-2026-11-10/revision-ola4.md`.
 
 ## Para quién es y qué responde
 
@@ -24,6 +24,7 @@ EDC hace con IA cuatro cosas cuya calidad importa: responder preguntas citando e
 | `cite-eval` | `scripts/cite-eval/` | Soporte de citas antes y después de un cambio de prompt | 2026-10-28 |
 | Q24 del detector | `apps/backend/scripts/measurements/q24/` | Prompt viejo contra prompt nuevo del detector de datos personales, con textos sintéticos | 2026-10-28 |
 | Compuerta a escala de documento | `plan/spark-ai-adopcion.md` §1 | Costo, llamadas y nombres encontrados en documentos largos | 2026-10-17 |
+| Kit diferencial de la compuerta (kit3) | fuera del repo, en la carpeta de trabajo de la flota | Si un cambio de código hace que la compuerta deje pasar algo que antes ocultaba: 26 516 casos, versión base contra versión nueva, sin modelo | 2026-11-04, 2026-11-07 y 2026-11-10 (sección 9) |
 
 Glosario mínimo para leer las tablas:
 
@@ -39,7 +40,7 @@ Glosario mínimo para leer las tablas:
 
 ### 2.1 Qué es
 
-Es una página solo para el administrador de la plataforma. Guarda por ecosistema un conjunto de ítems de evaluación (`eval-items`) de dos clases y corre ese conjunto bajo demanda. Cada corrida queda como un registro `eval-runs` con estado, resultados por ítem, métricas, costo, modelos usados y commit.
+Es parte de la Etapa 1: está en `main` y en dev desde el 2026-10-29 (migración `20261029_060304_evals`, citado de `infra/fleet/edc-1.md` §4zzzz). Es una página solo para el administrador de la plataforma. Guarda por ecosistema un conjunto de ítems de evaluación (`eval-items`) de dos clases y corre ese conjunto bajo demanda. Cada corrida queda como un registro `eval-runs` con estado, resultados por ítem, métricas, costo, modelos usados y commit.
 
 - **Ítems `pregunta`:** una pregunta, los documentos que deberían salir citados y si la respuesta correcta es rechazar (decir que el acervo no lo cubre).
 - **Ítems `privacidad`:** un texto sintético con términos marcados como `privado` (deben ocultarse) o `publico` (deben quedar).
@@ -279,7 +280,35 @@ Citado de `plan/spark-ai-adopcion.md` §1, medido el 2026-10-17 con el detector 
 
 Con verificación de 3 pasadas (`ANONYMISE_VERIFY_ROUNDS=3`), un nombre completo pasó en 2 de 12 corridas sobre el texto de 4 866 palabras (citado de `infra/.env.example`, medido 2026-10-18 en el stack local con modelo real). Por eso el valor por defecto es 1 pasada que solo juzga, y cualquier resto retiene el documento.
 
-## 9. Costos de evaluar
+## 9. Kit diferencial de la compuerta (kit3)
+
+### 9.1 Qué es
+
+Una batería de 26 516 casos en 20 conjuntos: casos escritos a mano, prosa, intentos de inyección y textos generados al azar con semillas fijas (medido el 2026-11-07, contando cada conjunto). Cada caso pasa por la compuerta de dos versiones del código, la base y la nueva, y el kit compara las salidas. Cuenta `leak-at-head`: casos donde la versión nueva deja visible algo que la base ocultaba. Es determinista: `main` contra sí mismo da 0 diferencias, y una versión nueva falsa con un nombre restituido da `leak-at-head 1` (medido el 2026-11-07 en la estación de trabajo).
+
+Vive fuera del repositorio, en la carpeta de trabajo de la flota del equipo de desarrollo, con sus sumas `SHA256SUMS`. No corre en ningún ciclo automático.
+
+**Qué no mide.** Corre la compuerta con un detector vacío: sin modelo, sin autores y sin interruptores. Mide las etapas estructural y determinista, no la etapa del modelo. Un `leak-at-head 0` no dice nada de los nombres que solo detecta el modelo. Tampoco cubre permisos, API ni grafo.
+
+### 9.2 Resultados del 2026-11-10
+
+Medido en la estación de trabajo del equipo de desarrollo (16 núcleos), el 2026-11-10; horas de México (UTC−6). Corrió junto con otras suites: la carga promedio al arrancar la corrida de las 11:56 era 13.4 (1 min) y 8.7 (15 min). Citado de los totales de cada corrida (`res/TOTAL`) y de `plan/orchestration/auditoria-2026-11-10/revision-ola4.md`.
+
+| Corrida | Base contra nueva | Casos | `leak-at-head` | Más redactado | Texto distinto |
+|---|---|---:|---:|---:|---:|
+| Ola 2, 01:35 | `a84baacf` contra `6ca9c92c` | 26 516 | 2 | 0 | 2 |
+| Ola 4, carril F, 11:56 | `6a880e01` contra la rama del carril | 26 516 | 0 | 1 | 1 |
+| Ola 4, 12:36 | `367c2698` (dev) contra `58078b7f` | 26 516 | 0 | 1 | 1 |
+| Ola 4, 13:11 y 13:28 | `f764ee7f` contra `2dda9a8b` y contra `ccce6281` | 26 516 cada una | 0 | 1 | 1 |
+| Ola 4, 13:42 | `0bfe8ceb` contra `0400099a` | 26 516 | 0 | 1 | 1 |
+
+Lectura:
+
+- Las 2 "fugas" de la ola 2 las revisó la auditoría independiente del mismo día: en esos casos la versión nueva redacta más, no menos (citado de `plan/orchestration/2026-11-09-edc.md`). No son fugas.
+- Las corridas de la ola 4 no encontraron ningún caso que la base ocultara y la versión nueva dejara ver. La única diferencia es un caso más redactado.
+- La revisión de la ola 4 encontró aparte, con sondas propias, fechas que la compuerta todavía no oculta ("3 de Mayo del 90", el primer día de un rango). Eso no es una regresión que kit3 detecte: la base tampoco las ocultaba.
+
+## 10. Costos de evaluar
 
 | Evaluación | Costo | Procedencia |
 |---|---|---|
@@ -294,22 +323,23 @@ Dos advertencias sobre estos costos:
 - El costo de `/admin/evals` no incluye todo. Las llamadas al Spark y el rerank registran $0 o nada en ai-service (citado del encabezado de `runner.ts` y de la revisión de la pila de IA del 2026-10-30).
 - Cada corrida se carga al presupuesto mensual del ecosistema, que por defecto es $5 (citado de `infra/fleet/env-manifests.md`). Unas 100 corridas agotarían el mes de un ecosistema (inferido de $0.042 por corrida, sin contar el uso normal).
 
-## 10. Limitaciones
+## 11. Limitaciones
 
 1. **El juez es el mismo modelo, o de la misma familia, que responde.** En `/admin/evals` el juez y el chat son DeepSeek V3.1. En `cite-eval` ambos son Qwen. Un juez así tiende a aprobar su propio estilo de afirmación. El arnés GraphRAG evita el problema con calificación mecánica.
 2. **Muestras pequeñas.** 10 preguntas por ecosistema en `/admin/evals`, con 2 o 3 ítems de privacidad y entre 3 y 10 términos por clase. Un solo término mueve `overRedaction` en 33 puntos en Discapacidad. Las 10 globales del arnés de recuperación son una pista.
 3. **Una sola pasada.** Las corridas del 2026-10-29 son una por ecosistema. El juez ciego de `spark-chat-eval` es una sola pasada de un solo juez. Solo GraphRAG y `cite-eval` repiten 3 veces.
 4. **Datos sintéticos.** Todo se midió sobre el corpus sintético de `corpus-generativo` y textos escritos para medir. No hay medición con testimonios reales.
 5. **Mediciones con carga variable.** Varias latencias se tomaron con otras sesiones usando la misma máquina; los documentos lo dicen y piden leer la magnitud, no los dígitos.
-6. **Resultados fuera del control de versiones.** Los resultados de la corrida del 2026-10-29 están fuera del repo.
+6. **Resultados fuera del control de versiones.** Los resultados de la corrida del 2026-10-29 y kit3 están fuera del repo.
+7. **No hay corridas de `/admin/evals` más recientes registradas** que las del 2026-10-29 (leído en `infra/fleet/edc-1.md` hasta §4zzzzzzzz y en este documento).
 
-## 11. Recomendaciones
+## 12. Recomendaciones
 
 1. **Investigar el `leakRate` 1.0 del ecosistema 6** antes de afirmar que la compuerta oculta lugares de trabajo. Revisar qué prompt y qué backend (Spark o respaldo) atendieron la llamada, si `keepPublicFigures` estaba encendido y cómo compara el evaluador. Repetir el ítem 12 al menos tres veces.
 2. **Cambiar el juez a un modelo distinto del que responde**, o añadir calificación mecánica donde haya etiquetas, y registrar el modelo del juez en cada resultado (ya se guarda en `models.judge`).
 3. **Repetir cada corrida al menos 3 veces** y reportar la dispersión, como hacen GraphRAG y `cite-eval`.
 4. **Ampliar los conjuntos**: más ítems de privacidad por ecosistema, con lugares de trabajo, instituciones genéricas y figuras públicas, para medir el intercambio que mostró Q24.
-5. **Versionar los resultados**: llevar a git los resultados de la corrida del 2026-10-29 y `plan/spark-chat-eval-2026-10-26.md`, y escribir el README de `scripts/cite-eval/`.
+5. **Versionar los resultados**: llevar a git los resultados de la corrida del 2026-10-29 y `plan/spark-chat-eval-2026-10-26.md`, y escribir el README de `scripts/cite-eval/`. Llevar kit3 al repositorio, con su corredor, para que cualquier cambio de la compuerta lo pueda correr.
 6. **Volver a medir GraphRAG con la métrica de citas corregida** (`citationPrecision` y `citationRecall` desde los `[n]` de la respuesta), con el umbral de soporte vigente, que es 1 y no 3.
 7. **Repetir `spark-chat-eval` después de ajustar el prompt para Qwen**, como propone su veredicto.
 8. **Separar el presupuesto de evaluaciones** del presupuesto de uso del ecosistema, para que medir no compita con usar.

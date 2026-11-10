@@ -1,9 +1,9 @@
 # Arquitectura del sistema
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, notas de contexto del equipo, `plan/adr-corpus-graph.md`, `plan/spark-ai-adopcion.md`, `plan/anonimizacion-y-voces.md`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/anonymise/gate.ts`, `apps/backend/src/lib/publishDocument.ts`, `apps/backend/src/lib/corpus.ts`, `apps/web/src/routes/api/generate/+server.ts`, `apps/web/src/lib/server/engine/*`, `packages/chat-engine/src/core/*`, `services/ai-service/src/server.ts`, `services/audio-service/app/*`. Código leído en `main` del 2026-10-29.
+- **Fuentes:** `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, notas de contexto del equipo, `plan/adr-corpus-graph.md`, `plan/spark-ai-adopcion.md`, `plan/anonimizacion-y-voces.md`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/anonymise/gate.ts`, `apps/backend/src/lib/publishDocument.ts`, `apps/backend/src/lib/corpus.ts`, `apps/web/src/routes/api/generate/+server.ts`, `apps/web/src/lib/server/engine/*`, `packages/chat-engine/src/core/*`, `services/ai-service/src/server.ts`, `services/audio-service/app/*`. Código leído en `main` b7dc944f el 2026-11-10. Lo que está en `main` y no en dev (367c2698, citado de `infra/fleet/edc-1.md`) dice "pendiente de desplegar en dev".
 
 ## Para quién es y qué responde
 
@@ -23,12 +23,12 @@ Los roles viven por ecosistema en la colección `memberships`. El escalafón, de
 
 | Rol | Nombre en la interfaz | Qué hace en el sistema |
 |---|---|---|
-| `member` | Participante | Conversa con el acervo, sube documentos y testimonios, publica lo suyo, valora respuestas |
-| `estudiante` | Estudiante | Lo mismo que `member`; con el interruptor `studentView` ve además la vista "Mi investigación" |
-| `admin` | Responsable | Además revisa retenciones del gate, gestiona miembros y sube voces |
-| `investigador` | Investigador | Además administra el ecosistema (página Ajustes) |
-| `owner` | Dueño | Además gestiona investigadores, cambia el `slug` y puede apagar el ecosistema |
-| Administrador de plataforma | Admin. de plataforma | Crea ecosistemas y cuentas, fija estilos de respuesta, ve `/admin/evals` y el ajuste de respaldo del detector |
+| `estudiante` | estudiante | Conversa, sube y escribe notas; con el interruptor `studentView` ve además la vista "Mi investigación" |
+| `member` | participante | Conversa con el acervo, sube documentos y audio, valora respuestas. Lo que sube se publica solo si `autoPublishMembers` está encendido (lo está por omisión) |
+| `admin` | administra | Además revisa retenciones del gate, sube testimonios y gestiona miembros. El valor existe, pero la pantalla de miembros no lo ofrece (`apps/web/src/lib/miembros.ts`) |
+| `investigador` | investigador | Lo de `admin`, más la administración acotada a sus ecosistemas. Hasta el 2026-11-10 también guardaba Ajustes; el cambio está pendiente de desplegar en dev |
+| `owner` | responsable | Además guarda los Ajustes del ecosistema (`organization:manage`, desde el 2026-11-10), gestiona investigadores, cambia el `slug` y puede apagar el ecosistema |
+| Administrador de plataforma | Admin. de plataforma | Crea ecosistemas y cuentas, fija estilos de respuesta, decide `keepPublicFigures`, ve `/admin/evals` (Etapa 1) y el ajuste de respaldo del detector |
 
 La matriz completa está en [Matriz de roles y permisos](../02-requisitos/matriz-roles-y-permisos.md).
 
@@ -37,7 +37,7 @@ La matriz completa está en [Matriz de roles y permisos](../02-requisitos/matriz
 | Sistema | Para qué lo usa EDC | Quién lo llama |
 |---|---|---|
 | OpenRouter | Generación de texto (DeepSeek V3.1) para respuestas, reescritura de preguntas, expansión, grafo, juez de evaluaciones; embeddings `bge-m3` en staging y como respaldo en dev; detector de datos personales en staging y como respaldo en dev | `ai-service` |
-| DeepInfra | Rerank (reordenamiento de pasajes) con `Qwen3-Reranker-0.6B` en staging; en dev el host no está verificado | `ai-service` |
+| DeepInfra | Rerank (reordenamiento de pasajes) con `Qwen3-Reranker-0.6B` en staging; en dev el host no está verificado. DeepInfra no lleva ZDR (ver [Pila de IA](pila-de-ia.md)) | `ai-service` |
 | DGX Spark prestado (solo dev) | Whisper large-v3, detector Qwen3-30B-A3B, `bge-m3` y `Qwen3-Reranker-0.6B`, detrás de un proxy con token | `backend` (detector, títulos), `ai-service` (embeddings), `audio-service` (Whisper) |
 | Hetzner Cloud | La máquina `edc-1` (proyecto `edc`, región fsn1) y sus respaldos | operador |
 | Cloudflare DNS | Registros del dominio `ecosistemasdeconocimiento.com` en modo solo DNS (sin proxy), para que Traefik obtenga certificados Let's Encrypt | operador |
@@ -144,9 +144,11 @@ Dos detalles del diagrama. Primero, ai-service devuelve los callbacks al backend
 
 | Componente | Archivos principales | Qué hace |
 |---|---|---|
-| Colecciones Payload | `src/collections/*.ts` | `users`, `organizations`, `memberships`, `teams`, `projects`, `documents`, `media`, `sessions`, `messages`, `ratings`, `studentProfiles`, `suggestions`, `graphEntities`, `graphMentions`, `graphRelations`, `anonymisation-reviews`, `eval-items`, `eval-runs`, `aiServiceCallbacks`; global `platform-settings`. Cada una define su control de acceso como restricciones WHERE por ecosistema |
+| Colecciones Payload | `src/collections/*.ts` | `users`, `organizations`, `memberships`, `teams`, `projects`, `documents`, `media`, `sessions`, `messages`, `ratings`, `studentProfiles`, `suggestions`, `graphEntities`, `graphMentions`, `graphRelations`, `anonymisation-reviews`, `anonymisation-setting-changes`, `eval-items`, `eval-runs`, `aiServiceCallbacks`; global `platform-settings`. Cada una define su control de acceso como restricciones WHERE por ecosistema |
 | Extracción de texto | `src/lib/extract/run.ts`, `src/lib/extract/sandbox.ts` | Saca el texto de PDF, DOCX, XLSX, CSV, HTML y Markdown en un hilo aislado, con guardas contra archivos comprimidos maliciosos |
-| Gate de anonimización | `src/lib/anonymiseDocument.ts`, `src/lib/anonymise/gate.ts`, `detector.ts`, `deterministic.ts`, `structural.ts` | Único punto de paso hacia el índice. Cuatro etapas: estructural, determinista, detección por modelo y verificación. Resultado binario: `ready` o `hold` |
+| Gate de anonimización | `src/lib/anonymiseDocument.ts`, `src/lib/anonymise/gate.ts`, `detector.ts`, `deterministic.ts`, `structural.ts` | Único punto de paso hacia el índice. Cuatro etapas: estructural, determinista, detección por modelo y verificación. Resultado binario: `ready` o `hold`. En un `documento` con compuerta también redacta el título (`redactedTitle`; pendiente de desplegar en dev) |
+| Controles de anonimización | `src/lib/anonymisationControls.ts`, `src/collections/AnonymisationSettingChanges.ts` | Interruptores por documento y por ecosistema, su auditoría y la nueva anonimización cuando cambian ([ADR-0020](adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) |
+| Retención por consentimiento | `src/lib/consentHold.ts`, `scripts/hold-for-consent.ts` | `documents.consentHeld`: sin re-gate, ingesta, grafo ni publicación hasta que los autores consientan. Pendiente de desplegar en dev ([ADR-0022](adr/ADR-0022-retencion-por-consentimiento.md)) |
 | Revisión de retenciones | `src/lib/holdReview.ts`, `src/app/api/holds/*` | Cola de documentos retenidos; aprobar, corregir o rechazar, con registro de auditoría antes de liberar |
 | Publicación | `src/lib/publishDocument.ts`, `src/lib/autoPublish.ts`, `src/lib/corpus.ts` | Mueve un documento del corpus borrador al compartido (re-embebe), lo retira al despublicar, borra copias retiradas |
 | Ingesta de conversaciones | `src/lib/conversationIngest.ts` | Pasa cada turno por el gate y lo indexa como documento `msg-{id}` para la orientación de turnos futuros |
@@ -156,9 +158,28 @@ Dos detalles del diagrama. Primero, ai-service devuelve los callbacks al backend
 | Identidad | `src/endpoints/jwks.ts`, `token.ts`, `me.ts`, `resolve.ts`, `src/lib/jwt/*` | Firma tokens EdDSA, publica JWKS, devuelve el mapa de permisos por ecosistema |
 | Receptor de callbacks | `src/app/api/ai-service/callback/route.ts`, `src/lib/hmac.ts` | Verifica la firma HMAC, deduplica en `aiServiceCallbacks` y actualiza el documento |
 | Aprovisionamiento | `src/lib/provisionEcosystem.ts` | Al crear un ecosistema, da de alta su org en ai-service con presupuesto |
-| Barridos programados | `src/lib/ingestRecovery.ts`, `publishJanitor.ts`, `sessionJanitor.ts`, `transcriptionJanitor.ts`, `embeddingJanitor.ts` | Retoman trabajo atorado y limpian restos; corren dentro del proceso del backend |
+| Barridos programados | `src/lib/ingestRecovery.ts`, `publishJanitor.ts`, `sessionJanitorScheduler.ts`, `transcriptionJanitor.ts`, `embeddingJanitor.ts`, `graph/orphanJanitor.ts`, `callbackRetention.ts` | Retoman trabajo atorado y limpian restos; corren dentro del proceso del backend (sección 4.2) |
 
-### 4.2 Componentes de la web (`apps/web`)
+### 4.2 Tareas que arrancan con el backend
+
+`onInit` en `apps/backend/src/payload.config.ts` arranca, en este orden, estas tareas. Cada una es un temporizador dentro del proceso del backend; con más de una réplica correrían una vez por réplica. Los intervalos son los valores por omisión del código; cada uno se cambia con su variable.
+
+| Tarea | Archivo | Por omisión | Intervalo | Qué hace |
+|---|---|---|---|---|
+| Sesiones viejas | `lib/sessionJanitorScheduler.ts`, `lib/sessionJanitor.ts` | Apagada (`SESSION_JANITOR_ENABLED`; dev y staging usan el valor del código, citado de `infra/fleet/env-manifests.md`) | 1440 min (`SESSION_JANITOR_INTERVAL_MIN`); la primera pasada, un intervalo después del arranque | Borra conversaciones sin actividad en 90 días (`SESSION_TTL_DAYS`) |
+| Transcripciones atoradas | `lib/transcriptionJanitor.ts` | Encendida | 15 min | Marca como fallida una transcripción sin callback; no borra |
+| Publicaciones atoradas | `lib/publishJanitor.ts` | Encendida | 15 min (atorada a los 30 min) | Escribe el error en una fila que quedó en `publishing`; no vuelve a publicar |
+| Embeddings atorados | `lib/embeddingJanitor.ts` | Encendida | 15 min (atorado a los 30 min; `pending` a los 60) | Pasa a `failed` una fila en `embedding` sin callback, para que se pueda reintentar |
+| Recuperación de ingesta | `lib/ingestRecovery.ts` | Encendida | 1 min | Lleva una transcripción terminada por el gate y la ingesta; falla con motivo las filas atoradas en `extracting`, en el gate o en `embedding` |
+| Huérfanos del grafo | `lib/graph/orphanJanitor.ts` | Encendida (`GRAPH_ORPHAN_JANITOR_ENABLED`) | 1440 min (`GRAPH_ORPHAN_JANITOR_INTERVAL_MIN`) | Borra las entidades que ya no nombra ninguna mención ni relación, restos de documentos borrados |
+| Cuerpo de los avisos | `lib/callbackRetention.ts` | Encendida (`CALLBACK_RETENTION_JANITOR_ENABLED`) | 1440 min (`CALLBACK_RETENTION_JANITOR_INTERVAL_MIN`) | Vacía `ai_service_callbacks.raw_body` de más de 30 días (`CALLBACK_RETENTION_DAYS`); la fila queda porque es la deduplicación. Pendiente de desplegar en dev |
+| Presupuestos | `lib/provisionEcosystem.ts` (`ensureEcosystemBudgets`) | Siempre, una vez | Al arrancar, sin esperar | Da de alta en ai-service el presupuesto que le falte a un ecosistema; no toca un tope ya fijado |
+
+Antes de esas tareas, `onInit` revisa el almacenamiento, la configuración de callbacks y de audio y las capacidades de ai-service, y crea el administrador inicial. Ninguna de esas revisiones detiene el arranque.
+
+Fuera del proceso, la retención de volcados de Postgres es un paso manual del procedimiento de despliegue: se quedan los 7 más recientes de cada entorno (citado de `infra/fleet/edc-1.md`, paso 7; primera purga medida el 2026-11-10). No hay tarea programada que la haga.
+
+### 4.3 Componentes de la web (`apps/web`)
 
 El motor de chat está repartido entre el paquete `@edc/chat-engine` (`packages/chat-engine/src/core/*`, lógica sin dependencias del producto) y el adaptador de EDC en `apps/web/src/lib/server/engine/`.
 
@@ -180,7 +201,7 @@ El motor de chat está repartido entre el paquete `@edc/chat-engine` (`packages/
 
 ### 5.1 Subida, gate, ingesta y publicación
 
-Un archivo entra por `web`, se guarda como documento en estado `draft` y el backend extrae su texto. Si el documento es un testimonio, una conversación o un `documento` marcado "Anonimizar", pasa por el gate. Un `documento` normal no pasa por el gate y se indexa tal cual (`apps/backend/src/lib/anonymiseDocument.ts`). Después del gate, el backend pide a ai-service la ingesta en el corpus borrador de quien subió. Al publicar, el documento se re-embebe en el corpus compartido del ecosistema. Los participantes publican sin revisión previa, siempre detrás del gate (`apps/backend/src/lib/autoPublish.ts`).
+Un archivo entra por `web`, se guarda como documento en estado `draft` y el backend extrae su texto. Si el documento es un testimonio, una conversación o un `documento` marcado "Anonimizar", pasa por el gate. Un `documento` normal no pasa por el gate y se indexa tal cual (`apps/backend/src/lib/anonymiseDocument.ts`). Después del gate, el backend pide a ai-service la ingesta en el corpus borrador de quien subió. Al publicar, el documento se re-embebe en el corpus compartido del ecosistema. Los participantes publican sin revisión previa, siempre detrás del gate (`apps/backend/src/lib/autoPublish.ts`). No se publica un documento retenido por consentimiento ni uno cuya nueva anonimización falló o sigue pendiente (`publishBlocker` en `apps/backend/src/lib/publishDocument.ts`; pendiente de desplegar en dev).
 
 ```mermaid
 sequenceDiagram
@@ -327,7 +348,7 @@ sequenceDiagram
   B-->>W: nodos y aristas
 ```
 
-Los tipos de entidad son `tema`, `lugar`, `evento`, `organizacion` y `persona`. `persona` se bloquea para testimonios y conversaciones en tres capas: el esquema de respuesta, `personaAllowed()` y un post-filtro (`apps/backend/src/lib/graph/types.ts`). El grafo vive en `edc_backend` y no en `edc_ai` (ADR-0001). La cola de extracción corre en el proceso del backend y no es durable (ver sección 8).
+Los tipos de entidad son `tema`, `lugar`, `evento`, `organizacion` y `persona`. `persona` se bloquea para testimonios y conversaciones en tres capas: el esquema de respuesta, `personaAllowed()` y un post-filtro (`apps/backend/src/lib/graph/types.ts`). El grafo vive en `edc_backend` y no en `edc_ai` (ADR-0001). La cola de extracción corre en el proceso del backend y no es durable (ver sección 8). El backfill del grafo solo extrae documentos publicados y no retenidos por consentimiento (commit feae7e18, pendiente de desplegar en dev). La re-extracción del grafo de lo publicado está preparada en `apps/backend/scripts/reextract-published-graph.ts` y no se ha corrido.
 
 ### 5.6 Resonancia (modo entrevista)
 
@@ -371,7 +392,7 @@ Límite conocido: backend y web comparten una sola llave de ai-service. El lími
 
 ### 7.1 El gate es binario y falla cerrado
 
-El gate de anonimización tiene solo dos salidas: `ready` (se indexa el texto redactado) o `hold` (no se indexa y espera revisión humana). No existe "indexar de todos modos". Si el detector falla, el documento se retiene. Una persona con `holds:review` puede aprobar, corregir o rechazar, y la aprobación escribe primero un registro de auditoría en `anonymisation-reviews` (`apps/backend/src/lib/holdReview.ts`). Una excepción vigente: el respaldo del detector hacia un modelo hospedado está encendido por defecto; se describe en [Pila de IA](pila-de-ia.md), sección "Riesgos y límites".
+El gate de anonimización tiene solo dos salidas: `ready` (se indexa el texto redactado) o `hold` (no se indexa y espera revisión humana). No existe "indexar de todos modos". Si el detector falla, el documento se retiene. Una persona con `holds:review` puede aprobar, corregir o rechazar, y la aprobación escribe primero un registro de auditoría en `anonymisation-reviews` (`apps/backend/src/lib/holdReview.ts`). Una excepción vigente: el respaldo del detector hacia un modelo hospedado (`detectorFallback: hosted`) es el valor por omisión. La administración de plataforma lo cambia a `none` en Ajustes; con `none` no hay llamada hospedada, haya o no URL del Spark, y el documento se retiene. Se describe en [Pila de IA](pila-de-ia.md), sección "Riesgos y límites".
 
 ### 7.2 Retirar no es borrar, y por eso existe `asOf`
 
@@ -393,6 +414,12 @@ ai-service no sabe qué es un ecosistema, una persona o un testimonio. Recibe co
 
 El navegador solo habla con `web`. Las rutas `/api/**` de `web` reenvían al backend con el JWT del usuario guardado en la cookie `chat_auth` (`httpOnly`). El navegador nunca manda la org, el dueño ni los nombres de corpus: el backend los deriva de la sesión. Así, una petición manipulada no puede escribir en otro ecosistema.
 
+### 7.7 El título también pasa por la compuerta, y falla cerrado; lo retenido por consentimiento no se mueve
+
+El nombre de archivo de un `documento` con compuerta puede nombrar a una persona. Por eso su título visible es el título redactado por el gate o, si no hay, "Documento", en todas las superficies: REST, ingesta, citas, biblioteca, chat, grafo, vista de estudiante y vista de anonimización. Si la columna `anonymise` es NULL o no viene en la fila leída, el título se trata como con compuerta. Solo quien lo subió y la administración de plataforma ven el nombre del archivo. Pendiente de desplegar en dev ([ADR-0021](adr/ADR-0021-titulos-con-compuerta-fallan-cerrado.md)).
+
+Un documento retenido por consentimiento (`consentHeld`) no se vuelve a anonimizar, ingerir, graficar ni publicar. Nada se borra; solo deja de moverse. Pendiente de desplegar en dev ([ADR-0022](adr/ADR-0022-retencion-por-consentimiento.md)).
+
 ## 8. Límites y decisiones conocidas
 
 | Límite | Consecuencia | Fuente |
@@ -401,7 +428,7 @@ El navegador solo habla con `web`. Las rutas `/api/**` de `web` reenvían al bac
 | Sin cola durable del grafo | La extracción corre dentro del proceso del backend. Un reinicio pierde la corrida en curso; `graphStatus` lo deja visible y existe `graph-retry` | `plan/adr-corpus-graph.md` §5.1 |
 | Una sola réplica por servicio | No hay alta disponibilidad; un despliegue interrumpe el servicio | `infra/docker-compose.yml` |
 | Spark sin supervisión | Los modelos del Spark corren en tmux; un reinicio los deja caídos hasta que alguien los levanta | no verificado en esta versión |
-| Una sola llave de ai-service | Un solo contador de tasa para todos los ecosistemas | `infra/docker-compose.yml`:699 |
+| Una sola llave de ai-service | Un solo contador de tasa para todos los ecosistemas | `infra/docker-compose.yml`:712 |
 | Umbral del grafo | El soporte mínimo bajó de 3 a 1 por decisión del responsable del 2026-10-21; las garantías de reidentificación del ADR original se apoyaban en 3 | `apps/backend/src/lib/graph/queries.ts` |
 | Sin producción | Solo dev y staging; staging no tiene audio ni Spark | `infra/fleet/edc-1.md` |
 
@@ -428,6 +455,9 @@ El navegador solo habla con `web`. Las rutas `/api/**` de `web` reenvían al bac
 | ADR-0017 | Plataforma de IA agnóstica del dominio |
 | ADR-0018 | Lenguaje llano en la interfaz |
 | ADR-0019 | Voces sin sujeto ni nivel de consentimiento |
+| ADR-0020 | Anonimizar todo y conservar nombres por documento |
+| ADR-0021 | El título de un `documento` con compuerta pasa por la compuerta y falla cerrado (propuesto) |
+| ADR-0022 | Retenido por consentimiento: una marca que detiene todo procesamiento (propuesto) |
 
 Los textos completos están en el [índice de ADR](adr/README.md).
 

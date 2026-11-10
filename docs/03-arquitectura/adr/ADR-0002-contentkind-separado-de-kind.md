@@ -1,7 +1,7 @@
 # ADR-0002. `contentKind` es un campo aparte de `kind` y funciona como control de privacidad
 
-- **Versión:** 1.1
-- **Fecha del documento:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada e implementada
 - **Fecha de la decisión:** 2026-08-28
@@ -62,6 +62,11 @@ La regla que el ADR del grafo pide decir en voz alta: **`contentKind` es un cont
 - `plan/anonimizacion-y-voces.md` §3.1b y §7 (estado de implementación, revisado el 2026-10-16).
 - `apps/backend/src/lib/contentKind.ts`.
 - `apps/backend/src/collections/Documents.ts` (definición del campo).
+
+## Estado al 2026-11-10
+
+- `contentKind` también decide el título. `titleFor` da "Testimonio" y "Conversación" a esos tipos, y "Documento" a un tipo que no conoce. Un `documento` con compuerta lleva su título redactado o "Documento"; el nombre del archivo solo lo ven quien lo subió y la administración de plataforma ([ADR-0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md); pendiente de desplegar en dev).
+- El riesgo de un testimonio subido como `documento` sin compuerta baja: desde el 2026-11-10 la carga de un documento arranca con "Anonimizar" encendido (commit aa73e01f; pendiente de desplegar en dev). Quien no tiene `voces:upload` no ve la casilla, pero no la necesita: es un participante (`member` o `estudiante`), y el backend fuerza "Anonimizar" en su documento y archiva su audio como testimonio (`collections/Documents.ts`, `anonymiseParticipantUpload` y `fileParticipantAudioAsTestimonio`; [ADR-0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md), Consecuencias).
 
 ## Referencias
 

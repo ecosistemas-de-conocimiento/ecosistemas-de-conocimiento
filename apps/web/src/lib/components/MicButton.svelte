@@ -1,9 +1,12 @@
 <script lang="ts">
   /**
    * Record from the mic with live partial text; on stop the whole recording
-   * uploads as a normal audio document (same route and titles). ⚠ Through the
-   * gate only with `voces:upload` (a testimonio); without it, a `documento`
-   * with no "Anonimizar": the transcript is not gated (review R4-15, open).
+   * uploads as a normal audio document (same route and titles). It always
+   * passes the gate: with `voces:upload` (admin and up, platform admin) it goes
+   * up as a testimonio; without it (member, estudiante) it goes up as a
+   * `documento` and the backend files a participant's audio as a testimonio
+   * (`fileParticipantAudioAsTestimonio`, `collections/Documents.ts`;
+   * review R4-15, closed 2026-11-10).
    *
    * 🔴 The live text is raw, pre-gate testimony from `LiveUplink`. It lives in
    * the composer's state only, is shown to the speaker while recording, and is

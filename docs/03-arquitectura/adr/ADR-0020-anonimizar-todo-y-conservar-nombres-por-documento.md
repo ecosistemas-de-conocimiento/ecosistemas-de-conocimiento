@@ -1,9 +1,9 @@
 # ADR-0020. Anonimizar todo por omisión y conservar nombres por documento
 
-- **Versión:** 1.0
-- **Fecha del documento:** 2026-11-07
+- **Versión:** 1.1
+- **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
-- **Estado de la decisión:** aceptada; implementada en la rama `feat/anonymise-controls` (commit `98619590`), sin desplegar. Huecos **Pendientes**: el caso A3 sin cambio de interruptor, y el reintento automático de una copia publicada retirada cuyo borrado falló
+- **Estado de la decisión:** aceptada; implementada (commits 491841fb y 98619590 del 2026-11-07, 887fae32 del 2026-11-10) y desplegada en dev (367c2698). Lo agregado en `main` después, pendiente de desplegar en dev: ver "Estado al 2026-11-10". Huecos **Pendientes**: el caso A3 sin cambio de interruptor, y el reintento automático de una copia publicada retirada cuyo borrado falló
 - **Fecha de la decisión:** 2026-11-07
 - **Quién decidió:** responsable de desarrollo
 - **Enmienda:** [ADR-0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md). Un testimonio ya no es anónimo sin excepción: quien puede cambiar los interruptores de un documento puede conservar dos tipos de nombre en él. ADR-0019 sigue vigente en lo demás: no hay campo `subject`, ni nivel de consentimiento, ni mapa entre seudónimos y nombres
@@ -56,7 +56,7 @@ Reglas:
 
 ## Consecuencias
 
-- Lo que sube una persona queda anonimizado por completo salvo que alguien encienda un interruptor. Al subir un `documento`, "Anonimizar" arranca encendido en las dos pantallas de carga, Mis documentos y el panel de la conversación (desde el 2026-11-10); quien lo apaga lo sube sin compuerta. **Pendiente (decisión del responsable):** la casilla solo aparece a quien tiene `voces:upload`; sin ese permiso, un `documento` subido desde cualquiera de las dos pantallas, y la grabación del micrófono, se suben sin compuerta.
+- Lo que sube una persona queda anonimizado por completo salvo que alguien encienda un interruptor. Al subir un `documento`, "Anonimizar" arranca encendido en las dos pantallas de carga, Mis documentos y el panel de la conversación (desde el 2026-11-10); quien lo apaga lo sube sin compuerta. La casilla solo aparece a quien tiene `voces:upload` (de `admin` en adelante y la administración de plataforma). Quien no lo tiene es un participante (`member` o `estudiante`): el backend fuerza "Anonimizar" en su `documento` y archiva su audio, también la grabación del micrófono, como testimonio, así que todo lo que sube pasa por la compuerta (`collections/Documents.ts`, `anonymiseParticipantUpload` y `fileParticipantAudioAsTestimonio`; desplegado).
 - **Título de un `documento` con compuerta.** Pasa por la compuerta con el mismo asignador de seudónimos que el texto (`anonymisation_report.redactedTitle`); sin título redactado se muestra "Documento", nunca el nombre del archivo. **Implementado** (2026-11-10): `collections/Documents.ts` y `lib/publishDocument.ts` le pasan el nombre a la compuerta, y la ingesta al servicio de IA, la publicación, la re-ingesta del borrador, el grafo y las citas del chat llevan el título redactado o "Documento" (`documentTitleFor` en `lib/contentKind.ts`). Por la API REST de documentos, quien no lo subió ni administra la plataforma recibe ese mismo título en `name`, y no puede filtrar ni ordenar por `name` en esas filas (`neutralNameForCaller` y `constrainGatedQueries` en `Documents.ts`). Quien lo subió ve su nombre, también en la pantalla de anonimización. El resumen de `/admin` lo lee por REST: un admin de ecosistema ve el título neutro; la administración de plataforma ve el nombre, por diseño. Los documentos ingeridos antes del 2026-11-10 conservan en el servicio de IA el título con que entraron hasta que se vuelvan a ingerir.
 - **Riesgo: el autor en un testimonio.** Quien sube un testimonio casi nunca es quien habla. Encender "Conservar al autor del documento" conserva solo el nombre de quien subió, si aparece. No conserva el de quien habla, y puede dejar visible a la persona facilitadora dentro del relato de otra.
 - **Riesgo: homónimos.** La comparación es de texto. Otra persona con el mismo nombre completo que quien subió, o con el mismo apellido y forma de cita que un autor citado, también queda visible.
@@ -67,6 +67,20 @@ Reglas:
 - **Residual: copia publicada retirada y sin borrar.** Si el retiro funcionó y el borrado falló, la copia publicada queda oculta mientras la fila sigue diciendo publicada. Nada lo reintenta solo: queda así hasta que alguien repita el cambio.
 - Volver a ingerir un documento reconstruye sus filas del grafo (inferido del flujo de ingesta; sin prueba).
 - Los riesgos se evalúan en la [evaluación de impacto](../../06-privacidad-y-seguridad/evaluacion-de-impacto-privacidad.md) (R19 y R20).
+
+## Estado al 2026-11-10
+
+La decisión no cambia. Cambió cómo se aplica; donde el texto de arriba y el código difieren, rige esto:
+
+- **Falla al borrar las copias viejas (regla 5).** Ya no se descarta el cambio. El interruptor se guarda, la falla queda marcada (`anonymisationReport.regate.failedAt`), la respuesta es 502 y dice qué cambió, y la vista ofrece "Reintentar" (`retryable`). Reintentar es `POST /api/documents/:id/anonimizacion/reintentar`, sin otro `PATCH`. Por ecosistema hay `GET` y `POST /api/organizations/:id/anonimizacion[/reintentar]` (commit 887fae32, desplegado en dev).
+- **Residual: copia publicada retirada y sin borrar.** Ya no queda en silencio: la fila marcada cuenta como pendiente en su vista y en la del ecosistema, y "Reintentar" la vuelve a intentar. Sigue sin haber un reintento automático (desplegado en dev).
+- **Caso A3 y cambio en el ecosistema.** `pendingRegate` y `regateInheritors` están desplegados en dev desde el 2026-11-10. Un borrador que la nueva anonimización no despublicó no es del ecosistema: ni su trabajo ni su "Reintentar" lo tocan; solo un cambio explícito sobre ese documento (commit 6a880e01, desplegado en dev).
+- **`keepPublicFigures`.** Hay un tercer interruptor, conservar figuras públicas, por ecosistema y por documento. Solo lo cambia la administración de plataforma y solo aplica a un `documento` (commit 887fae32, desplegado en dev). La vista dice qué interruptor puede cambiar cada quien (`editable`; commit 50bde2ae, pendiente de desplegar en dev).
+- **Reglas 2 y 3.** Que quien revisa solo entre a filas retenidas o publicadas (A-07) y que el investigador ya no guarde Ajustes están en `main` (commit 50bde2ae), pendientes de desplegar en dev.
+- **Publicar.** No se publica un documento cuya nueva anonimización falló o sigue pendiente: 409 (`publishBlocker`; commit 512dcc1f, pendiente de desplegar en dev).
+- **Retenido por consentimiento.** Los controles de un documento retenido responden 409 y no cuentan como pendientes ([ADR-0022](ADR-0022-retencion-por-consentimiento.md); pendiente de desplegar en dev).
+- **Título de un `documento` con compuerta.** Lo que Consecuencias marca como "Implementado (2026-11-10)" está en `main` y pendiente de desplegar en dev. Desde entonces la regla de filtros pasó de una lista de rutas prohibidas a una lista de permitidos (`GATED_FILTERABLE_PATHS`, commit b7dc944f), una columna `anonymise` NULL o ausente da título con compuerta, y los títulos viejos en el servicio de IA se corrigen sin volver a ingerir (`scripts/refresh-ai-titles.ts`). La decisión del título tiene ADR propio: [ADR-0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md).
+- **Casilla "Anonimizar" encendida por omisión.** En `main` (commit aa73e01f), pendiente de desplegar en dev.
 
 ## Referencias
 

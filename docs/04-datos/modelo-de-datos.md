@@ -1,9 +1,9 @@
 # Modelo de datos
 
-- **Versión:** 1.2
-- **Fecha:** 2026-11-07
+- **Versión:** 1.3
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/*.ts`, `apps/backend/src/globals/PlatformSettings.ts`, `apps/backend/src/access/index.ts`, `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/roles.ts`, `apps/backend/src/lib/corpus.ts`, `apps/backend/src/lib/aiClient.ts`, `apps/backend/src/lib/publishDocument.ts`, `apps/backend/src/lib/anonymiseDocument.ts`, `apps/backend/src/lib/holdReview.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/autoPublish.ts`, `apps/backend/src/lib/features.ts`, notas de contexto del equipo. Lectura del código en `main` del 2026-10-29.
+- **Fuentes:** `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/*.ts`, `apps/backend/src/globals/PlatformSettings.ts`, `apps/backend/src/access/index.ts`, `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/roles.ts`, `apps/backend/src/lib/corpus.ts`, `apps/backend/src/lib/aiClient.ts`, `apps/backend/src/lib/publishDocument.ts`, `apps/backend/src/lib/anonymiseDocument.ts`, `apps/backend/src/lib/holdReview.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/autoPublish.ts`, `apps/backend/src/lib/features.ts`, `apps/backend/src/lib/anonymisationControls.ts`, `apps/backend/src/lib/consentHold.ts`, `apps/backend/src/lib/callbackRetention.ts`, `apps/backend/src/lib/graph/orphanJanitor.ts`, notas de contexto del equipo. Lectura del código en `main` del 2026-10-29, revisada contra `main` en `b7dc944f` el 2026-11-10. Lo que está en `main` y no en el despliegue de dev del 2026-11-10 (`367c2698`, citado de `infra/fleet/edc-1.md` §4zzzzzzzz) se marca "pendiente de desplegar en dev".
 
 ## Para quién es y qué responde
 
@@ -22,8 +22,10 @@ Este documento es para quien necesita entender qué guarda Ecosistemas de Conoci
 | `member` | `documents:read`, `documents:write`, `chat:use`, `ratings:write` |
 | `estudiante` | Los mismos que `member`. Lo adicional es una vista (`studentView`), no un permiso |
 | `admin` | Los de `member` más `voces:upload`, `ratings:read-comments`, `holds:review`, `documents:delete`, `members:manage` |
-| `investigador` | Los de `admin` más `organization:manage` (la página de ajustes del ecosistema) |
-| `owner` | Los mismos que `investigador`. Su rango le deja gestionar investigadores, cambiar el `slug` y apagar el ecosistema |
+| `investigador` | Los mismos que `admin`. Su rango le deja gestionar a todos menos al responsable |
+| `owner` | Los de `investigador` más `organization:manage` (Ajustes del ecosistema: sus interruptores y el "Reintentar" de la re-anonimización). Su rango le deja gestionar investigadores, cambiar el `slug` y apagar el ecosistema |
+
+`organization:manage` pasó del investigador al responsable por decisión del 2026-11-10 (`50bde2ae`). Implementado (pendiente de desplegar en dev): en dev el investigador todavía guarda Ajustes.
 
 **Administrador de plataforma** no es un rol de membresía. Es la casilla `users.isPlatformAdmin`. Al emitir el token de sesión se resuelve como `owner` en todos los ecosistemas activos.
 
@@ -60,7 +62,7 @@ erDiagram
   USERS ||--o{ MEDIA : "sube"
   ORGANIZATIONS |o--o{ MEDIA : "informativo"
 
-  DOCUMENTS ||--o{ ANONYMISATION_REVIEWS : "auditado en"
+  DOCUMENTS |o--o{ ANONYMISATION_REVIEWS : "auditado en"
   USERS ||--o{ ANONYMISATION_REVIEWS : "revisa"
   ORGANIZATIONS ||--o{ ANONYMISATION_REVIEWS : "acota"
 
@@ -117,7 +119,7 @@ Propósito: el tenant. Archivo: `apps/backend/src/collections/Organizations.ts`.
 | `features` | JSON | Interruptores de funciones. Vacío significa valores por defecto |
 | `answerStyleGenerales`, `answerStyleResonancias`, `answerStyleInterviewer` | texto largo, máximo 1500 caracteres | Estilo de respuesta por tipo de conversación. Solo los cambia un administrador de plataforma |
 
-Interruptores (`apps/backend/src/lib/features.ts`). Encendidos por defecto: `audioUpload`, `liveMic`, `interviewerMode`, `graph`, `graph3d`, `combinedGraph`, `chatOrientation`, `testimonioTitles`, `autoPublishMembers`. Apagados por defecto: `studentView`, `keepPublicFigures`, `studentTestimonios`, `keepDocumentAuthor` y `keepCitedAuthors`. `keepPublicFigures` y `studentTestimonios` solo los cambia un administrador de plataforma. `keepDocumentAuthor` y `keepCitedAuthors` (sin desplegar, rama `feat/anonymise-controls`) son el valor por omisión de los dos interruptores de anonimización de cada documento; los cambia quien cambia las funciones ordinarias ([ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)).
+Interruptores (`apps/backend/src/lib/features.ts`). Encendidos por defecto: `audioUpload`, `liveMic`, `interviewerMode`, `graph`, `graph3d`, `combinedGraph`, `chatOrientation`, `testimonioTitles`, `autoPublishMembers`. Apagados por defecto: `studentView`, `keepPublicFigures`, `studentTestimonios`, `keepDocumentAuthor` y `keepCitedAuthors`. `keepPublicFigures` y `studentTestimonios` solo los cambia un administrador de plataforma (`PLATFORM_ADMIN_ONLY_FEATURES`). `keepDocumentAuthor` y `keepCitedAuthors` son el valor por omisión de los interruptores de anonimización de cada documento ([ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)); en dev desde el 2026-11-10. Los cambia quien tiene `organization:manage`, el responsable, o un administrador de plataforma (Implementado (pendiente de desplegar en dev); en dev, desde `investigador`). Cada cambio escribe su fila de auditoría y, si apaga un interruptor, vuelve a pasar por la compuerta lo que lo heredaba (sección 5.2).
 
 Ganchos: al cambiar `features` se invalida la caché. Si `studentTestimonios` pasa de encendido a apagado, se borra el consentimiento de testimonios en `studentProfiles`. Al crear un ecosistema se aprovisiona su organización en ai-service (sección 6).
 
@@ -133,6 +135,8 @@ Propósito: une `users` con `organizations` y fija el rol. Archivo: `apps/backen
 | `isActive` | casilla, por defecto verdadero | |
 | `team` | relación con `teams`, opcional | Solo para mostrar |
 | `personName`, `title` | texto | |
+
+Lectura: quien es `estudiante` en un ecosistema ve ahí su propia fila, la del personal y la de los compañeros que activaron `shareWithPeers`; los demás roles ven todas las del ecosistema (decisión del 2026-11-10, `f685923d`; Implementado, pendiente de desplegar en dev).
 
 Reglas: una persona tiene como máximo una membresía por ecosistema (índice único escrito a mano). Nadie se asigna una membresía a sí mismo, ni siquiera un administrador de plataforma. Nadie asigna un rol más alto que el propio. Un ecosistema nunca se queda sin `owner`. No se puede crear una membresía hacia un ecosistema ajeno.
 
@@ -206,11 +210,15 @@ Propósito: el grafo de conocimiento que se extrae de los documentos publicados.
 - `graphMentions`: `organization`, `document`, `entity`, `occurrences`, `snippet`, `seeded`. Una mención es única por documento y entidad.
 - `graphRelations`: `organization`, `document`, `fromEntity`, `toEntity`, `type` (`ocurre_en`, `participa_en`, `ubicado_en`, `parte_de`, `afecta_a`, `relacionado_con`). Una arista es única por documento, origen, destino y tipo.
 
+Una tarea diaria del backend borra las entidades que ya no menciona ningún documento (`lib/graph/orphanJanitor.ts`, `GRAPH_ORPHAN_JANITOR_*`; Implementado). Antes quedaban hasta que alguien corría el relleno a mano.
+
 Reglas de privacidad: un testimonio nunca produce nodos `persona`. Cada consulta del grafo filtra por ecosistema y por documentos `published`. El umbral mínimo de soporte por entidad lo rige `GRAPH_MIN_ENTITY_DOCS`; su valor por defecto en el código es 1 (leído en `apps/backend/src/lib/graph/queries.ts`, 2026-10-30), no el 3 que todavía citan las notas de contexto del equipo.
 
 ### 3.12 `anonymisation-reviews`: bitácora de revisiones
 
-Propósito: registro de solo inserción de cada decisión humana sobre un texto retenido. Campos: `document`, `organization`, `reviewer`, `decision` (`approved` o `rejected`), `gateStage`, `gateReason`, `gateReport`, `textEdited`, `note` (máximo 1000 caracteres). No guarda el texto revisado. La fila de auditoría se escribe antes de cambiar el documento.
+Propósito: registro de solo inserción de cada decisión humana sobre un texto retenido. Campos: `document`, `documentIdSnapshot`, `organization`, `reviewer`, `decision` (`approved` o `rejected`), `gateStage`, `gateReason`, `gateReport`, `textEdited`, `note` (máximo 1000 caracteres). No guarda el texto revisado. La fila de auditoría se escribe antes de cambiar el documento.
+
+Borrar un documento ya no borra las decisiones de otra persona: `document` queda vacío y `documentIdSnapshot` guarda el id. Solo se van las filas de quien borra. La excepción es el borrado de una conversación que se lleva un documento retenido: sus filas se van con él (decisión del 2026-10-17). Decisión del 2026-11-10, migración `20261110_181621`; Implementado (pendiente de desplegar en dev).
 
 ### 3.13 `eval-items` y `eval-runs`: evaluaciones
 
@@ -218,15 +226,15 @@ Propósito: el panel de evaluaciones de calidad, solo para administradores de pl
 
 ### 3.14 `aiServiceCallbacks`: idempotencia de avisos
 
-Propósito: recordar qué avisos (webhooks) de ai-service ya se procesaron, para no procesar dos veces el mismo. Campos: `correlationKey`, `eventKey`, `event`, `receivedAt` y `rawBody` (máximo 100 000 caracteres). El nombre del índice único `ai_service_callbacks_natural_key_unq` forma parte del contrato: la ruta de recepción lo busca en el error del driver para detectar duplicados. `rawBody` se vacía a los 30 días (`lib/callbackRetention.ts`); la fila se queda.
+Propósito: recordar qué avisos (webhooks) de ai-service ya se procesaron, para no procesar dos veces el mismo. Campos: `correlationKey`, `eventKey`, `event`, `receivedAt` y `rawBody` (máximo 100 000 caracteres). El nombre del índice único `ai_service_callbacks_natural_key_unq` forma parte del contrato: la ruta de recepción lo busca en el error del driver para detectar duplicados. Una tarea diaria vacía `rawBody` a los 30 días (`lib/callbackRetention.ts`, `CALLBACK_RETENTION_*`); la fila se queda porque es la llave contra duplicados. Decisión del 2026-11-10; Implementado (pendiente de desplegar en dev).
 
 ### 3.15 Global `platform-settings`
 
-Propósito: ajustes de toda la plataforma. Tiene un campo, `detectorFallback` (`hosted` o `none`), que decide si el detector de nombres puede caer a un modelo hospedado cuando el local no responde. Vacío significa usar la variable de entorno. Si falla la lectura del ajuste, el código usa `none` (cerrado ante la falla).
+Propósito: ajustes de toda la plataforma. Tiene un campo, `detectorFallback` (`hosted` o `none`), que decide si el detector de nombres puede caer a un modelo hospedado cuando el local no responde. Vacío significa usar la variable de entorno. Si falla la lectura del ajuste, el código usa `none` (cerrado ante la falla). `none` también impide el modelo hospedado cuando no hay URL del detector local, como en staging (P-05). Solo lo cambia un administrador de plataforma, y cada cambio escribe una fila de alcance `plataforma` en `anonymisation-setting-changes`. En dev el ajuste está vacío y la variable vale `hosted` (citado, `edc-1.md` §4zzzzzzz).
 
 ### 3.16 `anonymisation-setting-changes`: bitácora de interruptores
 
-Propósito: registro de solo inserción de cada cambio de `keepDocumentAuthor`, `keepCitedAuthors`, `keepPublicFigures` o del ajuste de plataforma `detectorFallback`, una fila por clave cambiada. Archivo: `apps/backend/src/collections/AnonymisationSettingChanges.ts`. Sin desplegar. Campos: `organization` (vacío en un cambio de plataforma), `document` (vacío en un cambio de ecosistema o de plataforma), `actor` (vacío si fue un script), `scope` (`documento`, `ecosistema` o `plataforma`), `key`, `before` y `after` (verdadero, falso o vacío; vacío significa heredar o sin fijar) y `createdAt`. Nunca guarda texto. Un cambio de documento escribe su fila antes del cambio. Un cambio de ecosistema lo escribe un gancho `afterChange` de `Organizations` en la misma transacción, así que cubre `/api/funciones` y la API directa; si falla la fila, falla el cambio. Borrar el documento deja la fila con `document` vacío; borrar el ecosistema la borra.
+Propósito: registro de solo inserción de cada cambio de `keepDocumentAuthor`, `keepCitedAuthors`, `keepPublicFigures` o del ajuste de plataforma `detectorFallback`, una fila por clave cambiada. Archivo: `apps/backend/src/collections/AnonymisationSettingChanges.ts`. En dev desde el 2026-11-10 (tabla a las 05:47 UTC; claves `keepPublicFigures` y `detectorFallback` y alcance `plataforma` a las 18:33 UTC). Campos: `organization` (vacío en un cambio de plataforma), `document` (vacío en un cambio de ecosistema o de plataforma), `actor` (vacío si fue un script), `scope` (`documento`, `ecosistema` o `plataforma`), `key`, `before` y `after` (verdadero, falso o vacío; vacío significa heredar o sin fijar) y `createdAt`. Nunca guarda texto. Un cambio de documento escribe su fila antes del cambio. Un cambio de ecosistema lo escribe un gancho `afterChange` de `Organizations` en la misma transacción, así que cubre `/api/funciones` y la API directa; si falla la fila, falla el cambio. Borrar el documento deja la fila con `document` vacío; borrar el ecosistema la borra.
 
 ## 4. Reglas de acceso por colección
 
@@ -235,11 +243,11 @@ Propósito: registro de solo inserción de cada cambio de `keepDocumentAuthor`, 
 | Colección | Leer | Crear | Actualizar | Borrar |
 |---|---|---|---|---|
 | `users` | Uno mismo o admin. de plataforma | Admin. de plataforma | Uno mismo o admin. de plataforma | Admin. de plataforma |
-| `organizations` | Miembros del ecosistema | Admin. de plataforma | `investigador` o superior | Admin. de plataforma |
-| `memberships` | Miembros del ecosistema (el campo `user` tiene regla propia) | `admin` o superior | `admin` o superior | `admin` o superior |
+| `organizations` | Miembros del ecosistema | Admin. de plataforma | `owner` (`organization:manage`) o admin. de plataforma; en dev, todavía `investigador` o superior | Admin. de plataforma |
+| `memberships` | Miembros del ecosistema (el campo `user` tiene regla propia); un `estudiante` solo ve su fila, el personal y los compañeros que comparten (pendiente de desplegar en dev) | `admin` o superior | `admin` o superior | `admin` o superior |
 | `teams` | Miembros del ecosistema | `admin` o superior | `admin` o superior | `admin` o superior |
 | `projects` | Miembros del ecosistema (por `team.organization`) | `admin` o superior | `admin` o superior | `admin` o superior |
-| `documents` | Los propios en cualquier estado, o los `published` del ecosistema; admin. de plataforma ve todo; las filas de revisión nunca salen | Cualquier cuenta activa | Solo quien lo subió o admin. de plataforma | Solo quien lo subió o admin. de plataforma |
+| `documents` | Los propios en cualquier estado, o los `published` del ecosistema; admin. de plataforma ve todo; una cuenta desactivada no ve nada; las filas de revisión nunca salen | Cualquier cuenta activa | Quien lo subió, con asiento `documents:write` en su ecosistema, o admin. de plataforma | Quien lo subió: su borrador siempre; lo demás solo con asiento `documents:write` (pendiente de desplegar en dev; en dev, quien lo subió). Admin. de plataforma |
 | `media` | Archivos propios, o detrás de un `documento` publicado sin anonimizar del ecosistema; nunca la grabación de un testimonio | Cualquier cuenta activa | Quien lo subió | Quien lo subió |
 | `sessions` | Solo el dueño | Cualquier cuenta activa | Solo el dueño | Solo el dueño |
 | `messages` | Dueño de la conversación | Cualquier cuenta activa | Dueño de la conversación | Dueño de la conversación |
@@ -248,7 +256,7 @@ Propósito: registro de solo inserción de cada cambio de `keepDocumentAuthor`, 
 | `suggestions` | Nadie por la API | Nadie por la API | Nadie por la API | Nadie por la API |
 | `graphEntities`, `graphMentions`, `graphRelations` | Nadie por la API | Nadie por la API | Nadie por la API | Nadie por la API |
 | `anonymisation-reviews` | Admin. de plataforma o quien tenga `holds:review` en ese ecosistema | Nadie por la API | Nadie | Nadie |
-| `anonymisation-setting-changes` (sin desplegar) | Admin. de plataforma o quien tenga `holds:review` en ese ecosistema | Nadie por la API | Nadie | Nadie |
+| `anonymisation-setting-changes` | Admin. de plataforma o quien tenga `holds:review` en ese ecosistema; las filas de plataforma, solo admin. de plataforma | Nadie por la API | Nadie | Nadie |
 | `eval-items`, `eval-runs` | Admin. de plataforma | Admin. de plataforma | Admin. de plataforma | Admin. de plataforma |
 | `aiServiceCallbacks` | Admin. de plataforma | Nadie por la API | Nadie | Nadie |
 | `platform-settings` (global) | Admin. de plataforma | n/a | Admin. de plataforma | n/a |
@@ -259,7 +267,7 @@ Notas sobre la tabla:
 2. **Colecciones de solo servidor.** `studentProfiles`, `suggestions` y las tres del grafo niegan todo por la API. El servidor las maneja desde sus endpoints propios (`apps/backend/src/endpoints/estudiante.ts`, `apps/backend/src/endpoints/graph.ts`) y desde `apps/backend/src/lib/graph/writer.ts`. Que el endpoint de estudiante use `overrideAccess` es inferido; el endpoint no se leyó completo (no verificado en esta versión).
 3. **Borrado por rol.** El permiso `documents:delete` (de `admin` hacia arriba) no aparece en la regla de la colección. Lo usa la ruta `app/api/published/[id]/route.ts`, que retira testimonios publicados y exige `holds:review`.
 4. **Campos que nadie escribe por la API.** Los campos del filtro de anonimización (`anonymise`, `anonymisationStatus`, `redactedText`, `heldText` y demás) rechazan escrituras de cualquiera, administrador de plataforma incluido. Solo los escribe el servidor.
-5. **Consultas que no sirven de oráculo.** En `documents`, los filtros por `name`, `uploadedBy`, `session` y `uploadedInSession` están restringidos (`constrainGatedQueries`) para que nadie deduzca, filtrando, la existencia de un testimonio ajeno.
+5. **Consultas que no sirven de oráculo.** En dev, los filtros de `documents` por `name`, `uploadedBy`, `session` y `uploadedInSession` están restringidos (`constrainGatedQueries`) para que nadie deduzca, filtrando, la existencia de un testimonio ajeno. En `main`, desde `b7dc944f`, es una lista blanca: un filtro u orden sobre cualquier ruta fuera de `GATED_FILTERABLE_PATHS` solo encuentra filas que la persona puede leer completas; aplica también a `document.*` desde `anonymisation-reviews` y `anonymisation-setting-changes` (Implementado, pendiente de desplegar en dev). El detalle está en [../06-privacidad-y-seguridad/seguridad.md](../06-privacidad-y-seguridad/seguridad.md).
 
 El detalle por rol y por pantalla está en [../02-requisitos/matriz-roles-y-permisos.md](../02-requisitos/matriz-roles-y-permisos.md).
 
@@ -306,9 +314,9 @@ stateDiagram-v2
   held --> rejected: revisor rechaza (terminal)
   held --> pending: POST /retry con texto distinto
   ready --> rejected: retiro de testimonio publicado
-  ready --> pending: cambio de interruptor de anonimización (sin desplegar)
-  held --> pending: cambio de interruptor de anonimización (sin desplegar)
-  approved --> pending: cambio de interruptor de anonimización (sin desplegar)
+  ready --> pending: cambio de interruptor de anonimización
+  held --> pending: cambio de interruptor de anonimización
+  approved --> pending: cambio de interruptor de anonimización
   approved --> rejected: retiro de testimonio publicado
   na: n/a
 ```
@@ -319,7 +327,7 @@ stateDiagram-v2
 | `held` a `approved` o `rejected` | Una persona con `holds:review` (`admin`, `investigador`, `owner` o administrador de plataforma) desde la pantalla de revisión; código en `apps/backend/src/lib/holdReview.ts` |
 | `held` a `pending` | Quien subió el documento con `POST /:id/retry`. Se rechaza mientras el texto no cambie, comparando contra `heldTextHash` |
 | `ready` o `approved` a `rejected` | Una persona con `holds:review`, retirando un testimonio ya publicado (`apps/backend/src/lib/rejectPublished.ts`) |
-| `ready`, `held` o `approved` a `pending` | Quien puede cambiar los interruptores de anonimización del documento, con `PATCH /:id/anonimizacion`, si el cambio afecta su resultado: se enciende un interruptor que el resultado tenía apagado, o se apaga uno bajo el que conservó un nombre. Si no conservó a nadie, solo se actualiza `anonymisationReport.settings`. Se escribe la auditoría, se retira el documento (compartido y borrador), se borran sus copias en ai-service y sus filas del grafo, vuelve a borrador con las columnas de la compuerta y los tres registros de nombres limpios, y la compuerta corre en segundo plano. `rejected`, sin compuerta o `n/a` solo guardan el ajuste; `pending`, `publishing` y `unpublishing` responden 409; una conversación, 400; una falla de ai-service, 502 sin reiniciar, con el ajuste guardado y la falla marcada (`POST /:id/anonimizacion/reintentar`). El borrado en ai-service va antes del reinicio. Un valor del ecosistema que pasa de encendido a apagado vuelve a pasar de la misma forma lo que lo hereda y conservó un nombre bajo él (`regateInheritors`), con hasta 3 intentos; lo que siga fallando deja `pendingRegate`. Aprobar una retención con interruptores distintos a los de hoy responde 409 (`lib/holdReview.ts`). Sin desplegar (`lib/anonymisationControls.ts`) |
+| `ready`, `held` o `approved` a `pending` | Quien puede cambiar los interruptores de anonimización del documento, con `PATCH /:id/anonimizacion`, si el cambio afecta su resultado: se enciende un interruptor que el resultado tenía apagado, o se apaga uno bajo el que conservó un nombre. Si no conservó a nadie, solo se actualiza `anonymisationReport.settings`. Se escribe la auditoría, se retira el documento (compartido y borrador), se borran sus copias en ai-service y sus filas del grafo, vuelve a borrador con las columnas de la compuerta y los tres registros de nombres limpios, y la compuerta corre en segundo plano. `rejected`, sin compuerta o `n/a` solo guardan el ajuste; `pending`, `publishing` y `unpublishing` responden 409; una conversación, 400; una falla de ai-service, 502 sin reiniciar, con el ajuste guardado y la falla marcada (`POST /:id/anonimizacion/reintentar`). El borrado en ai-service va antes del reinicio. Un valor del ecosistema que pasa de encendido a apagado vuelve a pasar de la misma forma lo que lo hereda y conservó un nombre bajo él (`regateInheritors`), con hasta 3 intentos; lo que siga fallando deja `pendingRegate`. Aprobar una retención con interruptores distintos a los de hoy responde 409 (`lib/holdReview.ts`). En dev desde el 2026-11-10 (`lib/anonymisationControls.ts`). Pendiente de desplegar en dev: quien revisa solo entra a filas retenidas o publicadas (A-07); una fila retenida por consentimiento responde 409 y ningún re-gate la toca; publicar una fila con compuerta cuyo re-gate falló o sigue pendiente responde 409 |
 
 Mientras un documento está `held`, `ingestStatus` queda en `failed` con el código `anonymisation_held` y nada se ingiere. `rejected` es terminal: ese texto nunca entra al corpus. Cada decisión humana escribe primero una fila en `anonymisation-reviews`.
 
@@ -412,7 +420,7 @@ Los ids del diagrama son ilustrativos.
 
 ## 7. Revisiones de nota
 
-Una nota publicada se edita sin despublicarla. "Publicar cambios" crea una fila oculta de preparación con `revisionOf` apuntando a la nota original. Esa fila nunca sale en la API. La fila de preparación copia los tres valores propios de anonimización de la nota (`keepPublicFigures`, `keepDocumentAuthor`, `keepCitedAuthors`; sin desplegar). Cuando la re-ingesta termina, el contenido pasa a la nota original y la fila de preparación desaparece (comportamiento afirmado por `apps/backend/src/lib/studentNotes.pg.test.ts`). La relación es uno a uno (índice único) y se borra en cascada con la nota. `processedBody` guarda el cuerpo tal como se publicó por última vez y `reindexIngestId` sigue la re-ingesta.
+Una nota publicada se edita sin despublicarla. "Publicar cambios" crea una fila oculta de preparación con `revisionOf` apuntando a la nota original. Esa fila nunca sale en la API. La fila de preparación copia los tres valores propios de anonimización de la nota (`keepPublicFigures`, `keepDocumentAuthor`, `keepCitedAuthors`). Cuando la re-ingesta termina, el contenido pasa a la nota original y la fila de preparación desaparece (comportamiento afirmado por `apps/backend/src/lib/studentNotes.pg.test.ts`). La relación es uno a uno (índice único) y se borra en cascada con la nota. `processedBody` guarda el cuerpo tal como se publicó por última vez y `reindexIngestId` sigue la re-ingesta.
 
 ## 8. Diccionario de datos de `documents`
 
@@ -427,7 +435,7 @@ Convenciones. "Servidor" significa que solo lo escribe código del backend con p
 | `uploadedBy` | relación con `users`, requerida | Servidor (siempre el usuario de la petición) | Autor, ecosistema, admin. de plataforma; filtro restringido |
 | `session` | relación múltiple con `sessions` | Servidor, al adjuntar en una conversación propia | Igual que la fila; filtro restringido |
 | `uploadedInSession` | relación con `sessions` | Servidor, al crear desde una conversación | Igual que la fila; filtro restringido |
-| `name` | texto, requerido | Autor | Igual que la fila. Nunca entra al corpus en testimonios; filtro restringido |
+| `name` | texto, requerido | Autor | Igual que la fila. En contenido con compuerta, solo quien lo subió y el admin. de plataforma ven el nombre del archivo; los demás reciben un título neutro o redactado. Nunca entra al corpus en testimonios; filtro restringido. Para un `documento` con compuerta, el título va redactado en REST, ingesta, citas, biblioteca, chat, grafo, vista de estudiante y vista de anonimización, y si `anonymise` es nulo o no viene en la fila, el título falla cerrado (Implementado, pendiente de desplegar en dev) |
 | `createdAt`, `updatedAt` | fecha | Payload | Igual que la fila |
 
 ### 8.2 Tipo de material
@@ -444,9 +452,10 @@ Convenciones. "Servidor" significa que solo lo escribe código del backend con p
 | Campo | Tipo | Quién lo escribe | Quién lo lee |
 |---|---|---|---|
 | `anonymise` | casilla, por defecto falso | Servidor (todo PDF o DOCX de participante, o marca "Anonimizar" del staff) | Igual que la fila |
-| `keepPublicFigures` | casilla, sin valor por defecto | Admin. de plataforma | Igual que la fila |
-| `keepDocumentAuthor` (columna `keep_document_author`) | casilla que admite nulo; nulo hereda `keepDocumentAuthor` del ecosistema | Servidor, por `PATCH /:id/anonimizacion`: quien subió, `holds:review` del ecosistema y admin. de plataforma. Sin desplegar | Igual que la fila |
-| `keepCitedAuthors` (columna `keep_cited_authors`) | casilla que admite nulo; nulo hereda `keepCitedAuthors` del ecosistema | Igual que `keepDocumentAuthor`. Sin desplegar | Igual que la fila |
+| `keepPublicFigures` | casilla, sin valor por defecto | Admin. de plataforma, por `PATCH /:id/anonimizacion`; solo en un `documento` | Igual que la fila |
+| `keepDocumentAuthor` (columna `keep_document_author`) | casilla que admite nulo; nulo hereda `keepDocumentAuthor` del ecosistema | Servidor, por `PATCH /:id/anonimizacion`: quien subió, `holds:review` del ecosistema (solo sobre filas retenidas o publicadas desde A-07, pendiente de desplegar en dev) y admin. de plataforma | Igual que la fila |
+| `keepCitedAuthors` (columna `keep_cited_authors`) | casilla que admite nulo; nulo hereda `keepCitedAuthors` del ecosistema | Igual que `keepDocumentAuthor` | Igual que la fila |
+| `consentHeld` (columna `consent_held`) | casilla, `NOT NULL`, falso por defecto | Solo el script `scripts/hold-for-consent.ts`; ninguna API. No hay camino de liberación en el código | Igual que la fila. Si es verdadero, la fila no se extrae, ingiere, pasa por la compuerta, grafica ni publica. Implementado (pendiente de desplegar en dev) |
 | `anonymisationStatus` | `n/a`, `pending`, `held`, `approved`, `rejected`, `ready` | Servidor | Igual que la fila |
 | `redactedText` | texto, hasta 2 000 000 caracteres | Servidor; un revisor puede corregirlo al aprobar | Ecosistema cuando está publicado; es lo único que entra al corpus en contenido con filtro |
 | `heldText` | texto | Servidor | Solo autor y admin. de plataforma |
@@ -454,9 +463,9 @@ Convenciones. "Servidor" significa que solo lo escribe código del backend con p
 | `anonymisationSurvivors` | JSON | Servidor | Autor y admin. de plataforma (posiciones de lo que todavía identifica) |
 | `publicFiguresKept` | JSON | Servidor | Igual que la fila |
 | `authorsKept` (columna `authors_kept`) | JSON: nombre completo de quien subió, modelo y fecha; solo con `keepDocumentAuthor` efectivo; nulo en una retención | Servidor | Solo autor y admin. de plataforma |
-| `citedAuthorsKept` (columna `cited_authors_kept`) | JSON: entradas `{name, model, at}` de autores citados conservados; solo con `keepCitedAuthors` efectivo y si el modelo llamó público ese texto exacto. Se limpia como `authorsKept`: en una retención, un rechazo, un retiro, al promover una nota y al volver a pasar por la compuerta. Sin desplegar | Servidor | Igual que `authorsKept` |
+| `citedAuthorsKept` (columna `cited_authors_kept`) | JSON: entradas `{name, model, at}` de autores citados conservados; solo con `keepCitedAuthors` efectivo y si el modelo llamó público ese texto exacto. Se limpia como `authorsKept`: en una retención, un rechazo, un retiro, al promover una nota y al volver a pasar por la compuerta | Servidor | Igual que `authorsKept` |
 | `anonymisationError` | texto | Servidor | Igual que la fila |
-| `anonymisationReport` | JSON | Servidor | Igual que la fila; solo conteos por etapa, sin texto. Desde la rama `feat/anonymise-controls` guarda también `settings`: los dos interruptores con que corrió la compuerta (ausente en reportes anteriores). Sin desplegar |
+| `anonymisationReport` | JSON | Servidor | Igual que la fila; solo conteos por etapa, sin texto. Desde el 2026-11-10 en dev guarda también `settings`: los interruptores con que corrió la compuerta (ausente en reportes anteriores) |
 | `testimonioTitle` | texto | Servidor (título propuesto por el sistema) | Como `heldText` mientras no esté `ready` o `approved`; después, igual que la fila |
 
 ### 8.4 Etiquetas de corpus
@@ -517,16 +526,16 @@ Convenciones. "Servidor" significa que solo lo escribe código del backend con p
 
 | Ruta | Quién | Qué hace |
 |---|---|---|
-| `POST /api/documents/:id/publish` | Solo el autor | Inicia la publicación |
+| `POST /api/documents/:id/publish` | Solo el autor | Inicia la publicación. Responde 409 si la fila está retenida por consentimiento o si su re-gate falló o sigue pendiente (Implementado, pendiente de desplegar en dev) |
 | `POST /api/documents/:id/unpublish` | Solo el autor | Despublica |
 | `/api/documents/:id/note` | Autor | Edición de notas y "Publicar cambios" |
 | `POST /api/documents/:id/retry` | Autor | Reintenta ingesta o filtro |
 | `POST /api/documents/:id/graph-retry` | Autor | Reintenta el grafo |
-| `PATCH /api/documents/:id/anonimizacion` | Autor o `holds:review`, con membresía activa en el ecosistema; admin. de plataforma con cuenta activa. Otro ecosistema o cuenta inactiva: 404; sin permiso en el mismo ecosistema: 403 | `GET` lee el estado y los nombres conservados (solo los que siguen en `redactedText`, en `ready` o `approved`); `PATCH` cambia los dos interruptores y puede volver a pasar el documento por la compuerta (sección 5.2). Cada cambio escribe una fila en `anonymisation-setting-changes`. Sin desplegar |
+| `PATCH /api/documents/:id/anonimizacion` | Autor o `holds:review`, con membresía activa en el ecosistema; admin. de plataforma con cuenta activa. `keepPublicFigures`, solo admin. de plataforma. Otro ecosistema o cuenta inactiva: 404; sin permiso en el mismo ecosistema: 403. Quien revisa, solo sobre filas retenidas o publicadas (A-07, pendiente de desplegar en dev) | `GET` lee el estado, los nombres conservados (solo los que siguen en `redactedText`, en `ready` o `approved`) y qué interruptores puede cambiar quien pregunta; `PATCH` cambia los interruptores y puede volver a pasar el documento por la compuerta (sección 5.2). Cada cambio escribe una fila en `anonymisation-setting-changes`. En dev desde el 2026-11-10 |
 
 ### 8.11 Al borrar un documento
 
-Lo puede borrar el autor o un administrador de plataforma. Antes del borrado se planea eliminar el archivo del bucket (después del commit) y se borran sus revisiones. En la base, se borran en cascada sus menciones y relaciones del grafo, sus filas de auditoría y sus filas en `documents_rels`. Después del borrado se elimina el documento en ai-service y se limpian las semillas de enlaces wiki.
+Lo puede borrar el autor o un administrador de plataforma; en `main`, el autor necesita asiento `documents:write` para borrar algo que no sea su borrador (Implementado, pendiente de desplegar en dev). Antes del borrado se planea eliminar el archivo del bucket (después del commit) y se borran sus revisiones de nota. En la base, se borran en cascada sus menciones y relaciones del grafo y sus filas en `documents_rels`. En dev también se borran en cascada sus filas de `anonymisation-reviews`; en `main`, solo las de quien borra, y las demás quedan con `document` vacío (sección 3.12). Las filas de `anonymisation-setting-changes` quedan con `document` vacío. Después del borrado se elimina el documento en ai-service y se limpian las semillas de enlaces wiki.
 
 ## Referencias
 

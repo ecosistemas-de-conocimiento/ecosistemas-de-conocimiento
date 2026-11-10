@@ -1,7 +1,7 @@
 # ADR-0015. Un operador y una sola llave de IA; varios servidores de IA vendrán después
 
-- **Versión:** 1.1
-- **Fecha del documento:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada. La parte "una llave" está en uso; la parte "varios servidores" está decidida y **sin construir**. El 2026-10-16 se le sumó una org de ai-service por ecosistema (ver "Decisiones relacionadas")
 - **Fecha de la decisión:** 2026-09-04
@@ -52,6 +52,10 @@ Lo que EDC es, según esa nota:
 - **Relación con esta decisión:** matiza "sin presupuestos por ecosistema". Sigue habiendo **una sola llave**; lo que se separa es la contabilidad y los datos dentro de ai-service. El límite de tasa sigue siendo compartido.
 - **Alternativa descartada:** una org compartida `demo`.
 - ⚠ Una base `edc_ai` nueva responde 402 (sin presupuesto) en todo hasta que se crea la fila de presupuesto de cada org (citado de `infra/fleet/edc-1.md` §6).
+
+## Estado al 2026-11-10
+
+"Una sola llave" se refiere a la llave de rol `app`. El backend tiene además, desde el 2026-08-14, una segunda llave de rol `admin`, `AI_SERVICE_ADMIN_API_KEY` (`infra/docker-compose.yml`, `API_KEYS`), con el mismo `delegateOrgPrefix`. La usa para lo que ai-service reserva a ese rol: publicar y despublicar (retirar la copia vieja), borrar documentos y corpus y, desde el 2026-11-10, cambiar títulos sin volver a embeber (`PATCH /v1/corpus/:name/titles`; pendiente de desplegar en dev). No es una llave por ecosistema y no cambia la decisión.
 
 ## Referencias
 

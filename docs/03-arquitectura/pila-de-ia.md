@@ -1,9 +1,9 @@
 # Pila de IA
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `services/ai-service/src/config/env.ts`, `services/ai-service/src/services/registry/resolve.ts`, `services/ai-service/src/router/task-profiles.ts`, `services/ai-service/src/router/adapters/openrouter.ts`, `services/ai-service/src/services/budget/enforcer.ts`, `services/ai-service/src/db/schema/index.ts`, `apps/backend/src/lib/anonymise/*`, `apps/backend/src/lib/testimonioTitle.ts`, `apps/backend/src/lib/graph/*`, `apps/web/src/lib/server/engine/*`, `apps/web/src/lib/server/evals/*`, `services/audio-service/app/*`, `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `apps/backend/src/eval/RESULTS.md`. Código leído en `main` del 2026-10-29.
+- **Fuentes:** `services/ai-service/src/config/env.ts`, `services/ai-service/src/services/registry/resolve.ts`, `services/ai-service/src/services/ai/router/task-profiles.ts`, `services/ai-service/src/services/ai/router/adapters/openrouter.ts`, `services/ai-service/src/services/budget/enforcer.ts`, `services/ai-service/src/db/schema/index.ts`, `apps/backend/src/lib/anonymise/*`, `apps/backend/src/lib/testimonioTitle.ts`, `apps/backend/src/lib/graph/*`, `apps/web/src/lib/server/engine/*`, `apps/web/src/lib/server/evals/*`, `services/audio-service/app/*`, `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `apps/backend/src/eval/RESULTS.md`, `apps/backend/src/lib/anonymise/fallbackGenerator.ts`, `apps/backend/src/lib/platformSettings.ts`, `apps/backend/src/lib/refreshAiTitles.ts`, `services/ai-service/src/services/rag/document-title.ts`. Código leído en `main` b7dc944f el 2026-11-10. Lo que está en `main` y no en dev (367c2698, citado de `infra/fleet/edc-1.md`) dice "pendiente de desplegar en dev".
 
 ## Para quién es y qué responde
 
@@ -56,8 +56,9 @@ flowchart LR
 | Respuesta de chat | `deepseek/deepseek-chat-v3.1`, tier `standard` | OpenRouter | OpenRouter | `CHAT_COMPLETIONS_URL`, `OPENROUTER_API_KEY`; modelo fijo en `EFFORT_PROFILES` | Ninguno entre proveedores; solo reintenta | En uso |
 | Condense (reescritura de seguimiento) | DeepSeek V3.1, tier `quick` | OpenRouter | OpenRouter | `CONDENSE_TIMEOUT_MS` (web) | Usa la pregunta cruda | En uso; en el Spark es viable pero no está desplegado |
 | Expansión de consulta | DeepSeek V3.1, tier `quick`; hasta 3 variantes y una respuesta hipotética; timeout de 5 s | OpenRouter | OpenRouter | `QUERY_EXPANSION` (web) | Se omite | En uso |
-| Detector de datos personales (etapas 3 y 4 del gate) | `qwen3-30b-a3b-instruct-2507` (Q8, llama.cpp) | Spark | DeepSeek V3.1 `quick` vía ai-service | `ANONYMISE_DETECT_URL`, `_API_KEY`, `_MODEL`, `_FALLBACK` (`hosted` o `none`), `_FALLBACK_COOLDOWN_S`, `_CONCURRENCY`, `_TIMEOUT_MS`, `_MIN_GAP_MS`, `ANONYMISE_CHUNK_WORDS`, `ANONYMISE_VERIFY_ROUNDS`; el global `platform-settings.detectorFallback` le gana a la variable | `hosted` por defecto: si el Spark falla, el texto va a OpenRouter. `none` retiene; dev volvió a `hosted` el 2026-11-09, con OpenRouter en retención cero (ZDR) | En uso en dev: las 6 llamadas registradas las sirvió el Spark (citado de `infra/fleet/edc-1.md`:2173-2179) |
-| Títulos de testimonios | El mismo backend que el detector, tier `quick` | Spark primero | Hospedado | `titleClientFromEnv` en `apps/backend/src/lib/testimonioTitle.ts` | Un registro retenido nunca va al hospedado: solo Spark o queda sin título | En uso |
+| Detector de datos personales (etapas 3 y 4 del gate) | `qwen3-30b-a3b-instruct-2507` (Q8, llama.cpp) | Spark | DeepSeek V3.1 `quick` vía ai-service | `ANONYMISE_DETECT_URL`, `_API_KEY`, `_MODEL`, `_FALLBACK` (`hosted` o `none`), `_FALLBACK_COOLDOWN_S`, `_CONCURRENCY`, `_TIMEOUT_MS`, `_MIN_GAP_MS`, `ANONYMISE_CHUNK_WORDS`, `ANONYMISE_VERIFY_ROUNDS`; el global `platform-settings.detectorFallback` le gana a la variable | `hosted` por defecto: si el Spark falla, el texto va a OpenRouter, con un enfriamiento de 60 s antes de volver a probar el Spark. `none` retiene, y también impide la llamada hospedada cuando no hay `ANONYMISE_DETECT_URL` (staging): el documento queda retenido con motivo `sin-detector`. Dev volvió a `hosted` el 2026-11-09, con OpenRouter en retención cero (ZDR) (citado de `infra/fleet/edc-1.md`, "Detector fallback to hosted") | En uso en dev: las 6 llamadas registradas las sirvió el Spark (citado de `infra/fleet/edc-1.md`:2173-2179) |
+| Títulos de testimonios | El mismo backend que el detector, tier `quick` | Spark primero | Hospedado | `titleClientFromEnv` en `apps/backend/src/lib/testimonioTitle.ts`; interruptor `testimonioTitles` por ecosistema | Sigue el mismo `detectorFallback`. Un registro retenido nunca va al hospedado: solo Spark o queda sin título. Con `none` y sin Spark no hay llamada | En uso |
+| Título de un `documento` con compuerta | El detector, una llamada sobre lo que queda del nombre del archivo | Spark | Hospedado (según `detectorFallback`) | `redactTitle` en `apps/backend/src/lib/anonymise/gate.ts` | Falla cerrado: si el detector falla, el título queda neutro ("Documento"); nunca retiene el documento | Pendiente de desplegar en dev (commit b2a51aed) |
 | Extracción del grafo | DeepSeek V3.1, tier `deep`, prompt `v5` | OpenRouter | OpenRouter | `GRAPH_EXTRACT`, `GRAPH_EXTRACT_EFFORT`, `GRAPH_EXTRACT_WINDOW_CHARS` (12000), `GRAPH_EXTRACT_MAX_WINDOWS` (8), `GRAPH_EXTRACT_MAX_CONCURRENCY` (2), `GRAPH_EXTRACT_TIMEOUT_MS` (660000) | Ninguno: `graphStatus: failed` | En uso |
 | Transcripción de archivos | Whisper large-v3 (whisper.cpp) | Spark (`WHISPER_BACKEND=remote`) | No desplegado: perfil `audio` apagado | `WHISPER_BACKEND`, `WHISPER_REMOTE_URL`, `WHISPER_REMOTE_TOKEN`, `WHISPER_REMOTE_TIMEOUT_S` (1800), `WHISPER_REMOTE_MODEL`, `WHISPER_LANGUAGE=es` | Reintentos y luego cola de mensajes muertos | En uso en dev desde 2026-10-22 |
 | Transcripción en vivo | Whisper large-v3 sobre ventanas de 0.8 a 25 s | Spark | No disponible: 503 | `COMPOSE_PROFILES=audio`, interruptor `liveMic` por ecosistema | Ninguno: 503 | En uso en dev desde el 2026-10-25 |
@@ -95,9 +96,11 @@ El Spark tiene 4 ranuras de 16 384 tokens de contexto compartidas entre el detec
 - **OpenRouter:** toda la generación con DeepSeek V3.1 (respuestas, condense, expansión, grafo, preguntas para el estudiante, juez de evals); embeddings y detector en staging. La decisión es pasar todo a DeepInfra; la generación y staging siguen pendientes.
 - **DeepInfra:** el rerank en staging (y en dev si el host no es el Spark).
 
-Toda llamada de ai-service a OpenRouter (generación y embeddings) pide retención cero de datos con `provider.zdr: true`, junto con `require_parameters` en modo estricto. Si ningún endpoint con retención cero sirve el modelo, la llamada falla con `OpenRouterNoZdrEndpointError` (embeddings: `OpenRouterEmbeddingNoZdrEndpointError`): no se reintenta, no va a otro proveedor y nunca se reenvía sin `zdr`. No hay interruptor para apagarlo. En el código desde el 2026-11-07; sin desplegar a esa fecha (`services/ai-service/src/services/ai/router/adapters/openrouter.ts`, `services/ai-service/src/services/ai/embeddings/openrouter.ts`).
+Toda llamada de ai-service a OpenRouter (generación y embeddings) pide retención cero de datos con `provider.zdr: true`, junto con `require_parameters` en modo estricto. Si ningún endpoint con retención cero sirve el modelo, la llamada falla con `OpenRouterNoZdrEndpointError` (embeddings: `OpenRouterEmbeddingNoZdrEndpointError`): no se reintenta, no va a otro proveedor y nunca se reenvía sin `zdr`. No hay interruptor para apagarlo. En el código desde el 2026-11-07 (commit 9b755298) y desplegado en dev; probado en dev el 2026-11-09 con un modelo sin endpoint ZDR, que respondió 404 y se convirtió en `OpenRouterNoZdrEndpointError` (citado de `infra/fleet/edc-1.md`). Los embeddings con `zdr` no se probaron en dev, porque van al Spark con respaldo DeepInfra (`services/ai-service/src/services/ai/router/adapters/openrouter.ts`, `services/ai-service/src/services/ai/embeddings/openrouter.ts`).
 
-Sin el Spark, dev pierde la transcripción y el micrófono en vivo; los embeddings caen a DeepInfra y el detector retiene los documentos.
+ZDR es un parámetro de OpenRouter. Las llamadas que van directo a DeepInfra (rerank en staging, respaldo de embeddings en dev) no lo llevan.
+
+Sin el Spark, dev pierde la transcripción y el micrófono en vivo; los embeddings caen a DeepInfra y el detector cae a OpenRouter con ZDR, porque dev está en `hosted` desde el 2026-11-09. Con `none`, el detector retendría los documentos.
 
 ## 4. Qué texto sale a cada tercero
 
@@ -107,14 +110,14 @@ Esta sección enumera el texto concreto que sale de `edc-1` hacia fuera, en qué
 |---|---|---|---|---|---|
 | 1 | Gate, etapa 3 (detectar) | Texto después de las etapas 1 y 2: sin correos, teléfonos, CURP, RFC, códigos postales, URLs ni nombres de miembros conocidos, pero **con nombres de terceros, lugares y detalles**; en trozos de unas 250 palabras. Aplica a testimonios, documentos marcados "Anonimizar" y cada turno de conversación (pregunta y respuesta) | Spark directo | OpenRouter vía ai-service | Solo en el camino por ai-service |
 | 2 | Gate, etapa 4 (verificar) | El texto ya redactado | Spark directo | OpenRouter | Igual que 1 |
-| 2b | Gate, título de un `documento` con compuerta | Una llamada más al detector sobre el nombre del archivo, después de las reglas fijas y de los seudónimos del texto. Activo desde el 2026-11-10: `Documents.ts` y `publishDocument.ts` le pasan el nombre | Spark directo | OpenRouter | Igual que 1 |
-| 3 | Títulos de testimonio | Solo el texto redactado (`redactedText`) o retenido (`heldText`); un registro retenido nunca va al hospedado | Spark | OpenRouter (solo no retenidos) | Sí, en el hospedado |
+| 2b | Gate, título de un `documento` con compuerta | Una llamada más al detector sobre el nombre del archivo, después de las reglas fijas y de los seudónimos del texto: solo un nombre que el cuerpo no tenía llega al modelo sin redactar. Sin ronda de verificación. `Documents.ts` y `publishDocument.ts` le pasan el nombre. En `main` desde el 2026-11-10; pendiente de desplegar en dev | Spark directo | OpenRouter, si `detectorFallback` es `hosted` | Igual que 1 |
+| 3 | Títulos de testimonio | Solo el texto redactado (`redactedText`) o retenido (`heldText`); un registro retenido nunca va al hospedado | Spark | OpenRouter (solo no retenidos, y solo con `detectorFallback: hosted`) | Sí, en el hospedado |
 | 4 | Embeddings de ingesta | `corpusTextFor(row)`: el texto anonimizado si pasó por el gate; el texto crudo de un `documento` normal | Spark (respaldo DeepInfra) | OpenRouter | Sí, en OpenRouter o DeepInfra |
 | 5 | Embeddings de consulta | La pregunta cruda del usuario | Spark (respaldo DeepInfra) | OpenRouter | Sí, en OpenRouter o DeepInfra |
 | 6 | Rerank | La pregunta y los pasajes candidatos (unos 40 como máximo) | No verificado | DeepInfra | Sí |
 | 7 | Condense y expansión | La pregunta del usuario y el historial reciente | OpenRouter | OpenRouter | Sí |
 | 8 | Respuesta de chat | Prompt del sistema y estilo del ecosistema; historial con las preguntas crudas; fragmentos recuperados (anonimizados si pasaron por el gate, crudos si son `documento`); documentos adjuntos o fijados completos; bloque de orientación con turnos anonimizados de otras personas; contexto del grafo | OpenRouter | OpenRouter | Sí |
-| 9 | Extracción del grafo | `corpusTextFor(row)`, nunca `extractedText`; solo filas en estado `ready` o `approved`. La re-extracción por lotes (`scripts/reextract-published-graph.ts`) solo lee filas publicadas | OpenRouter | OpenRouter | Sí |
+| 9 | Extracción del grafo | `corpusTextFor(row)`, nunca `extractedText`; solo filas en estado `ready` o `approved`. La re-extracción por lotes (`scripts/reextract-published-graph.ts`) solo lee filas publicadas y no retenidas por consentimiento; está preparada y no se ha corrido. Ninguna extracción corre sobre una fila retenida por consentimiento (pendiente de desplegar en dev) | OpenRouter | OpenRouter | Sí |
 | 10 | Transcripción | El audio completo en trozos WAV de 16 kHz y las rebanadas del micrófono en vivo: voz cruda | Spark | No aplica | No aplica |
 | 11 | Preguntas para el estudiante | Títulos y datos de documentos, solo de tipo `documento` | OpenRouter | OpenRouter | Sí |
 | 12 | Juez de evals | Respuesta generada y pasajes citados (inferido del diseño del juez por par afirmación-cita) | OpenRouter | OpenRouter | Sí |
@@ -155,6 +158,22 @@ Todo el turno de chat se orquesta en `apps/web/src/routes/api/generate/+server.t
 
 Valores leídos en `EFFORT_PROFILES` de `services/ai-service/src/services/registry/resolve.ts`. El costo estimado se calcula ahí mismo con 500 tokens de entrada y el tope de salida, con los precios de la tabla `MODEL_PRICING`. El engine define `chatMaxTokens: 1800`, pero ese valor no llega a ai-service: el tope real de una respuesta es 800 tokens (citado de `plan/spark-ai-adopcion.md`:78).
 
+### 5.4 Respuestas vacías
+
+El 2026-11-10, en dev, 3 de 6 respuestas de chat llegaron de OpenRouter como un 200 sin texto (modelo `unknown`, 0 tokens); una se volvió a servir desde la caché en 0 ms, y los streams que solo mandaban keepalives esperaron 58 s (medido en dev con los logs de ai-service y `edc_ai.traces`; citado del commit 81a7215f). Desde entonces, en `main`:
+
+- **ai-service** trata una respuesta vacía o de solo espacios como error `EmptyCompletion` (`ERR_EMPTY_COMPLETION`, 502; dentro de un stream, un evento de error). Se reintenta dentro de la misma escalera de reintentos (1 intento más 2), no cuenta para el cortacircuitos, deja traza y uso como fallidos y nunca se guarda en la caché (`services/ai-service/src/services/ai/router/empty-completion.ts`; commit 81a7215f).
+- **Streams.** Los keepalives ya no reinician la espera. Antes del primer texto la espera es `LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS` (120 s por omisión, inferido como el doble de la espera entre salidas); después, `LLM_STREAM_STALL_TIMEOUT_MS` (45 s). `packages/ai-client` conoce el código `ERR_EMPTY_COMPLETION` (commit 73801857).
+- **web.** Una respuesta vacía es un turno fallido (`empty_answer`), nunca un mensaje vacío guardado. La burbuja dice "La respuesta llegó vacía." con el botón Reintentar, que reenvía el mismo turno una vez (`@edc/chat-engine` 0.9.0, `apps/web/src/routes/api/generate/+server.ts`; commit c867ff43).
+
+Pendiente de desplegar en dev.
+
+### 5.5 Títulos en ai-service sin volver a embeber
+
+El título de un documento vive en ai-service en tres lugares: `documents.title`, `documents.metadata.title` y el `metadata.title` de cada fragmento, que es lo que la cita muestra. `PATCH /v1/corpus/:name/titles` (rol admin) los reescribe para hasta 200 documentos por llamada sin tocar el texto, los embeddings ni el índice por palabra clave; una prueba de integración fija los bytes del vector. `dryRun` informa sin escribir (`services/ai-service/src/services/rag/document-title.ts`; commit d72094e5).
+
+`apps/backend/scripts/refresh-ai-titles.ts` usa esa ruta para poner en las copias compartida y borrador de cada `documento` con compuerta y cada testimonio publicados su título con compuerta (`documentTitleFor`). Simula por omisión, nunca toca una fila retenida por consentimiento ni un borrador. El 2026-11-10 a las 20:15 UTC, en dev y solo leyendo, había 52 `documento` publicados con compuerta con el título viejo en el corpus compartido (20 en eco-6, 10 en eco-7, 22 en eco-8) y los mismos 52 en las copias borrador (citado del commit d72094e5). Pendiente de desplegar en dev; no consta que el script se haya corrido.
+
 ## 6. Esquema `edc_ai` en resumen
 
 ai-service guarda todo en la base `edc_ai` con Drizzle (`services/ai-service/src/db/schema/index.ts`). El detalle está en [Estructura de base de datos](../04-datos/estructura-de-base-de-datos.md).
@@ -178,8 +197,8 @@ No hay tabla de orgs ni de llaves: `org` es texto opaco y las llaves viven en la
 
 ### 7.1 Medición por llamada
 
-- El adaptador de OpenRouter guarda el costo que reporta OpenRouter (`costSource: 'openrouter'`). Si falta, lo calcula con la tabla `MODEL_PRICING` (`'pricing-table'`) (`services/ai-service/src/router/adapters/openrouter.ts`).
-- Precios de la tabla: DeepSeek V3.1 a 0.21 USD por millón de tokens de entrada y 0.79 USD por millón de salida; bge-m3 a 0.01 USD por millón (leído en `services/ai-service/src/router/task-profiles.ts`).
+- El adaptador de OpenRouter guarda el costo que reporta OpenRouter (`costSource: 'openrouter'`). Si falta, lo calcula con la tabla `MODEL_PRICING` (`'pricing-table'`) (`services/ai-service/src/services/ai/router/adapters/openrouter.ts`).
+- Precios de la tabla: DeepSeek V3.1 a 0.21 USD por millón de tokens de entrada y 0.79 USD por millón de salida; bge-m3 a 0.01 USD por millón (leído en `services/ai-service/src/services/ai/router/task-profiles.ts`).
 - Un modelo que no está en la tabla cuesta 0.
 - Las llamadas directas al Spark (detector, títulos) no pasan por ai-service y no aparecen en `traces` ni en `usage_logs`. El rerank tampoco se registra en las tablas de uso.
 
@@ -254,7 +273,8 @@ El detalle de métricas, metodología y resultados está en [Evaluaciones de IA]
 | `LLM_REQUEST_TIMEOUT_MS` | 600000 | ai-service | citado de `infra/fleet/env-manifests.md`:109 |
 | `GRAPH_EXTRACT_TIMEOUT_MS` | 660000 | backend | Debe quedar por encima del anterior (citado de `infra/fleet/env-manifests.md`:152) |
 | `GRAPH_MIN_ENTITY_DOCS`, `GRAPH_MIN_EDGE_DOCS`, `GRAPH_MIN_COMENTION_DOCS` | 1 | backend | Reemplazan a `GRAPH_MIN_SUPPORT` desde 2026-10-21 |
-| `ANONYMISE_DETECT_FALLBACK` | `hosted` | backend | Cambiar a `none` antes del primer testimonio real |
+| `ANONYMISE_DETECT_FALLBACK` | `hosted` | backend | Cambiar a `none` antes del primer testimonio real. El global `platform-settings.detectorFallback`, que la administración de plataforma cambia en Ajustes, le gana a la variable (caché de 60 s como máximo) |
+| `LLM_STREAM_STALL_TIMEOUT_MS`, `LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS` | 45000, 120000 | ai-service | Sección 5.4 |
 | `ANONYMISE_DETECT_MIN_GAP_MS` | 2700 | backend | Unas 22 llamadas por minuto como máximo (inferido de 60 000 / 2700) |
 | `AI_ECOSYSTEM_BUDGET_USD` | 5 | backend | Decisión del responsable |
 
@@ -262,10 +282,10 @@ La lista completa de variables, sin valores secretos, está en [Infraestructura 
 
 ## 11. Riesgos y límites
 
-1. **El respaldo del detector manda texto sin anonimizar a OpenRouter.** Es el comportamiento por defecto (`ANONYMISE_DETECT_FALLBACK=hosted`, `apps/backend/src/lib/anonymise/fallbackGenerator.ts`). En staging no hay Spark, así que el detector siempre es hospedado (inferido de `infra/fleet/edc-1.md`:1259-1262, que no lista variables `ANONYMISE_DETECT_*` en staging). Dev usó `none` del 2026-11-06 al 2026-11-09; desde entonces usa `hosted`, y toda llamada a OpenRouter pide retención cero (ZDR) y falla cerrada si no hay proveedor que la cumpla (`infra/fleet/edc-1.md` §4zzzzzzz). Staging sigue pendiente.
-2. **El Spark es prestado y no tiene supervisión.** Un reinicio deja caídos audio, micrófono en vivo y modelos locales; los embeddings caen a DeepInfra y el detector retiene los documentos.
+1. **El respaldo del detector manda texto sin anonimizar a OpenRouter.** Es el comportamiento por defecto (`ANONYMISE_DETECT_FALLBACK=hosted`, `apps/backend/src/lib/anonymise/fallbackGenerator.ts`). En staging no hay Spark, así que el detector siempre es hospedado mientras el modo sea `hosted` (inferido de `infra/fleet/edc-1.md`:1259-1262, que no lista variables `ANONYMISE_DETECT_*` en staging); con `none`, staging retiene todo documento con compuerta. Dev usó `none` del 2026-11-06 al 2026-11-09; desde entonces usa `hosted`, y toda llamada a OpenRouter pide retención cero (ZDR) y falla cerrada si no hay proveedor que la cumpla (`infra/fleet/edc-1.md` §4zzzzzzz). Staging sigue pendiente.
+2. **El Spark es prestado y no tiene supervisión.** Un reinicio deja caídos audio, micrófono en vivo y modelos locales; los embeddings caen a DeepInfra y el detector cae a OpenRouter (con `hosted`, el modo de dev) o retiene los documentos (con `none`).
 3. **Siguen saliendo textos crudos a proveedores hospedados:** la pregunta del miembro en condense, expansión, embeddings de consulta y respuesta; el texto de un `documento` sin gate. Si la regla de privacidad del proyecto cubre estos casos es una pregunta abierta (citado de `plan/spark-ai-adopcion.md`, pregunta P6).
-4. **Un solo contador de tasa para todo EDC.** Backend y web usan una sola llave de ai-service, y el límite agrupa por llave: 30 generaciones por minuto compartidas entre chat, detector hospedado, títulos, grafo y evaluaciones (inferido de `infra/docker-compose.yml`:699 y `services/ai-service/src/server.ts`:94-104). El detector se autolimita; el grafo no.
+4. **Un solo contador de tasa para todo EDC.** Backend y web usan una sola llave de ai-service, y el límite agrupa por llave: 30 generaciones por minuto compartidas entre chat, detector hospedado, títulos, grafo y evaluaciones (inferido de `infra/docker-compose.yml`:712 y `services/ai-service/src/server.ts`:94-104). El detector se autolimita; el grafo no.
 5. **Latencia.** DeepSeek por OpenRouter bajó a 8 o 9 tokens por segundo en noches malas (citado de `plan/spark-chat-eval-2026-10-26.md`). Una llamada `deep` del grafo tiene p50 de 72 s y máximo de 190 s (citado de `plan/spark-ai-adopcion.md`:79, medición local hasta 2026-10-17).
 6. **Si el Spark se cuelga, el primer turno de chat tarda más:** 11.7 s contra 4.7 s, porque las llamadas en vuelo no ven el enfriamiento del respaldo (citado de `infra/fleet/edc-1.md`:1324).
 7. **Retirar no es borrar.** Un vector retirado sigue en la base con `valid_to` cerrado; una recuperación sin `asOf` lo ve. Por eso el gate es binario.
@@ -279,7 +299,7 @@ La lista completa de variables, sin valores secretos, está en [Infraestructura 
 
 ## Referencias
 
-- `services/ai-service/src/config/env.ts`, `services/ai-service/src/services/registry/resolve.ts`, `services/ai-service/src/router/`, `services/ai-service/src/services/budget/enforcer.ts`, `services/ai-service/src/db/schema/index.ts`
+- `services/ai-service/src/config/env.ts`, `services/ai-service/src/services/registry/resolve.ts`, `services/ai-service/src/services/ai/router/`, `services/ai-service/src/services/budget/enforcer.ts`, `services/ai-service/src/db/schema/index.ts`
 - `apps/backend/src/lib/anonymise/`, `apps/backend/src/lib/testimonioTitle.ts`, `apps/backend/src/lib/graph/`, `apps/backend/src/globals/PlatformSettings.ts`
 - `apps/web/src/routes/api/generate/+server.ts`, `apps/web/src/lib/server/engine/`, `apps/web/src/lib/server/evals/`, `packages/chat-engine/src/core/`
 - `services/audio-service/app/config.py`, `services/audio-service/app/live.py`, `services/audio-service/app/remote_transcriber.py`

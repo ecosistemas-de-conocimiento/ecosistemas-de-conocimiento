@@ -1,15 +1,15 @@
 # Estrategia de pruebas
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `TESTING.md`, notas de contexto del equipo (Etapa 1), `package.json` (raíz), `apps/web/package.json`, `apps/backend/package.json`, `apps/web/vite.config.ts`, `apps/web/playwright.config.ts`, `apps/web/e2e/`, `apps/web/e2e/evidencia/`, `apps/backend/e2e/`, `apps/backend/src/eval/RESULTS.md`, `services/ai-service/.github/workflows/`, `plan/mapa-historias.md`.
+- **Fuentes:** `TESTING.md`, notas de contexto del equipo (Etapa 1), `package.json` (raíz), `apps/web/package.json`, `apps/backend/package.json`, `apps/web/vite.config.ts`, `apps/web/playwright.config.ts`, `apps/web/e2e/`, `apps/web/e2e/evidencia/`, `apps/backend/e2e/`, `apps/backend/src/eval/RESULTS.md`, `services/ai-service/.github/workflows/`, `plan/mapa-historias.md`, `plan/orchestration/auditoria-2026-11-10/revision-ola4.md`. Conteos de archivos medidos con `find` y `ls` sobre `main` en `b7dc944f` el 2026-11-10.
 
 ## Para quién es y qué responde
 
 Este documento es para quien escribe código en Ecosistemas de Conocimiento (EDC) y para quien revisa si lo construido en la Etapa 1 está probado. Responde cinco preguntas: qué tipos de prueba existen y qué cubre cada uno, cómo se corren con los comandos exactos, qué reglas siguen las pruebas, qué resultados hay registrados y con qué fecha, y qué huecos quedan. Las evaluaciones de calidad de la IA (citas, recuperación, fuga de datos privados) tienen su propio documento: [Evaluaciones de IA](evaluaciones-de-ia.md).
 
-Una advertencia antes de empezar: ninguna suite se volvió a correr para escribir este documento. Los conteos y resultados son citas de documentos con su fecha. La sección de conteos explica por qué hay que medir de nuevo.
+Las unitarias de backend y web se volvieron a correr para esta versión, el 2026-11-10 (sección 5). Los resultados e2e siguen siendo citas de documentos con su fecha.
 
 ## 1. La pirámide de pruebas
 
@@ -21,7 +21,7 @@ flowchart TB
     V["E2E de evidencia en video<br/>apps/web/e2e/evidencia (contra dev)"]
     W["E2E web con Playwright<br/>apps/web/e2e (9 specs)"]
     B["E2E backend con Vitest<br/>apps/backend/e2e (11 archivos)"]
-    P["Pruebas *.pg.test.ts<br/>contra Postgres real en docker (33 archivos)"]
+    P["Pruebas *.pg.test.ts<br/>contra Postgres real en docker (57 archivos)"]
     U2["Unitarias backend<br/>Vitest en apps/backend"]
     U1["Unitarias web<br/>Vitest, proyectos node y dom"]
     E --- V --- W --- B --- P --- U2 --- U1
@@ -42,8 +42,8 @@ flowchart TB
 
 `apps/web/vite.config.ts` define dos proyectos de Vitest (medido, lectura del archivo el 2026-10-30):
 
-- `node`: incluye `src/**/*.{test,spec}.ts` y excluye `*.dom.test.ts`. Aquí corren las rutas `+server.ts`, los `+page.server.ts` y los módulos `.ts` de lógica. También los 12 archivos `*.svelte.test.ts` (medido con `find`, 2026-10-30), que renderizan componentes con `svelte/server` y revisan el HTML resultante.
-- `dom`: usa `environment: 'jsdom'` y la condición de resolución `browser`, para que `svelte` resuelva a su versión de cliente y exista `mount`. Hoy hay 2 archivos `*.dom.test.ts`: `src/lib/markdown.dom.test.ts` y `src/lib/components/documentViews.dom.test.ts` (medido con `find`, 2026-10-30).
+- `node`: incluye `src/**/*.{test,spec}.ts` y excluye `*.dom.test.ts`. Aquí corren las rutas `+server.ts`, los `+page.server.ts` y los módulos `.ts` de lógica. También los 17 archivos `*.svelte.test.ts` (medido con `find`, 2026-11-10), que renderizan componentes con `svelte/server` y revisan el HTML resultante.
+- `dom`: usa `environment: 'jsdom'` y la condición de resolución `browser`, para que `svelte` resuelva a su versión de cliente y exista `mount`. Hay 5 archivos `*.dom.test.ts`: `src/lib/markdown.dom.test.ts`, `src/lib/components/documentViews.dom.test.ts`, `src/lib/components/Chat.dom.test.ts`, `src/lib/components/Composer.livemic.dom.test.ts` y `src/lib/components/documentos/UploadSheet.dom.test.ts` (medido con `find`, 2026-11-10).
 
 Además, tres pruebas del proyecto `node` construyen un DOM a mano con `happy-dom` (dependencia de desarrollo `happy-dom 20.11.2`): `citationLinks.test.ts`, `citationOrdinals.test.ts` y `Message.svelte.test.ts` (medido con `grep`, 2026-10-30).
 
@@ -51,20 +51,23 @@ Además, tres pruebas del proyecto `node` construyen un DOM a mano con `happy-do
 
 ### 1.2 Unitarias backend y pruebas contra Postgres
 
-`pnpm --filter @edc/backend test` corre `vitest run` sobre todo `apps/backend/src`. Dentro hay 33 archivos `*.pg.test.ts` (medido con `find`, 2026-10-30). Cada uno levanta un Postgres desechable en docker con un puerto efímero (`-p 0:5432`) y lee el puerto asignado con `docker port`. Si docker no está disponible, esas pruebas se saltan y lo dicen. Ejemplos con peso:
+`pnpm --filter @edc/backend test` corre `vitest run` sobre todo `apps/backend/src`. Dentro hay 57 archivos `*.pg.test.ts` (medido con `find`, 2026-11-10). Cada uno levanta un Postgres desechable en docker con un puerto efímero (`-p 0:5432`) y lee el puerto asignado con `docker port`. Si docker no está disponible, esas pruebas se saltan y lo dicen. Ejemplos con peso:
 
 - `lib/roles.matrix.pg.test.ts`: la matriz de permisos por rol contra tablas reales.
 - `lib/conversationUploads.pg.test.ts` y `collections/Sessions.ownerGuard.pg.test.ts`: el borrado en cascada de una conversación.
 - `lib/student/queries.pg.test.ts`, `endpoints/estudiante.companero.pg.test.ts`: la vista de estudiante y sus consentimientos.
 - `lib/graph/viewTotal.pg.test.ts`, `lib/graph/wikilinks.pg.test.ts`: consultas del grafo.
+- `lib/anonymisationControls.pg.test.ts`: interruptores de anonimización, auditoría y re-gate, con control positivo.
+- `lib/consentHold.pg.test.ts`: la retención por consentimiento y la migración `20261110_181621` arriba, abajo y arriba.
+- `lib/callbackRetention.pg.test.ts`, `lib/loginRateLimit.pg.test.ts`: la purga de `raw_body` y el límite de inicios de sesión.
 
 ### 1.3 E2E backend
 
-Once archivos en `apps/backend/e2e/` (medido con `ls`, 2026-10-30): `anonymisation`, `audio`, `documents`, `featuresLock`, `holds`, `identity`, `publish`, `ratings`, `storage`, `tenancy` y `testimonyRead`. Corren con Vitest contra un backend y un ai-service vivos. Leen `infra/.env` en tiempo de ejecución para las credenciales del administrador sembrado y de Postgres; nunca las imprimen.
+Once archivos en `apps/backend/e2e/` (medido con `ls`, 2026-11-10; sin cambios desde el 2026-10-30): `anonymisation`, `audio`, `documents`, `featuresLock`, `holds`, `identity`, `publish`, `ratings`, `storage`, `tenancy` y `testimonyRead`. Corren con Vitest contra un backend y un ai-service vivos. Leen `infra/.env` en tiempo de ejecución para las credenciales del administrador sembrado y de Postgres; nunca las imprimen.
 
 ### 1.4 E2E web
 
-Nueve specs en `apps/web/e2e/` (medido con `ls`, 2026-10-30): `journey`, `revision`, `grafo`, `grafo-touch`, `grafo-zaxis`, `grafo-labels3d`, `live-mic`, `retrieval` y `telefono`.
+Nueve specs en `apps/web/e2e/` (medido con `ls`, 2026-11-10; sin cambios desde el 2026-10-30): `journey`, `revision`, `grafo`, `grafo-touch`, `grafo-zaxis`, `grafo-labels3d`, `live-mic`, `retrieval` y `telefono`.
 
 - No hay bloque `webServer` en `apps/web/playwright.config.ts`, a propósito. Playwright prueba lo que responda en `EDC_WEB_URL`, que por defecto es `http://localhost:45400`, el contenedor web local.
 - Límites de espera de la configuración: 15 minutos por prueba y 20 segundos por aserción `expect` (medido, `playwright.config.ts:41-42`).
@@ -88,7 +91,7 @@ No son pruebas de aprobado o reprobado. Miden calidad con modelos reales y cuest
 ### 2.1 Requisitos
 
 - Node 22 o mayor (`package.json` raíz, `engines.node: ">=22"`).
-- pnpm 9.15.4 (`packageManager: "pnpm@9.15.4"`). En la máquina de desarrollo `pnpm` no está en el `PATH` (medido con `which pnpm`, 2026-10-30). Usa la copia de corepack:
+- pnpm 9.15.4 (`packageManager: "pnpm@9.15.4"`). En la máquina de desarrollo `pnpm` no está en el `PATH` por omisión (medido con `which pnpm`, 2026-10-30). Está en la instalación de Node 24.1.0 de nvm (`PATH=~/.nvm/versions/node/v24.1.0/bin:$PATH`, usado el 2026-11-10), o en la copia de corepack:
 
 ```bash
 node ~/.cache/node/corepack/v1/pnpm/9.15.4/bin/pnpm.cjs <comando>
@@ -122,7 +125,8 @@ Peor que el fallo es el caso contrario: `apps/web` pasa `typecheck` contra un `d
 | E2E backend | `pnpm --filter @edc/backend test:e2e` | Stack levantado |
 | E2E web | `pnpm --filter @edc/web test:e2e` | Stack levantado; `test:e2e:headed` abre el navegador |
 | Evidencia en video | `apps/web/e2e/evidencia/correr.sh <v1\|v2\|v3> [rol]` | Contra dev, con las credenciales de los archivos `.env` de evidencia |
-| Lint del backend | `pnpm --filter @edc/backend lint` | Solo el backend tiene script `lint` |
+| Lint del backend | `pnpm --filter @edc/backend lint` | Incluye la regla `edc/no-raw-error-log`: ninguna línea de log lleva el texto crudo de un error (`780f614d`) |
+| Lint de ai-service | `pnpm --filter @edc/ai-service lint` | eslint más la revisión de vocabulario de dominio. Obligatorio al tocar ai-service |
 
 ### 2.4 E2E contra el stack local
 
@@ -198,25 +202,36 @@ Estas reglas salen de incidentes reales. Cada una está anclada a su fuente.
 
 ## 5. Conteos de pruebas
 
-Hay tres fuentes y no coinciden. Ninguna es un conteo de hoy.
+### 5.1 Medición del 2026-11-10
 
-| Paquete | `TESTING.md` (medido 2026-10-17 con `vitest run`) | Notas de contexto del equipo, "Baselines" (citado, sin fecha) | Grep de llamadas `it(` / `test(` (inferido, 2026-10-30, no ejecutado) |
-|---|---:|---:|---:|
-| `apps/backend` | 1 655 | 1 250 | 3 074 en 216 archivos |
-| `apps/web` | 1 442 | 1 213 | 2 172 en 155 archivos |
-| `packages/chat-engine` | 211 | 48 | 143 en 7 archivos de `src/` |
-| `services/ai-service` | 688 (citado del 2026-08-29, no vuelto a medir) | no aparece | no contado |
-| `packages/ai-client` | 55 (citado del 2026-08-29) | 68 | 380 en 29 archivos |
-| `packages/identity-client` | 50 (citado del 2026-08-29) | no aparece | 159 en 8 archivos |
+Medido el 2026-11-10 entre las 22:00 y las 22:06 UTC en la estación de trabajo del equipo de desarrollo (16 núcleos), sobre `main` en `b7dc944f`, en una copia de trabajo nueva: `pnpm install --prefer-offline`, los tres paquetes compilados, y luego `pnpm -C apps/backend test` y `pnpm -C apps/web test` (Node 24.1.0, pnpm 9.15.4). La máquina tenía otras sesiones trabajando: carga promedio de 7.2 al arrancar el backend y de 40.5 al terminar.
 
-Cómo leer la tabla:
+| Paquete | Archivos | Pruebas | Resultado | Duración |
+|---|---:|---:|---|---|
+| `apps/web` | 171 | 2 999 | todas pasan | 16.9 s |
+| `apps/backend` | 284 (1 saltado) | 5 733 (1 saltada) | 5 728 pasan, 4 fallan; 1 archivo no carga | 185.7 s |
 
-- La columna de `TESTING.md` es la única medida con método conocido: `vitest run` en cada workspace, en la máquina de desarrollo de 16 núcleos con carga promedio cercana a 17, todas pasando, 0 saltadas.
-- La columna de las notas de contexto del equipo es anterior y no tiene fecha.
-- El grep cuenta líneas que llaman a `it` o `test`. No ve `.each`, ni las pruebas saltadas, ni los archivos fuera de las rutas buscadas. Sirve para ver que el número creció desde el 2026-10-17, no para citar.
-- El código siguió cambiando desde el 2026-10-17, así que la cifra medida está vieja.
+Los fallos del backend no son del código, según lo que se pudo comprobar:
 
-**Hay que volver a medir antes de citar un conteo.** El método recomendado está en la recomendación 1.
+- 4 pruebas fallaron por tiempo agotado (5 s, y 120 s en `endpoints/miembros.pg.test.ts`) con la carga en 40. Repetidos los 4 archivos solos, con carga de 31 a 16, pasaron 3; `lib/studentNotes.pg.test.ts` falló en 2 pruebas distintas de la primera vez, y solo, con carga 16 a 13, pasó entero (29 de 29). Se lee como intermitencia por carga, no como defecto (inferido de que el conjunto que falla cambia de corrida a corrida).
+- `src/eval/harness.test.ts` no carga en una copia nueva: necesita `apps/web/.svelte-kit/tsconfig.json`, que solo existe después de `svelte-kit sync` (por ejemplo, `pnpm typecheck` en la web). Es un requisito del entorno.
+
+No se midieron esta vez `packages/*` ni `services/ai-service`.
+
+Medición de una sola corrida en una máquina cargada. Sirve para citar el orden de magnitud y el resultado; las duraciones, solo como referencia.
+
+### 5.2 Mediciones anteriores
+
+| Paquete | `TESTING.md` (medido 2026-10-17 con `vitest run`) | Notas de contexto del equipo, "Baselines" (citado, sin fecha) |
+|---|---:|---:|
+| `apps/backend` | 1 655 | 1 250 |
+| `apps/web` | 1 442 | 1 213 |
+| `packages/chat-engine` | 211 | 48 |
+| `services/ai-service` | 688 (citado del 2026-08-29, no vuelto a medir) | no aparece |
+| `packages/ai-client` | 55 (citado del 2026-08-29) | 68 |
+| `packages/identity-client` | 50 (citado del 2026-08-29) | no aparece |
+
+Durante la ola 4, el 2026-11-10, el commit `512dcc1f` registra la suite completa del backend con 5 444 pruebas pasando y 1 saltada, medida en su copia de trabajo (citado del mensaje de commit). La diferencia con las 5 733 de §5.1 son las pruebas que entraron a `main` después.
 
 ## 6. Último resultado e2e registrado
 
@@ -283,8 +298,8 @@ No hay auditoría automática de accesibilidad: ni axe ni pa11y aparecen en las 
 | Recuperación real en e2e | El proveedor falso no clasifica como un modelo. La calidad de recuperación se mide con evaluaciones, no con e2e | `TESTING.md`, `RESULTS.md` |
 | Audio con voz humana | Solo hay voz sintética de Piper | `TESTING.md` |
 | El marcador hablado del audio | Ningún transcriptor escribe un nombre propio de forma fiable | `TESTING.md` |
-| Comportamiento con varias réplicas | Los límites de tasa del grafo y las sesiones del micrófono viven en memoria de un proceso | `infra/.env.example`, revisión de la pila de IA del 2026-10-30 |
-| Respaldo del detector apagado en staging | Staging no tiene Spark, así que su detector siempre es hospedado | revisión de la pila de IA del 2026-10-30 (inferido) |
+| Comportamiento con varias réplicas | Los límites de tasa del grafo, las sesiones del micrófono y el tope de subidas simultáneas por cuenta viven en memoria de un proceso | `infra/.env.example`, revisión de la pila de IA del 2026-10-30, `apps/backend/src/lib/uploadSlots.ts` |
+| Respaldo del detector apagado en staging | Staging no tiene Spark. Con el código de `main` (P-05, en dev desde el 2026-11-10), `none` también frena el modelo hospedado sin Spark, así que en staging retendría todo. Pero staging corre el código del 2026-10-17, donde su detector siempre es hospedado, y no se ha probado ahí | `apps/backend/src/lib/anonymise/detector.ts`; versión de staging citada de `infra/fleet/edc-1.md` §4zzzzzzzz |
 
 ## 9. Integración continua
 
@@ -293,11 +308,12 @@ No hay integración continua activa.
 - No existe `.github/` en la raíz del repo (medido con `ls`, 2026-10-30).
 - Existen dos workflows de CI de ai-service en `services/ai-service/.github/workflows/` (`ci.yml` y `test.yml`), inactivos en esa ruta; para activarlos hay que copiarlos a la raíz. Correrían lint, typecheck, pruebas, build e imagen docker de ai-service.
 - Lo efectivo es local y a mano: `pnpm test`, `pnpm typecheck` y `pnpm build` antes de dar una rama por terminada, más los e2e cuando el cambio toca un flujo.
-- Las ramas se integran a `main` solo por el integrador designado (ver [Guía del desarrollador](../08-manuales/guia-del-desarrollador.md)), pero ese paso no corre pruebas por sí mismo.
+- Las ramas se integran a `main` solo por el integrador designado (ver [Guía del desarrollador](../08-manuales/guia-del-desarrollador.md)), pero ese paso no corre pruebas por sí mismo. Desde el 2026-11-10 `main` solo recibe correcciones; la funcionalidad nueva va a la rama `etapa-2`.
+- Los cambios de la compuerta se revisan además con el kit diferencial (kit3), fuera del repositorio y a mano ([Evaluaciones de IA](evaluaciones-de-ia.md) §9).
 
 ## 10. Recomendaciones
 
-1. **Volver a medir los conteos.** Correr `pnpm test` en un checkout limpio de `main`, con los paquetes compilados, guardar la salida de cada workspace y actualizar la tabla de `TESTING.md` con fecha, máquina y carga. Incluir `services/ai-service`, que no se mide desde el 2026-08-29.
+1. **Medir los conteos que faltan y repetir en una máquina sin carga.** Backend y web se midieron el 2026-11-10 (§5.1), con carga alta. Falta `services/ai-service`, que no se mide desde el 2026-08-29, y los `packages/*`. Actualizar `TESTING.md` con fecha, máquina y carga, y anotar que `svelte-kit sync` es requisito de `src/eval/harness.test.ts`.
 2. **Correr la suite e2e completa en el stack falso aislado** y registrar resultado por suite, incluidas las cuatro sin resultado (`publish`, `storage`, `featuresLock`, `revision`) y los specs de grafo, micrófono y teléfono.
 3. **Activar una integración continua mínima.** Un workflow en la raíz que compile los tres paquetes y corra `pnpm typecheck` y `pnpm test`. Las `*.pg.test.ts` ya funcionan con docker en el runner. Los e2e pueden quedarse manuales al principio.
 4. **Actualizar `TESTING.md` y las notas de contexto del equipo.** Ambos dicen que la web no tiene DOM ni pruebas de render. Las notas de contexto además dicen que el umbral del grafo es 3 y que los límites de ai-service son por IP; las dos cosas cambiaron (ver [Guía del desarrollador](../08-manuales/guia-del-desarrollador.md), sección de reglas de privacidad).

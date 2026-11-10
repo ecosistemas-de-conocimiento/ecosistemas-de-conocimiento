@@ -1,7 +1,7 @@
 # Visión y alcance de Ecosistemas de Conocimiento
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
 - **Fuentes:** en el repositorio: `plan/anonimizacion-y-voces.md`, `plan/funcionalidades.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/servidor-desarrollo-build.csv`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md` y el código en `main` del 2026-10-29. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v1-brief-repositorio-voces-resonancias.md` (brief v1, 2026-05-11), `briefs/v0-brief-proyecto-plataforma-ia.md`, `docs/Textos del proyecto/Desarrollo (metodología)/Informe de reunión con desarrollo — 21 de octubre de 2026.docx` (informe del 21 de octubre), `docs/Textos del proyecto/Proyecto/` (carta SECIHTI, «Estado del Proyecto IH-2025-I-445») y la bitácora del proyecto (registros del 2026-10-21, 2026-10-27 y 2026-10-28).
 
@@ -31,6 +31,8 @@ Al cierre de la Etapa 1 (2026-10-28), EDC permite a las personas de un ecosistem
 - **Cuidar el ecosistema.** Pantallas de Revisión, Miembros, Ajustes y un resumen de administración.
 
 El detalle por historia de usuario está en [Historias de usuario](../02-requisitos/historias-de-usuario.md).
+
+Esta sección describe la plataforma al cierre de la Etapa 1. Las correcciones posteriores, hasta el 2026-11-10, están en [Cronología e hitos](cronologia-e-hitos.md) §4.1 y en el [Roadmap](roadmap.md) §3.0. Desde el 2026-11-10, `main` solo lleva correcciones y la funcionalidad nueva va a la rama `etapa-2`.
 
 ## 2. El problema que resuelve
 
@@ -217,10 +219,10 @@ Por decisiones posteriores del proyecto:
 | Restricción | Detalle | Efecto | Procedencia |
 |---|---|---|---|
 | **Un desarrollador** | El proyecto convocó a tres o cuatro programadores y el trabajo terminó sostenido por uno | Toda la construcción, el despliegue y la operación dependen de una persona. El desarrollo se apoyó en asistentes de programación con IA (cerca de tres cuartas partes de los cambios llevan coautoría de Claude, medido con `git log` el 2026-10-29) | Citado del informe del 21 de octubre §II |
-| **DGX Spark prestado** | Un equipo NVIDIA DGX Spark de otra organización sirve la transcripción, el detector de anonimización y los vectores de dev, y probablemente el reordenamiento (no verificado en las variables de Coolify). Se llega por una red privada. EDC no tiene permisos de administrador en él | Si el Spark cae, dev pierde audio y micrófono, y el detector cae a un modelo hospedado. No hay contrato documentado con su dueño | Citado de `plan/spark-ai-adopcion.md` y de `infra/fleet/edc-1.md` |
+| **DGX Spark prestado** | Un equipo NVIDIA DGX Spark de otra organización sirve la transcripción, el detector de anonimización y los vectores de dev, y probablemente el reordenamiento (no verificado en las variables de Coolify). Se llega por una red privada. EDC no tiene permisos de administrador en él | Si el Spark cae, dev pierde audio y micrófono, y el detector cae a un modelo hospedado por OpenRouter, con retención cero de datos (ZDR) desde el despliegue del 2026-11-10 (citado de `infra/fleet/edc-1.md` §4zzzzzzz). No hay contrato documentado con su dueño | Citado de `plan/spark-ai-adopcion.md` y de `infra/fleet/edc-1.md` |
 | **Caja única** | Un solo servidor Hetzner cx33 (4 vCPU, 8 GB de RAM, 80 GB de disco) en Falkenstein, Alemania, con su propio Coolify, construye y sirve dev y staging | Una caída tumba ambos entornos; el disco se llena con los builds | Citado de `infra/fleet/edc-1.md` §1 |
 | **Cierre presupuestal** | Después del 2026-10-28 no hay gasto con cargo a la Etapa 1 | La compra del servidor propio y cualquier gasto nuevo dependen de la Etapa 2 | Citado del informe del 21 de octubre §VII |
-| **Proveedores de IA en EE. UU.** | Las respuestas del chat y la extracción del grafo usan `deepseek/deepseek-chat-v3.1` vía OpenRouter; el reordenamiento en staging usa DeepInfra | Dependencia externa y transferencia internacional de datos | Citado de `infra/fleet/edc-1.md` |
+| **Proveedores de IA en EE. UU.** | Las respuestas del chat y la extracción del grafo usan `deepseek/deepseek-chat-v3.1` vía OpenRouter; el reordenamiento en staging y, desde el 2026-11-06, el respaldo de vectores de dev usan DeepInfra. Desde el 2026-11-07 ai-service pide ZDR a OpenRouter en cada llamada (commit 9b755298); DeepInfra no lleva ZDR | Dependencia externa y transferencia internacional de datos | Citado de `infra/fleet/edc-1.md` |
 | **Presupuesto de IA por ecosistema** | $5 USD al mes por ecosistema en el servicio de IA | Una evaluación o una ingesta grande puede agotarlo. Es una decisión, no una necesidad medida | Citado de `infra/fleet/env-manifests.md` (decisión del 2026-10-16) |
 | **Entregables registrados** | Los objetivos, metas y entregables en SALSA no cambian | La evolución se narra dentro de ellos | Citado del informe del 21 de octubre §VIII |
 

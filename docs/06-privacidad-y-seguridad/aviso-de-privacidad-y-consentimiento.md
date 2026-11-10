@@ -1,7 +1,7 @@
 # Aviso de privacidad y consentimiento
 
-- **Versión:** 1.2
-- **Fecha:** 2026-11-07
+- **Versión:** 1.3
+- **Fecha:** 2026-11-10
 - **Estado:** plantillas en borrador, sin validación jurídica y aún no publicadas en la interfaz
 - **Fuentes:** `apps/web/src/lib/consent.ts`, `apps/web/src/lib/estudiante.ts`, `apps/backend/src/lib/student/testimonioConsent.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/conversationTurnErasure.ts`, brief v1 del proyecto («Repositorio de Voces y Resonancias», documento externo al repo), `plan/anonimizacion-y-voces.md`, `infra/fleet/edc-1.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)
 
@@ -11,25 +11,29 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído el 2026-11-03. **Sin desplegar** marca lo construido en la rama `feat/anonymise-controls` (decisión del 2026-11-07, [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) que todavía no corre en dev ni en staging.
+Definiciones. **Implementado:** funciona hoy en dev, con evidencia en código. **Implementado (pendiente de desplegar en dev):** está en `main` (`b7dc944f`) pero no en lo desplegado en dev (`367c2698`, despliegue del 2026-11-10 a las 18:27 UTC, citado de `infra/fleet/edc-1.md` §4zzzzzzzz). **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` el 2026-11-10. Staging sigue en su imagen del 2026-10-17: ningún control posterior a esa fecha corre allí. Los interruptores de nombres siguen [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md). Lo diferido está en [Etapa 2](#etapa-2).
 
 | Control o procedimiento | Estado | Evidencia o nota |
 |---|---|---|
-| El aviso declara a quien sube documentos o testimonios que por omisión se quitan todos los nombres, qué nombres puede elegir conservar y quién más puede elegirlo (cláusulas 2 y 4; los interruptores están **Implementados**, sin desplegar; el aviso sigue sin publicarse) | **Planeado** | `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts`; rama `feat/anonymise-controls` |
-| Quien sube un documento o un testimonio ve y cambia qué nombres se conservan en él, en la pantalla de anonimización del documento | **Implementado**, sin desplegar | `PATCH /api/documents/:id/anonimizacion`; rama `feat/anonymise-controls` |
+| El aviso declara a quien sube documentos o testimonios que por omisión se quitan todos los nombres, qué nombres puede elegir conservar y quién más puede elegirlo (cláusulas 2 y 4; los interruptores están **Implementados** y corren en dev desde el 2026-11-10; el aviso sigue sin publicarse) | **Planeado** | `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts` |
+| Quien sube un documento o un testimonio ve y cambia qué nombres se conservan en él, en la pantalla de anonimización del documento | **Implementado** | `PATCH /api/documents/:id/anonimizacion` |
+| Los valores por omisión del ecosistema los cambian solo el responsable y la administración de plataforma; quien revisa cambia un documento solo si está retenido o publicado | **Implementado (pendiente de desplegar en dev)** | `lib/permissions.ts`; `lib/anonymisationControls.ts`; commit `50bde2ae` |
+| Un material cuyos autores no han dado su consentimiento queda retenido: no se vuelve a anonimizar, ingerir, extraer al grafo ni publicar | **Implementado (pendiente de desplegar en dev)** | `lib/consentHold.ts`; `scripts/hold-for-consent.ts`. En dev, los materiales del taller siguen en borrador |
 | Tres consentimientos del estudiante, apagados por defecto | **Implementado** | `apps/web/src/lib/estudiante.ts`; `apps/web/src/lib/consent.ts` |
 | Fecha y versión del consentimiento de testimonios; rechazo de una versión distinta | **Implementado** | `lib/student/testimonioConsent.ts`; `StudentProfiles.ts` |
 | Retiro automático del consentimiento 3 al apagar `studentTestimonios` | **Implementado** | `clearTestimonioConsentWhenOff` en `Organizations.ts` |
-| Borrar documentos, testimonios propios y conversaciones desde la plataforma | **Implementado** | `Documents.ts`; `lib/conversationTurnErasure.ts`. Borrar un documento también borra su registro de revisiones |
+| Borrar documentos, testimonios propios y conversaciones desde la plataforma | **Implementado** | `Documents.ts`; `lib/conversationTurnErasure.ts`. En dev, borrar un documento también borra su registro de revisiones; en `main` lo conserva, salvo las filas de quien borra (pendiente de desplegar en dev) |
 | Anonimización antes de compartir, con revisión humana de lo dudoso | **Implementado** | `lib/anonymise/gate.ts`; `lib/holdReview.ts` |
 | Grabación de testimonio no compartida | **Implementado** | `collections/Media.ts` |
 | Cookies técnicas `chat_auth` y `eco_selected`, sin cookies publicitarias en el código | **Implementado** | `apps/web/src/lib/server/auth.ts`; `apps/web/src/lib/server/ecosystem.ts` |
 | Aviso de privacidad integral | **Planeado** | Plantilla en la sección b; sin publicar en `apps/web/src` |
 | Aviso simplificado y aviso de que las conversaciones alimentan el acervo | **Planeado** | Plantilla en la sección c; sin publicar |
 | Consentimiento para quien aporta un testimonio | **Planeado** | Plantilla en la sección d; sin validar ni usar |
-| Respaldo del detector en `none`, condición para decir que el texto con nombres no sale a Estados Unidos | **Planeado** | Interruptor en `lib/platformSettings.ts`; el valor por defecto es `hosted` y staging siempre usa OpenRouter |
+| Respaldo del detector en `none`, condición para decir que el texto con nombres no sale a Estados Unidos | **Planeado** | Interruptor en `lib/platformSettings.ts`; el valor por defecto es `hosted`, dev lo usa desde el 2026-11-10 y staging siempre usa OpenRouter |
 | Conserje de sesiones a 90 días | **Planeado** | `lib/sessionJanitor.ts`, apagado |
-| Retención cero donde esté disponible y migración a inferencia albergada de forma independiente | **Planeado** | Sin configuración en el código ni contratos documentados |
+| Retención cero (ZDR) en toda llamada a OpenRouter, que falla cerrada sin ella | **Implementado** | `services/ai-service/src/services/ai/router/adapters/openrouter.ts`; en dev desde el 2026-11-10. Staging no lo tiene (inferido de su imagen del 2026-10-17) |
+| Retención cero con DeepInfra | **Pendiente** | Sin parámetro de retención ni contrato documentado (P-06); etapa 2 |
+| Migración a inferencia albergada de forma independiente | **Planeado** | Sin contratos documentados |
 | Comprobante ético con folio, PDF y archivo de consentimientos | **Pendiente** | Sin código ni procedimiento; no hay biblioteca para generar PDF en `apps/*/package.json` |
 | Formatos accesibles del aviso y del consentimiento | **Pendiente** | No existen |
 | Correo institucional y canal ARCO | **Pendiente** | No existen |
@@ -90,7 +94,7 @@ Versión 1 · Fecha de última actualización: `[fecha de publicación]`
 
 1. Crear y administrar tu cuenta y tu pertenencia a ecosistemas.
 2. Recibir, transcribir y guardar tus documentos y testimonios.
-3. Anonimizar los documentos que lo piden, los testimonios y las conversaciones antes de compartirlos dentro del ecosistema: sustituimos nombres de personas, domicilios y otros datos que identifican por seudónimos como "[Persona A]". **Por omisión quitamos todos los nombres, también el tuyo.** En un documento o un testimonio que subas se pueden encender dos excepciones. Con la primera conservamos visible, en ese texto y en el acervo del ecosistema, tu nombre completo tal como figuras en ese ecosistema; quien administra los miembros del ecosistema puede definir ese nombre. Nunca conservamos una parte suelta de tu nombre, y si no tienes una membresía activa o no hay un nombre registrado, no conservamos ninguno. Con la segunda conservamos los nombres de autores citados como en un libro o artículo, por ejemplo "López (2020)", y los de una lista de referencias, solo si el programa que quita nombres los reconoce como públicos. Las elige el ecosistema por omisión, y en cada documento las puedes cambiar tú, el equipo de revisión del ecosistema y la administración de la plataforma. Ves lo que se conservó en la pantalla de anonimización de tu documento. En un testimonio, esa pantalla te avisa mientras una excepción está encendida. Si apagas una excepción en tu documento, este vuelve a revisarse y los nombres que se habían conservado salen del acervo. Cada cambio queda registrado con quién lo hizo y cuándo. Si el ecosistema apaga una excepción, sus documentos vuelven a revisarse y esos nombres salen del acervo. Si el ecosistema enciende una excepción, los documentos ya revisados no cambian. Nunca conservamos nombres en conversaciones. La comparación es de texto: si tu documento menciona a otra persona que se llama exactamente igual que tú, o a alguien escrito con forma de cita, su nombre también queda visible.
+3. Anonimizar los documentos que lo piden, los testimonios y las conversaciones antes de compartirlos dentro del ecosistema: sustituimos nombres de personas, domicilios y otros datos que identifican por seudónimos como "[Persona A]". **Por omisión quitamos todos los nombres, también el tuyo.** En un documento o un testimonio que subas se pueden encender dos excepciones. Con la primera conservamos visible, en ese texto y en el acervo del ecosistema, tu nombre completo tal como figuras en ese ecosistema; quien administra los miembros del ecosistema puede definir ese nombre. Nunca conservamos una parte suelta de tu nombre, y si no tienes una membresía activa o no hay un nombre registrado, no conservamos ninguno. Con la segunda conservamos los nombres de autores citados como en un libro o artículo, por ejemplo "López (2020)", y los de una lista de referencias, solo si el programa que quita nombres los reconoce como públicos. Las elige por omisión quien es responsable del ecosistema, y en cada documento las puedes cambiar tú, la administración de la plataforma y, si el documento está retenido o publicado, el equipo de revisión del ecosistema. Ves lo que se conservó en la pantalla de anonimización de tu documento. En un testimonio, esa pantalla te avisa mientras una excepción está encendida. Si apagas una excepción en tu documento, este vuelve a revisarse y los nombres que se habían conservado salen del acervo. Cada cambio queda registrado con quién lo hizo y cuándo. Si el ecosistema apaga una excepción, sus documentos vuelven a revisarse y esos nombres salen del acervo. Si el ecosistema enciende una excepción, los documentos ya revisados no cambian. Nunca conservamos nombres en conversaciones. La comparación es de texto: si tu documento menciona a otra persona que se llama exactamente igual que tú, o a alguien escrito con forma de cita, su nombre también queda visible. *Antes de publicar: que solo el responsable cambie los valores del ecosistema y que el equipo de revisión solo cambie documentos retenidos o publicados está en `main`, pendiente de desplegar en dev.*
 4. Responder tus preguntas con el asistente, citando el acervo del ecosistema.
 5. **Agregar tus conversaciones, ya anonimizadas, al acervo del ecosistema.** Sirven para orientar las respuestas a otras personas del mismo ecosistema. Nunca se citan y nunca se muestran con tu nombre.
 6. Mostrar el grafo de temas del ecosistema, construido solo con texto anonimizado y publicado.
@@ -111,13 +115,13 @@ Para negarte a las finalidades secundarias, escribe a `[correo institucional de 
 | Hetzner Online | Alemania | Todos los datos guardados en la plataforma | Hospedaje del servidor |
 | Servidor de cómputo con GPU de otra organización, por red privada | `[país y organización]` | Texto de testimonios y conversaciones antes de anonimizar; audio para transcripción | Anonimización y transcripción |
 | OpenRouter, con el modelo DeepSeek | Estados Unidos | Tus preguntas sin anonimizar, fragmentos anonimizados del acervo, documentos de referencia sin anonimizar y, en los casos descritos abajo, texto de testimonios y conversaciones antes de anonimizar | Generar las respuestas del asistente y el grafo; detectar nombres |
-| DeepInfra | Estados Unidos | Tu pregunta y fragmentos del acervo | Ordenar los resultados de búsqueda |
+| DeepInfra | Estados Unidos | Tu pregunta y fragmentos del acervo | Ordenar los resultados de búsqueda; convertir texto en vectores de búsqueda si falla el servidor de cómputo |
 
 **El texto sin anonimizar puede enviarse a Estados Unidos.** Antes de quitar los nombres, un programa debe leer tu texto. Lo hace primero en el servidor de cómputo. Si ese servidor falla, el texto con nombres puede ir a OpenRouter. En el entorno de pruebas siempre va a OpenRouter. También van a OpenRouter tus preguntas, tal como las escribes, y los documentos de referencia que no pasan por anonimización. Una regla automática quita correos, teléfonos y domicilios antes de enviarlos, pero no quita nombres.
 
-Por ahora usamos proveedores hospedados, cuya retención de datos depende de sus condiciones; está planeado activar retención cero donde esté disponible y migrar a inferencia albergada de forma independiente.
+Pedimos a OpenRouter que no conserve los datos (retención cero) y, si no lo puede garantizar para un modelo, no enviamos la solicitud. DeepInfra no ofrece esa opción: sus condiciones deciden cuánto guarda. Está planeado migrar a inferencia albergada de forma independiente.
 
-*Antes de publicar: esta redacción describe el estado actual. Solo se puede sustituir por "el texto sin anonimizar no sale a Estados Unidos" cuando el respaldo del detector esté en `none` y el servidor de cómputo sea el único detector. Faltan contratos documentados con todos los encargados, y `[país y organización]` del servidor de cómputo no está confirmado.*
+*Antes de publicar: esta redacción describe el estado actual de dev. Staging no pide retención cero (inferido de su imagen del 2026-10-17). Solo se puede sustituir por "el texto sin anonimizar no sale a Estados Unidos" cuando el respaldo del detector esté en `none` y el servidor de cómputo sea el único detector. Faltan contratos documentados con todos los encargados, y `[país y organización]` del servidor de cómputo no está confirmado.*
 
 No vendemos ni cedemos tus datos. No realizamos transferencias que requieran tu consentimiento distintas de estas remisiones a encargados, salvo las que exija una autoridad competente conforme a la ley.
 
@@ -154,7 +158,7 @@ Texto para mostrar al crear una cuenta, en el pie de la aplicación y al abrir l
 >
 > Si subes un documento que se anonimiza o un testimonio, quitamos todos los nombres, también el tuyo. Puedes elegir conservar tu nombre o los autores que citas. El equipo de revisión del ecosistema también puede elegirlo.
 >
-> Usamos servidores en Alemania, un servidor de cómputo de otra organización y servicios de IA en Estados Unidos. A Estados Unidos van tus preguntas y documentos de referencia. Si falla el servidor de cómputo, también puede ir texto con nombres. Las condiciones de esos servicios deciden cuánto guardan esos datos.
+> Usamos servidores en Alemania, un servidor de cómputo de otra organización y servicios de IA en Estados Unidos. A Estados Unidos van tus preguntas y documentos de referencia. Si falla el servidor de cómputo, también puede ir texto con nombres. Pedimos a esos servicios que no guarden los datos; donde no se puede, sus condiciones deciden cuánto los guardan.
 >
 > Puedes borrar lo que aportes cuando quieras. Para más derechos, escribe a `[correo institucional de datos personales]`.
 >
@@ -196,7 +200,7 @@ El folio y la firma se guardarían fuera de la plataforma, en un archivo de cons
 >
 > **¿Hay algún riesgo?** Aunque quitemos tu nombre, alguien que te conoce podría reconocerte por lo que cuentas. Puedes pedir que quitemos detalles. Puedes no contar lo que no quieras.
 >
-> **¿Tu relato sale del país?** Sí. Tu relato con nombres se procesa en un servidor de cómputo de otra organización, en `[país]`. Si ese servidor falla, tu relato con nombres puede ir a un servicio de IA en Estados Unidos. La versión sin nombres se usa con servicios de IA en Estados Unidos. Esos servicios deciden, según sus condiciones, cuánto tiempo guardan los datos.
+> **¿Tu relato sale del país?** Sí. Tu relato con nombres se procesa en un servidor de cómputo de otra organización, en `[país]`. Si ese servidor falla, tu relato con nombres puede ir a un servicio de IA en Estados Unidos. La versión sin nombres se usa con servicios de IA en Estados Unidos. Pedimos a esos servicios que no guarden tus datos; donde no se puede, sus condiciones deciden cuánto tiempo los guardan.
 >
 > **¿Es obligatorio?** No. Puedes decir que no, parar en cualquier momento o retirar tu testimonio después. Para retirarlo, escribe a `[correo institucional de datos personales]` con tu folio. No recibirás ningún pago y no perderás ningún apoyo por decir que no.
 >
@@ -289,7 +293,7 @@ flowchart TD
 
 ### f.5 Retiro de un testimonio por folio
 
-**Pendiente**: el folio no existe. El borrado del paso 3 sí funciona (**Implementado**) y hoy también elimina el registro de revisiones del documento.
+**Pendiente**: el folio no existe. El borrado del paso 3 sí funciona (**Implementado**). En dev también elimina el registro de revisiones del documento; en `main` ese registro se conserva, salvo las filas de quien borra (pendiente de desplegar en dev).
 
 1. La persona escribe con su folio.
 2. El equipo localiza en el archivo de consentimientos el ecosistema y la fecha del folio, y con la persona facilitadora identifica el documento.
@@ -320,7 +324,7 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 2. **Planeado.** Validar el consentimiento para quien aporta un testimonio.
 3. **Planeado.** Fijar el respaldo del detector en `none` y ajustar la redacción de las plantillas cuando sea cierto.
 4. **Planeado.** Activar el conserje de sesiones, tras aprobar el plazo, y reflejarlo en la cláusula 7.
-5. **Planeado.** Activar retención cero donde esté disponible y migrar a inferencia albergada de forma independiente.
+5. **Planeado.** Migrar a inferencia albergada de forma independiente.
 6. **Pendiente.** Llenar los corchetes: domicilio, correos, autoridad garante, plazos, país y organización del servidor de cómputo.
 7. **Pendiente.** Validar la ley aplicable y el responsable con el área jurídica.
 8. **Pendiente.** Crear el comprobante ético con folio, su versión en PDF y el archivo de consentimientos.
@@ -330,3 +334,10 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 12. **Pendiente.** Guardar fecha y versión de los consentimientos 1 y 2 del estudiante.
 13. **Pendiente.** Aprobar la política de retención y el destino final de los originales.
 14. **Pendiente.** Definir la política sobre menores.
+
+## Etapa 2
+
+Diferido a la etapa 2 (rama `etapa-2`; `main` solo lleva correcciones):
+
+- Retención cero o contrato con DeepInfra (P-06). Cuando exista, la cláusula 6 puede decir que ningún encargado de IA conserva los datos.
+- Trazas del servicio de IA sin la salida del detector, y su purga (P-14). Hasta entonces, la cláusula 7 no puede prometer un plazo para esos registros.

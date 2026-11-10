@@ -1,7 +1,7 @@
 # ADR-0019. Voces sin sujeto ni nivel de consentimiento: los testimonios son siempre anónimos
 
-- **Versión:** 1.2
-- **Fecha del documento:** 2026-11-07
+- **Versión:** 1.3
+- **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada con enmienda
 - **Fecha de la decisión:** 2026-08-28. Reglas del gate ampliadas del 2026-10-21 al 2026-10-23
@@ -66,6 +66,10 @@ El razonamiento, escrito en `apps/backend/src/collections/Documents.ts`:
 ## Enmienda del 2026-11-07
 
 [ADR-0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) enmienda la frase "un testimonio es anónimo, siempre". Por omisión un testimonio sigue con todos sus nombres sustituidos. Quien puede cambiar los interruptores de un documento puede encender dos excepciones en un testimonio: conservar el nombre completo de quien lo subió y conservar los autores de citas bibliográficas. Lo demás de este ADR sigue vigente: no hay campo `subject`, ni nivel de consentimiento, ni mapa entre seudónimos y nombres, y los nombres citados de un testimonio nunca son nodos `persona` del grafo.
+
+## Estado al 2026-11-10
+
+[ADR-0022](ADR-0022-retencion-por-consentimiento.md) agrega `documents.consentHeld`, una marca que detiene todo procesamiento de un documento mientras sus autores no consienten. No es un nivel de consentimiento: no dice quién consintió ni a qué, y no cambia lo que este ADR decide. Pendiente de desplegar en dev.
 
 ## Referencias
 

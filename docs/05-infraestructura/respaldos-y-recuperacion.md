@@ -1,9 +1,9 @@
 # Respaldos y recuperación
 
-- **Versión:** 1.2
+- **Versión:** 1.3
 - **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (§1, §2, §4b, §4c, §4p, §4x, §4zn, §4zs, §4zzz, §4zzzz, §6), `infra/fleet/backups.md` (diseño, no construido), `infra/fleet/runbook.md` (§3, §4, §8), `infra/fleet/env-manifests.md` (§1, §3), `infra/docker-compose.yml`, `plan/spark-ai-adopcion.md` (§5), `plan/auditoria-codigo-2026-10-28.md`, listado local de la carpeta de respaldos fuera de la caja (medido el 2026-10-30).
+- **Fuentes:** `infra/fleet/edc-1.md` (§1, §2, §4b, §4c, §4p, §4x, §4zn, §4zs, §4zzz, §4zzzz, §4zzzzzzz, §4zzzzzzzz, §6, §7), `infra/fleet/backups.md` (diseño, no construido), `infra/fleet/runbook.md` (§3, §4, §8), `infra/fleet/env-manifests.md` (§1, §3), `infra/docker-compose.yml`, `plan/spark-ai-adopcion.md` (§5), `plan/auditoria-codigo-2026-10-28.md`, listado local de la carpeta de respaldos fuera de la caja (medido el 2026-10-30), commits `6a1f645b` (regla de retención) y `3ce0e07d` (primera purga).
 
 ## Para quién es y qué responde
 
@@ -21,8 +21,8 @@ Contexto que pesa en todas las decisiones de este documento: al 2026-10-30 EDC n
 | Pregunta | Respuesta hoy | Procedencia |
 |---|---|---|
 | ¿Hay respaldo automático? | Sí, uno: la imagen diaria del disco completo que hace Hetzner, 7 rotativas | citado, `edc-1.md` §1 |
-| ¿Hay respaldo lógico de las bases? | Sí, pero **manual**: un `pg_dump` antes de cada despliegue con migración, cuando se acuerda | citado, `edc-1.md` §4b y §4zzzz |
-| ¿Hay copia fuera de Hetzner? | Solo de los dumps: copia fuera del servidor, en equipo del equipo de desarrollo, sin cifrar | medido el 2026-10-30 (permisos `-rw-r--r--`, sin paso de cifrado) |
+| ¿Hay respaldo lógico de las bases? | Sí, pero **manual**: un `pg_dump` antes de cada despliegue con migración, cuando se acuerda. El último, `20261110T1825Z` | citado, `edc-1.md` §4b, §4zzzz y §4zzzzzzzz |
+| ¿Hay copia fuera de Hetzner? | Solo de los dumps: copia fuera del servidor, en equipo del equipo de desarrollo, sin cifrar. Desde el 2026-11-10 se escribe con `umask 077` (archivos 600, carpetas 700) | medido el 2026-10-30 (permisos `-rw-r--r--`, sin paso de cifrado); el 2026-11-10, `stat` sobre `20261110T1825Z` (citado, `edc-1.md` §4zzzzzzzz) |
 | ¿Se respaldan los archivos subidos? | Solo dentro de la imagen de Hetzner | inferido: no hay otro mecanismo |
 | ¿Se ha probado una restauración completa? | **Nunca** | citado, `backups.md` §6 es solo propuesta |
 | ¿Alguien recibe aviso si algo falla? | No | inferido: no hay monitoreo (ver [Infraestructura y entornos](infraestructura-y-entornos.md) §7) |
@@ -34,7 +34,7 @@ Contexto que pesa en todas las decisiones de este documento: al 2026-10-30 EDC n
 | Capa | Qué cubre | Cadencia | Dónde queda | Retención | Cifrado | Procedencia |
 |---|---|---|---|---|---|---|
 | Imagen de Hetzner | Disco completo de `edc-1`: ambos entornos, Coolify, volúmenes, archivos subidos | diaria, ventana 06:00 a 10:00 UTC | Hetzner, mismo proveedor | 7 imágenes diarias rotativas | no documentado | citado, `edc-1.md:102` |
-| `pg_dump -Fc` por base | `edc_backend` y `edc_ai` de dev; de staging, solo hasta el 2026-10-17 | manual, antes de un despliegue con migración; sin cron | `/root/backups/<sello>/` en el servidor, más copia fuera del servidor, en equipo del equipo de desarrollo, en una carpeta por sello | los 7 más recientes por entorno, en el servidor y en la copia; los anteriores se borran (§2.2, paso 7). Primera poda **Pendiente** | ninguno | citado, `edc-1.md` §4b y §4zzzz; medido en el listado local |
+| `pg_dump -Fc` por base | `edc_backend` y `edc_ai` de dev; de staging, solo hasta el 2026-10-17 | manual, antes de un despliegue con migración; sin cron | `/root/backups/<sello>/` en el servidor, más copia fuera del servidor, en equipo del equipo de desarrollo, en una carpeta por sello | los 7 más recientes por entorno, en el servidor y en la copia; los anteriores se borran (§2.2, paso 7). Primera purga hecha el 2026-11-10 hacia las 20:30 UTC | ninguno; permisos 600/700 desde el 2026-11-10 | citado, `edc-1.md` §4b, §4zzzz y §7 paso 7; medido en el listado local |
 | Verificación | `pg_restore -l` (el archivo se puede leer) y `sha256sum` comparado fuera de la caja | por respaldo | `SHA256SUMS` en la carpeta (desde el 2026-10-27) | | | citado, `edc-1.md` §4zs y §4zzzz; medido en el listado local |
 
 Advertencia sobre la imagen de Hetzner: la bitácora del proyecto del 2026-10-17 decía que los respaldos de Hetzner "no estaban activados". `edc-1.md`, escrito después, dice que están activados. Lo más probable es que se activaran después de esa entrada (inferido), pero **hay que confirmarlo en el panel de Hetzner**. Si no estuvieran activos, la única copia de los archivos subidos sería el propio servidor.
@@ -73,7 +73,7 @@ Tamaños, que muestran cómo crece `edc_ai` (la base de vectores):
 | 2026-10-27 | 88 MB | | citado, `edc-1.md` §4zs |
 | 2026-10-29 06:43 | 312 MB | 18.7 MB | medido (312 471 401 y 18 662 917 bytes) y citado, `edc-1.md` §4zzzz |
 
-El salto del 2026-10-26 coincide con el despliegue que permitió guardar textos de hasta 2 000 000 de caracteres (inferido de `edc-1.md` §4zm). A este ritmo, la copia fuera de la caja crece unos 330 MB por cada respaldo nuevo de dev (inferido de la última carpeta). La regla de §2.2, paso 7, la limita a 7 volcados por entorno; al 2026-11-10 dejaría en el servidor 52 de 59 volcados de dev para borrar, 1.2 GB, y ninguno de staging, que tiene 7 (medido con `find` en `/root/backups/`).
+El salto del 2026-10-26 coincide con el despliegue que permitió guardar textos de hasta 2 000 000 de caracteres (inferido de `edc-1.md` §4zm). A este ritmo, la copia fuera de la caja crece unos 330 MB por cada respaldo nuevo de dev (inferido de la última carpeta). La regla de §2.2, paso 7, la limita a 7 volcados por entorno. La primera purga, el 2026-11-10 hacia las 20:30 UTC, borró 52 volcados de dev en el servidor y en la copia, y liberó 1231.3 MB en cada lado (citado, `edc-1.md` §7 paso 7, medido con `du -sb` antes y después). Quedan en dev `20261110T1825Z`, `20261110T0538Z`, `20261029T0643Z`, `20261029T0439Z`, `20261029T0053Z`, `20261029T0016Z` y `20261028T1717Z`, con `sha256sum -c` correcto en los dos lados; staging conserva sus 7. Las cifras de esta sección, salvo esta, son del listado del 2026-10-30, anterior a la purga.
 
 ## 3. Lo que NO se respalda
 
@@ -137,12 +137,12 @@ Ninguno de estos números se ha medido; todos se deducen de la política de §2.
 
 | Objetivo | Valor | De dónde sale |
 |---|---|---|
-| RPO, bases de dev con dumps | Desde el último despliegue con respaldo; el 2026-10-30 el último es del 2026-10-29 06:43 UTC. Sin despliegues, crece sin límite | inferido de la cadencia manual |
+| RPO, bases de dev con dumps | Desde el último despliegue con respaldo; el 2026-11-10 el último es del 2026-11-10 18:25 UTC (citado, `edc-1.md` §4zzzzzzzz). Sin despliegues, crece sin límite | inferido de la cadencia manual |
 | RPO, todo el disco con la imagen de Hetzner | hasta 24 h (más la ventana de 4 h en que se toma) | inferido de la cadencia diaria, si los respaldos de Hetzner están activos |
 | RPO, archivos subidos | igual que la imagen de Hetzner | inferido |
 | RPO, staging | su último dump es del 2026-10-17; como staging no ha cambiado, en la práctica coincide con la imagen | inferido |
 | RTO, detección | indefinido: nadie recibe aviso | inferido de la ausencia de monitoreo |
-| RTO, restaurar una base | del orden de minutos para los tamaños de hoy (312 MB) | inferido; no medido |
+| RTO, restaurar una base | del orden de minutos para los tamaños de hoy (`edc_ai` 313 MB, `edc_backend` 19 MB el 2026-11-10, citado de `edc-1.md` §4zzzzzzzz) | inferido; no medido |
 | RTO, restaurar la imagen completa | no medido | |
 
 ### 5.2 Diseño objetivo, no construido
@@ -195,7 +195,7 @@ Cada escenario indica cómo se detecta, qué hacer y qué se pierde. Los comando
 - **Respuesta:**
   1. Probar el proxy del Spark desde `edc-1`.
   2. Si el Spark se reinició, levantar sus servicios (ver [Despliegue y runbook](despliegue-y-runbook.md) §6.17). Si no hay acceso, avisar a la organización dueña del equipo.
-  3. Si la caída va a durar, revertir embeddings a hospedado (§6.18 del runbook). El detector cae solo a hospedado mientras `ANONYMISE_DETECT_FALLBACK=hosted`; con datos reales debe estar en `none`, y entonces los documentos esperan retenidos.
+  3. Si la caída va a durar, revertir embeddings a hospedado (§6.18 del runbook). El detector cae solo a hospedado si el respaldo efectivo es `hosted`: primero el ajuste de plataforma `detectorFallback`, y si está vacío, `ANONYMISE_DETECT_FALLBACK`. Con `none` los documentos esperan retenidos. En dev el respaldo es `hosted` desde el 2026-11-10, sobre OpenRouter con retención cero de datos (ZDR) (citado, `edc-1.md` §4zzzzzzz).
   4. Al volver, repasar las retenciones por falla de infraestructura con `reset-infra-holds.ts`.
 - **Pérdida:** la auditoría de código del 2026-10-28 registra que una caída del Spark de más de unos 2.5 minutos **borra el audio fuente** de un trabajo de transcripción (citado, `plan/auditoria-codigo-2026-10-28.md`, hallazgo abierto). Ese audio habría que volver a subirlo. Lo demás se recupera reintentando.
 
@@ -231,7 +231,7 @@ Cada escenario indica cómo se detecta, qué hacer y qué se pierde. Los comando
 
 ## 7. Riesgos de privacidad de los respaldos
 
-- Los dumps contienen la tabla de usuarios del proveedor de identidad y, cuando haya datos reales, los textos originales de testimonios, que se guardan junto al anonimizado (citado, inventario de privacidad). Hoy están sin cifrar en el servidor y en la copia del equipo de desarrollo (medido: permisos `-rw-r--r--`).
+- Los dumps contienen la tabla de usuarios del proveedor de identidad y, cuando haya datos reales, los textos originales de testimonios, que se guardan junto al anonimizado (citado, inventario de privacidad). Hoy están sin cifrar en el servidor y en la copia del equipo de desarrollo. El 2026-10-30 tenían permisos `-rw-r--r--` (medido); desde el 2026-11-10 se escriben con `umask 077`, 600 y 700 (citado, `edc-1.md` §4zzzzzzzz). Los permisos de las carpetas anteriores que siguen guardadas no se volvieron a medir.
 - La imagen de Hetzner incluye el almacén de credenciales de RustFS en texto claro.
 - Ver [Protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md) y [Seguridad](../06-privacidad-y-seguridad/seguridad.md).
 
@@ -245,17 +245,17 @@ Ordenados para que estén resueltos antes del primer testimonio real.
 4. **Cifrar** los dumps antes de que salgan del servidor, y cifrar la copia fuera del servidor.
 5. **Mover la copia fuera de la caja a otro proveedor** (R2 o B2), con una credencial que no pueda borrar.
 6. **Respaldar el volumen `rustfs_data`** con sincronización de archivos a ese mismo destino, tratando la copia como un almacén de llaves.
-7. **Aplicar la retención** de §2.2, paso 7 (7 por entorno, decisión del 2026-11-10), en `/root/backups/` y en la copia fuera del servidor. La primera poda espera el visto bueno del responsable. El diseño de `backups.md` (7 diarios, 4 semanales, 3 mensuales) la reemplaza cuando se construya.
+7. **Mantener la retención** de §2.2, paso 7 (7 por entorno, decisión del 2026-11-10), en `/root/backups/` y en la copia fuera del servidor, después de cada respaldo nuevo. La primera purga se hizo el 2026-11-10 (§2.3). No hay tarea automática: depende de quien despliega. El diseño de `backups.md` (7 diarios, 4 semanales, 3 mensuales) la reemplaza cuando se construya.
 8. **Hacer un simulacro de restauración** completo en un entorno aparte: dump más archivos, arranque, inicio de sesión y descarga de un archivo. Registrar los tres números que pide `backups.md` §6 y ajustar este documento con ellos.
 9. **Monitoreo externo y alertas** (disponibilidad sobre la ruta de readiness, disco, swap, reinicios), porque sin detección el RTO no tiene límite.
-10. **Respaldar staging** antes de su siguiente despliegue y volver a desplegarlo para que deje de estar 12 días atrás.
+10. **Respaldar staging** antes de su siguiente despliegue y volver a desplegarlo: su web y su backend siguen en la versión del 2026-10-17 (citado, `edc-1.md` §4zzzzzzzz).
 11. **Escribir el procedimiento de reingesta total** de `edc_ai` y una verificación cruzada entre `edc_backend` y `edc_ai`.
 12. **Corregir la pérdida de audio fuente** cuando el Spark cae más de unos 2.5 minutos (hallazgo abierto de la auditoría del 2026-10-28).
 13. **Evaluar la fase 2** (archivo continuo de WAL) antes del primer usuario externo con datos reales, como recomienda `backups.md` §7.
 
 ## Referencias
 
-- `infra/fleet/edc-1.md`: §1 respaldos de Hetzner, §2 `APP_KEY`, §4b procedimiento de respaldo y restauración, §4c incidente de disco, §4p vaciado, §4x incidente de limpieza, §4zzzz último respaldo, §5 dónde viven los secretos.
+- `infra/fleet/edc-1.md`: §1 respaldos de Hetzner, §2 `APP_KEY`, §4b procedimiento de respaldo y restauración, §4c incidente de disco, §4p vaciado, §4x incidente de limpieza, §4zzzzzzzz último respaldo, §5 dónde viven los secretos, §7 pasos 6 y 7 (`umask 077` y retención).
 - `infra/fleet/backups.md`: diseño objetivo (no construido).
 - `infra/fleet/runbook.md`: §3 migraciones, §4 rollback, §8 RustFS.
 - `infra/fleet/env-manifests.md`: §3 RustFS.
