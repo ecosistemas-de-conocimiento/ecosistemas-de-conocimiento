@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   RATE_LIMIT_WINDOW_MS,
   checkRateLimits,
-  peekRateLimit,
   rateLimits,
+  reserveRateLimits,
   resetRateLimits,
   setRateLimitStore,
   useDefaultRateLimitStore,
@@ -164,7 +164,7 @@ describe('key-flood resistance', () => {
   }, 60_000)
 })
 
-describe('peek', () => {
+describe('reserve and release', () => {
   beforeEach(() => {
     useDefaultRateLimitStore()
     resetRateLimits()
@@ -172,12 +172,31 @@ describe('peek', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
-  it('answers without counting', async () => {
-    for (let i = 0; i < 5; i += 1) expect((await peekRateLimit(rule('p', 2))).allowed).toBe(true)
-    await hitTimes('p', 2, 2)
-    expect((await peekRateLimit(rule('p', 2))).allowed).toBe(false)
+  it('counts up front, so concurrent callers cannot all pass', async () => {
+    const verdicts = await Promise.all(
+      Array.from({ length: 20 }, () => reserveRateLimits([rule('burst', 3)])),
+    )
+    expect(verdicts.filter((v) => v.allowed)).toHaveLength(3)
+  })
+
+  it('release gives the slot back, once', async () => {
+    const held = await reserveRateLimits([rule('r', 1)])
+    expect((await reserveRateLimits([rule('r', 1)])).allowed).toBe(false)
+    await held.release()
+    await held.release()
+    expect((await reserveRateLimits([rule('r', 1)])).allowed).toBe(true)
+    expect((await reserveRateLimits([rule('r', 1)])).allowed).toBe(false)
+  })
+
+  it('a denial counts nothing, not even in the rules before it', async () => {
+    await reserveRateLimits([rule('second', 1)])
+    const verdict = await reserveRateLimits([rule('first', 1), rule('second', 1)])
+    expect(verdict.allowed).toBe(false)
+    expect(verdict.rule?.key).toBe('second')
+    expect((await reserveRateLimits([rule('first', 1)])).allowed).toBe(true)
   })
 
   it('keeps a long-window key past the 10-minute idle sweep', async () => {
@@ -190,23 +209,36 @@ describe('peek', () => {
     await checkRateLimits([hour])
     vi.advanceTimersByTime(20 * 60_000)
     await checkRateLimits([rule('other', 1)]) // runs the sweep
-    expect((await peekRateLimit(hour)).allowed).toBe(false)
+    expect((await checkRateLimits([hour])).allowed).toBe(false)
     vi.advanceTimersByTime(41 * 60_000)
-    expect((await peekRateLimit(hour)).allowed).toBe(true)
+    expect((await checkRateLimits([hour])).allowed).toBe(true)
   })
 
   it('FAILS CLOSED when the store throws', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     setRateLimitStore({
-      hit: () => ({ allowed: true, limit: 1, remaining: 1, resetAt: 0, retryAfterSeconds: 0 }),
-      peek: () => {
+      hit: () => {
+        throw new Error('store is down')
+      },
+      release: () => {},
+      reset: () => {},
+    })
+    expect((await reserveRateLimits([rule('k', 100)])).allowed).toBe(false)
+    useDefaultRateLimitStore()
+  })
+
+  it('a release that throws keeps the slot counted, and does not throw', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    setRateLimitStore({
+      hit: (_key, limit) => ({ allowed: true, limit, remaining: 0, resetAt: 0, retryAfterSeconds: 0 }),
+      release: () => {
         throw new Error('store is down')
       },
       reset: () => {},
     })
-    expect((await peekRateLimit(rule('k', 100))).allowed).toBe(false)
+    const held = await reserveRateLimits([rule('k', 100)])
+    await expect(held.release()).resolves.toBeUndefined()
     useDefaultRateLimitStore()
-    vi.restoreAllMocks()
   })
 })
 
@@ -263,7 +295,7 @@ describe('the shared-store seam', () => {
           retryAfterSeconds: 1,
         }
       },
-      peek: (_key, limit) => ({ allowed: true, limit, remaining: limit, resetAt: 0, retryAfterSeconds: 0 }),
+      release: () => {},
       reset: () => {
         seen.length = 0
       },
@@ -281,9 +313,7 @@ describe('the shared-store seam', () => {
       hit: () => {
         throw new Error('store is down')
       },
-      peek: () => {
-        throw new Error('store is down')
-      },
+      release: () => {},
       reset: () => {},
     })
 
@@ -296,7 +326,7 @@ describe('the shared-store seam', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     setRateLimitStore({
       hit: () => Promise.reject(new Error('timeout')),
-      peek: () => Promise.reject(new Error('timeout')),
+      release: () => {},
       reset: () => {},
     })
     expect((await checkRateLimits([rule('k', 100)])).allowed).toBe(false)
@@ -327,7 +357,7 @@ describe('the shared-store seam', () => {
         seen.push(key)
         return { allowed: true, limit, remaining: 0, resetAt: 0, retryAfterSeconds: 0 }
       },
-      peek: (_key, limit) => ({ allowed: true, limit, remaining: 0, resetAt: 0, retryAfterSeconds: 0 }),
+      release: () => {},
       reset: () => {
         seen.length = 0
       },
@@ -353,7 +383,7 @@ describe('the shared-store seam', () => {
         resetAt: 0,
         retryAfterSeconds: 0,
       }),
-      peek: () => ({ allowed: true, limit: 0, remaining: 0, resetAt: 0, retryAfterSeconds: 0 }),
+      release: () => {},
       reset: () => {},
     })
     const verdict = await checkRateLimits([rule('k', 10)])
@@ -370,6 +400,8 @@ describe('configured limits', () => {
     'IDENTITY_RATELIMIT_RESOLVE_CONSUMER_MAX',
     'IDENTITY_RATELIMIT_SERVICE_AUTH_FAIL_IP_MAX',
     'IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX',
+    'IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX',
+    'IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S',
   ] as const
 
   afterEach(() => {
@@ -383,7 +415,9 @@ describe('configured limits', () => {
     expect(rateLimits.mePerIp()).toBe(240)
     expect(rateLimits.resolvePerConsumer()).toBe(600)
     expect(rateLimits.serviceAuthFailurePerIp()).toBe(20)
-    expect(rateLimits.loginFailPerIp()).toBe(15)
+    expect(rateLimits.loginFailPerIp()).toBe(100)
+    expect(rateLimits.loginFailPerIpEmail()).toBe(4)
+    expect(rateLimits.loginFailPerIpEmailWindowMs()).toBe(600_000)
   })
 
   it('is env-tunable, so ops can raise a ceiling without a code deploy', () => {

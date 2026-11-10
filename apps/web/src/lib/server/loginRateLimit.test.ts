@@ -5,9 +5,9 @@ import { isActionFailure } from '@sveltejs/kit';
  * 🔴 ONE IP CANNOT KEEP SOMEONE ELSE'S ACCOUNT LOCKED (audit 2026-11-10, A-11).
  *
  * Both sign-in doors — `/api/auth/login` (JS) and the `/sign-in` action (no
- * JS) — share `signIn`, and both must stop an IP that has spent its failed
- * attempts BEFORE it reaches the backend, where each try moves the target's
- * lockout counter.
+ * JS) — share `signIn`, and both must stop a spent (IP, email) pair, or a spent
+ * IP, BEFORE it reaches the backend, where each try moves the target's lockout
+ * counter. Each `fetch` below is one backend password check.
  */
 
 const envState: Record<string, string | undefined> = { BACKEND_URL: 'http://backend.test:3002' };
@@ -32,19 +32,35 @@ const LOCKED = {
 };
 const OK = { token: 'jwt', user: { id: 1, email: 'ana@example.org' } };
 
-function backend(status: number, body: unknown) {
-  const fn = vi.fn(async () => new Response(JSON.stringify(body), { status }));
+function backend(status: number, body: unknown, delayMs = 0) {
+  const fn = vi.fn(async () => {
+    if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+    return new Response(JSON.stringify(body), { status });
+  });
+  vi.stubGlobal('fetch', fn);
+  return fn;
+}
+
+/** Wrong password for every email but `ok`, whose password is right. */
+function backendKnowing(ok: string, delayMs = 0) {
+  const fn = vi.fn(async (_url: string, init: RequestInit) => {
+    if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+    const { email } = JSON.parse(String(init.body)) as { email: string };
+    return email === ok
+      ? new Response(JSON.stringify(OK), { status: 200 })
+      : new Response(JSON.stringify(WRONG_PASSWORD), { status: 401 });
+  });
   vi.stubGlobal('fetch', fn);
   return fn;
 }
 
 const cookies = () => ({ set: vi.fn(), get: vi.fn(), delete: vi.fn() });
 
-async function viaApi(): Promise<number> {
+async function viaApi(email = 'ana@example.org'): Promise<number> {
   const request = new Request('http://edc.test/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'ana@example.org', password: 'x' }),
+    body: JSON.stringify({ email, password: 'x' }),
   });
   return (await loginApi({ request, cookies: cookies() } as never)).status;
 }
@@ -66,19 +82,22 @@ async function viaForm(): Promise<number> {
 beforeEach(() => {
   resetLoginRateLimit();
   ip = '203.0.113.7';
-  envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX = '3';
+  envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX = '3';
+  envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX = '10';
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
 afterEach(() => {
+  delete envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX;
+  delete envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S;
   delete envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX;
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-describe('failed sign-ins per IP', () => {
-  it('the JSON door stops a spent IP before the backend sees it', async () => {
+describe('failed sign-ins per (IP, email)', () => {
+  it('the JSON door stops a spent pair before the backend sees it', async () => {
     const fetchFn = backend(401, WRONG_PASSWORD);
     for (let i = 0; i < 3; i += 1) expect(await viaApi()).toBe(401);
     expect(await viaApi()).toBe(429);
@@ -100,14 +119,52 @@ describe('failed sign-ins per IP', () => {
     expect(await viaApi()).toBe(429);
   });
 
-  it('does not count successes', async () => {
-    backend(200, OK);
-    for (let i = 0; i < 10; i += 1) expect(await viaApi()).toBe(200);
+  it('a concurrent burst of 50 reaches the backend at most `limit` times', async () => {
+    // The bug this guards: the check only looked and the count came after the
+    // backend answered, so every concurrent request passed the look.
+    const fetchFn = backend(401, WRONG_PASSWORD, 20);
+    const burst = await Promise.all(Array.from({ length: 50 }, () => viaApi()));
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(burst.filter((s) => s === 401)).toHaveLength(3);
+    expect(burst.filter((s) => s === 429)).toHaveLength(47);
   });
 
-  it('does not count a backend outage', async () => {
+  it('after that burst, the same IP still signs in to another account', async () => {
+    backendKnowing('colleague@example.org', 20);
+    await Promise.all(Array.from({ length: 50 }, () => viaApi()));
+    expect(await viaApi('colleague@example.org')).toBe(200);
+  });
+
+  it('keys on the normalised email, so case and spaces buy no fresh budget', async () => {
+    const fetchFn = backend(401, WRONG_PASSWORD);
+    for (const email of ['ana@example.org', ' ANA@example.org', 'Ana@Example.Org ']) await viaApi(email);
+    expect(await viaApi('ANA@EXAMPLE.ORG')).toBe(429);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('refunds successes', async () => {
+    backend(200, OK);
+    for (let i = 0; i < 20; i += 1) expect(await viaApi()).toBe(200);
+  });
+
+  it('refunds a backend outage', async () => {
     backend(500, { message: 'down' });
-    for (let i = 0; i < 10; i += 1) expect(await viaApi()).toBe(503);
+    for (let i = 0; i < 20; i += 1) expect(await viaApi()).toBe(503);
+  });
+
+  it("refunds the backend's own 429", async () => {
+    const fetchFn = backend(429, { errors: [{ message: 'Too many failed sign-ins.' }] });
+    for (let i = 0; i < 20; i += 1) expect(await viaApi()).toBe(429);
+    expect(fetchFn).toHaveBeenCalledTimes(20);
+  });
+
+  it('answers our own 429 with a Retry-After for the route', async () => {
+    backend(401, WRONG_PASSWORD);
+    const { signIn } = await import('./auth');
+    for (let i = 0; i < 3; i += 1) await signIn('ana@example.org', 'x', cookies(), false);
+    const refused = await signIn('ana@example.org', 'x', cookies(), false);
+    expect(refused).toMatchObject({ ok: false, status: 429 });
+    expect(refused.ok === false && refused.retryAfterSeconds).toBeGreaterThan(0);
   });
 
   it('keeps IPs apart', async () => {
@@ -127,11 +184,11 @@ describe('failed sign-ins per IP', () => {
     expect(await viaApi()).toBe(429);
   });
 
-  it('opens again after the hour', async () => {
+  it('opens again after its 10 minutes', async () => {
     vi.useFakeTimers();
     backend(401, WRONG_PASSWORD);
     for (let i = 0; i < 3; i += 1) await viaApi();
-    vi.advanceTimersByTime(LOGIN_FAIL_WINDOW_MS + 1000);
+    vi.advanceTimersByTime(10 * 60_000 + 1000);
     expect(await viaApi()).toBe(401);
   });
 
@@ -147,10 +204,45 @@ describe('failed sign-ins per IP', () => {
     expect(await res.json()).toEqual({ error: AUTH_ERROR_COPY['rate-limited'] });
   });
 
-  it('defaults to 15 an hour', async () => {
+  it('defaults to 4 per 10 minutes, one below the account lockout', async () => {
+    delete envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX;
+    backend(401, WRONG_PASSWORD);
+    for (let i = 0; i < 4; i += 1) expect(await viaApi()).toBe(401);
+    expect(await viaApi()).toBe(429);
+  });
+});
+
+describe('failed sign-ins per IP, across every email', () => {
+  const sprayed = (i: number) => `user${i}@example.org`;
+
+  it('caps spraying from one IP under a concurrent burst', async () => {
+    const fetchFn = backend(401, WRONG_PASSWORD, 20);
+    const burst = await Promise.all(Array.from({ length: 30 }, (_, i) => viaApi(sprayed(i))));
+    expect(fetchFn).toHaveBeenCalledTimes(10);
+    expect(burst.filter((s) => s === 429)).toHaveLength(20);
+  });
+
+  it('a refusal by the ceiling spends nothing in the per-email bucket', async () => {
+    backend(401, WRONG_PASSWORD);
+    for (let i = 0; i < 10; i += 1) await viaApi(sprayed(i));
+    expect(await viaApi('ana@example.org')).toBe(429);
+    envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX = '100';
+    for (let i = 0; i < 3; i += 1) expect(await viaApi('ana@example.org')).toBe(401);
+  });
+
+  it('opens again after the hour', async () => {
+    vi.useFakeTimers();
+    backend(401, WRONG_PASSWORD);
+    for (let i = 0; i < 10; i += 1) await viaApi(sprayed(i));
+    expect(await viaApi(sprayed(99))).toBe(429);
+    vi.advanceTimersByTime(LOGIN_FAIL_WINDOW_MS + 1000);
+    expect(await viaApi(sprayed(99))).toBe(401);
+  });
+
+  it('defaults to 100 an hour', async () => {
     delete envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX;
     backend(401, WRONG_PASSWORD);
-    for (let i = 0; i < 15; i += 1) expect(await viaApi()).toBe(401);
-    expect(await viaApi()).toBe(429);
+    for (let i = 0; i < 100; i += 1) expect(await viaApi(sprayed(i))).toBe(401);
+    expect(await viaApi(sprayed(100))).toBe(429);
   });
 });

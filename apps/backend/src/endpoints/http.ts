@@ -15,6 +15,7 @@
 
 import type { PayloadRequest } from 'payload'
 
+import { isActiveUser } from '../access'
 import {
   RATE_LIMIT_WINDOW_MS,
   checkRateLimits,
@@ -67,13 +68,14 @@ export interface IdentityUserDoc {
  *
  * Auth is performed upstream by Payload's REST layer (cookie or
  * `Authorization: JWT <payload-token>`), so this is a narrowing guard, not an
- * auth check of its own. Users flagged `isActive: false` are treated as
- * unauthenticated here regardless of a valid session.
+ * auth check of its own. A user whose `isActive` is not `true` — `false`, or a
+ * NULL column — is unauthenticated here regardless of a valid session, by the
+ * same rule access control uses (`isActiveUser`).
  */
 export function getAuthenticatedUser(req: PayloadRequest): IdentityUserDoc | null {
   const user = req.user as unknown as IdentityUserDoc | null
   if (!user || typeof user.email !== 'string' || user.email.length === 0) return null
-  if (user.isActive === false) return null
+  if (!isActiveUser(user)) return null
   return user
 }
 

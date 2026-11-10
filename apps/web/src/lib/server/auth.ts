@@ -9,7 +9,7 @@
 
 import { env } from '$env/dynamic/private';
 import { currentClientIp, forwardClientIp } from './clientIp';
-import { loginBlocked, recordLoginFailure } from './loginRateLimit';
+import { reserveLoginAttempt } from './loginRateLimit';
 
 export const SESSION_COOKIE = 'chat_auth';
 // Match Payload's default 2h JWT lifetime. The the backend response carries
@@ -193,7 +193,13 @@ interface CookieSetter {
 
 export type SignInResult =
   | { ok: true; user: BackendUser }
-  | { ok: false; status: 400 | 401 | 429 | 503; error: string };
+  | {
+      ok: false;
+      status: 400 | 401 | 429 | 503;
+      error: string;
+      /** Set on our own 429, for a `Retry-After` header. */
+      retryAfterSeconds?: number;
+    };
 
 /**
  * The ONE sign-in path: validate, log in against the backend, set the session
@@ -214,18 +220,26 @@ export async function signIn(
     return { ok: false, status: 400, error: authErrorMessage('missing-fields') };
   }
 
-  // 🔴 Per IP, failures only (A-11): `loginRateLimit.ts` has the numbers. A
-  // spent IP never reaches the backend, so it cannot move anyone's lockout.
-  const ip = currentClientIp() ?? 'unknown';
-  if (loginBlocked(ip)) {
+  // 🔴 Per (IP, email) and per IP, failures only (A-11): `loginRateLimit.ts`
+  // has the numbers. The slot is taken BEFORE the backend call, so a burst
+  // cannot all pass the check; a refused attempt never reaches the backend, so
+  // it cannot move anyone's lockout.
+  const slot = reserveLoginAttempt(currentClientIp() ?? 'unknown', email);
+  if (!slot.ok) {
     console.warn('[auth] login refused: too many failed sign-ins from this IP');
-    return { ok: false, status: 429, error: authErrorMessage('rate-limited') };
+    return {
+      ok: false,
+      status: 429,
+      error: authErrorMessage('rate-limited'),
+      retryAfterSeconds: slot.retryAfterSeconds,
+    };
   }
 
   const result = await loginWithBackend(email, password);
   if (!result.ok || !result.token || !result.user) {
     const failure = result.failure ?? 'login-failed';
-    if (failure === 'invalid-credentials' || failure === 'account-locked') recordLoginFailure(ip);
+    // Only a guess keeps its slot; an outage or the backend's own 429 does not.
+    if (failure !== 'invalid-credentials' && failure !== 'account-locked') slot.release();
     // 🔴 The split: the technical detail goes to the LOG, the Spanish sentence
     // goes to the screen. `detail` holds Payload's English or a raw
     // `fetch failed`; neither is ever put in the response body.
@@ -237,6 +251,7 @@ export async function signIn(
     return { ok: false, status, error: authErrorMessage(failure) };
   }
 
+  slot.release();
   cookies.set(SESSION_COOKIE, result.token, {
     path: '/',
     httpOnly: true,

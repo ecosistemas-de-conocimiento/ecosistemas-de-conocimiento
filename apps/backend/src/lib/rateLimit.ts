@@ -40,10 +40,11 @@
 export const RATE_LIMIT_WINDOW_MS = 60_000
 
 /**
- * Failed logins are counted over an hour, because the thing they guard runs on
- * Payload's lockout clock: 5 failures lock an account for 10 minutes (quoted,
- * `payload/dist/collections/config/defaults.js`, Payload 3.88). A one-minute
- * window cannot see an attacker who needs only 5 tries every 10 minutes.
+ * The per-IP ceiling on failed logins is counted over an hour: Payload's lockout
+ * runs on a 10-minute clock (5 failures lock an account for 10 minutes; quoted,
+ * `payload/dist/collections/config/defaults.js`, Payload 3.88), and a one-minute
+ * window cannot see an attacker who needs only 5 tries every 10 minutes. The
+ * per-(IP, email) bucket has its own window, `rateLimits.loginFailPerIpEmailWindowMs`.
  */
 export const LOGIN_FAIL_WINDOW_MS = 60 * 60_000
 
@@ -69,10 +70,13 @@ export interface RateLimitDecision {
 export interface RateLimitStore {
   hit(key: string, limit: number, windowMs: number): RateLimitDecision | Promise<RateLimitDecision>
   /**
-   * The same answer `hit` would give, WITHOUT counting this request. For a
-   * bucket that counts only outcomes (failed logins): ask first, count after.
+   * Give back the most recent counted hit on this key. For a bucket that counts
+   * only some outcomes (failed logins): `hit` reserves the slot BEFORE the
+   * outcome is known, so concurrent requests cannot all pass a check that has
+   * not counted any of them yet, and `release` returns it once the outcome turns
+   * out not to count. See {@link reserveRateLimits}.
    */
-  peek(key: string, limit: number, windowMs: number): RateLimitDecision | Promise<RateLimitDecision>
+  release(key: string): void | Promise<void>
   /** Drop all counters. Tests, and nothing else. */
   reset(): void
 }
@@ -167,25 +171,10 @@ class InProcessSlidingWindowStore implements RateLimitStore {
     }
   }
 
-  peek(key: string, limit: number, windowMs: number): RateLimitDecision {
-    const now = Date.now()
-    this.sweep(now)
-
-    const previous = this.buckets.get(key)
-    if (previous === undefined) {
-      return { allowed: true, limit, remaining: limit, resetAt: now + windowMs, retryAfterSeconds: 0 }
-    }
-    const recent = previous.hits.filter((at) => at > now - windowMs)
-    // Touched, not counted — the same split as a denied `hit`, for the same reason.
-    this.buckets.set(key, { hits: recent, lastSeen: now, windowMs: previous.windowMs })
-    if (recent.length >= limit) return denied(recent, limit, windowMs, now)
-    return {
-      allowed: true,
-      limit,
-      remaining: limit - recent.length,
-      resetAt: (recent[0] ?? now) + windowMs,
-      retryAfterSeconds: 0,
-    }
+  release(key: string): void {
+    // `hits` is in time order, so the newest is last. It is the slot just
+    // reserved, or one taken a moment later; either way the count drops by one.
+    this.buckets.get(key)?.hits.pop()
   }
 
   reset(): void {
@@ -312,9 +301,9 @@ function envInt(name: string, fallback: number): number {
 }
 
 /**
- * Every limit is per 60 seconds (failed logins: per hour), and every one is
- * env-tunable so ops can raise a ceiling without a deploy of new code. Read at
- * call time, never memoised.
+ * Every limit is per 60 seconds (failed logins have their own windows), and
+ * every one is env-tunable so ops can raise a ceiling without a deploy of new
+ * code. Read at call time, never memoised.
  *
  * The numbers, and why they are these numbers:
  *
@@ -359,17 +348,37 @@ export const rateLimits = {
     envInt('IDENTITY_RATELIMIT_SERVICE_AUTH_FAIL_IP_MAX', 20),
 
   /**
-   * Failed `POST /api/users/login` per client IP, per HOUR
-   * ({@link LOGIN_FAIL_WINDOW_MS}). Only failures count, so a room signing in
-   * at once is not throttled by its own successes.
+   * Failed `POST /api/users/login` for one email from one client IP (A-11).
+   * The email is trimmed and lowercased, as Payload does before its lookup.
    *
-   * 15, because holding one account locked takes 5 failures every 10 minutes,
-   * 30 an hour (inferred from the quoted lockout above). At 15 one IP gets at
-   * most 3 lockouts an hour, so a target is free at least half of it.
-   * ⚠ A shared egress IP (a workshop behind one NAT) shares these 15 wrong
-   * passwords; raise it for a big room. The per-account lockout is unchanged.
+   * 4, one below Payload's 5-try lockout (quoted above), so within one window
+   * a single IP cannot move that account's counter to the lock. Other people
+   * behind the same NAT, signing in to other accounts, share nothing with it.
+   *
+   * ⚠ Payload's `loginAttempts` does not decay with time: only a successful
+   * sign-in (back to 0) or an expired lock (back to 1) resets it (measured,
+   * `payload/dist/auth/strategies/local/incrementLoginAttempts.js`, 3.88). So
+   * once this window rolls over, one IP can add 4 more and reach the lock. At
+   * 10 minutes that is a lock roughly every other 10 minutes against an account
+   * nobody signs in to (inferred from that code, not measured). A longer
+   * window shrinks it, at the price of a person who mistyped their own password
+   * 4 times waiting that long on that connection.
    */
-  loginFailPerIp: (): number => envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX', 15),
+  loginFailPerIpEmail: (): number => envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX', 4),
+  /** 600 s, Payload's lockout length (quoted above): the owner's choice for this wave. */
+  loginFailPerIpEmailWindowMs: (): number =>
+    envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S', 600) * 1000,
+
+  /**
+   * Failed `POST /api/users/login` per client IP across EVERY email, per HOUR
+   * ({@link LOGIN_FAIL_WINDOW_MS}). It throttles password spraying from one
+   * address; the per-(IP, email) bucket above is what protects one account.
+   *
+   * 100, set far above what a room of real people produces: a workshop of 30
+   * where everyone mistypes 3 times an hour spends 90 (inferred, not measured).
+   * ⚠ A shared egress IP still shares it; raise it for a bigger room.
+   */
+  loginFailPerIp: (): number => envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX', 100),
 
   // --- corpus graph ----------------------------------------------------------
   //
@@ -436,34 +445,49 @@ export interface RateLimitVerdict {
 
 const ALLOWED: RateLimitVerdict = { allowed: true, rule: null, decision: null }
 
+/** A verdict that holds its slots. `release` gives them back; a second call does nothing. */
+export interface RateLimitReservation extends RateLimitVerdict {
+  release(): Promise<void>
+}
+
+const NOTHING_HELD = async (): Promise<void> => {}
+
 /**
- * Would this rule deny the next request? Counts nothing. Pair it with
- * {@link checkRateLimits} on the outcome you want to count.
+ * Count the request against every rule NOW, before the outcome is known, and
+ * hand back a way to un-count it. For buckets that should count only some
+ * outcomes (failed logins): reserve, do the work, `release` when it did not
+ * count. Checking first and counting after lets every concurrent request pass
+ * the check before any of them is counted.
  *
- * ⚠ FAILS CLOSED, like `checkRateLimits`.
+ * Unlike {@link checkRateLimits}, a denial counts nothing: the rules already
+ * hit are given back before it returns.
+ *
+ * ⚠ FAILS CLOSED, like `checkRateLimits`. A `release` that throws is logged and
+ * the slot stays counted.
  */
-export async function peekRateLimit(rule: RateLimitRule): Promise<RateLimitVerdict> {
-  const windowMs = rule.windowMs ?? RATE_LIMIT_WINDOW_MS
-  try {
-    const decision = await currentStore().peek(rule.key, rule.limit, windowMs)
-    return decision.allowed ? ALLOWED : { allowed: false, rule, decision }
-  } catch (err) {
-    console.error(
-      `[identity/rateLimit] store failed on scope "${rule.scope}" — DENYING the request (fail closed):`,
-      err,
-    )
-    return {
-      allowed: false,
-      rule,
-      decision: {
-        allowed: false,
-        limit: rule.limit,
-        remaining: 0,
-        resetAt: Date.now() + windowMs,
-        retryAfterSeconds: Math.ceil(windowMs / 1000),
-      },
+export async function reserveRateLimits(rules: RateLimitRule[]): Promise<RateLimitReservation> {
+  const held: RateLimitRule[] = []
+  let done = false
+  const release = async (): Promise<void> => {
+    if (done) return
+    done = true
+    for (const rule of held) {
+      try {
+        await currentStore().release(rule.key)
+      } catch (err) {
+        console.error(`[identity/rateLimit] release failed on scope "${rule.scope}" — the slot stays counted:`, err)
+      }
     }
   }
+  for (const rule of rules) {
+    const verdict = await checkRateLimits([rule])
+    if (!verdict.allowed) {
+      await release()
+      return { ...verdict, release: NOTHING_HELD }
+    }
+    held.push(rule)
+  }
+  return { ...ALLOWED, release }
 }
 
 /**
