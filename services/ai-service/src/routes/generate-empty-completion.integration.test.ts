@@ -130,4 +130,48 @@ describe('empty provider answer — EmptyCompletion, retried, not cached (integr
     expect(typeof last.traceId).toBe('string');
     expect(await traceStatus(last.traceId as string)).toEqual(['failed']);
   }, 60_000);
+
+  // Empty AND `finish_reason: length`: the cap was spent before any text, so
+  // the router does NOT retry — exactly one provider call.
+  const truncatedUnit = (key: string) => ({
+    unitKey: key,
+    input: {},
+    specOverride: { promptTemplate: 'Responde algo. [[FAKE_REPLY:]] [[FAKE_FINISH_REASON:length]]' },
+  });
+
+  it('/v1/generate/sync → 502 CompletionTruncated after ONE provider call', async () => {
+    const before = chatCalls();
+    const res = await post('/v1/generate/sync', { unit: truncatedUnit(`trunc-sync-${Date.now()}`) });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(502);
+    expect(body).toMatchObject({
+      error: 'CompletionTruncated',
+      code: 'ERR_COMPLETION_TRUNCATED',
+      message: 'The LLM provider hit the output token limit before writing an answer.',
+    });
+    expect(typeof body.traceId).toBe('string');
+    expect(chatCalls() - before).toBe(1);
+    expect(await traceStatus(body.traceId as string)).toEqual(['failed']);
+  }, 60_000);
+
+  it('/v1/generate/stream → terminal CompletionTruncated error frame after ONE provider call', async () => {
+    const before = chatCalls();
+    const res = await post('/v1/generate/stream', { unit: truncatedUnit(`trunc-stream-${Date.now()}`) });
+    expect(res.status).toBe(200);
+    const frames = (await res.text())
+      .split('\n\n')
+      .filter((f) => f.startsWith('data: '))
+      .map((f) => JSON.parse(f.slice('data: '.length)) as Record<string, unknown>);
+
+    expect(frames.some((f) => f.type === 'done')).toBe(false);
+    const last = frames.at(-1)!;
+    expect(last).toMatchObject({
+      type: 'error',
+      code: 'CompletionTruncated',
+      errorCode: 'ERR_COMPLETION_TRUNCATED',
+    });
+    expect(typeof last.traceId).toBe('string');
+    expect(chatCalls() - before).toBe(1);
+  }, 60_000);
 });

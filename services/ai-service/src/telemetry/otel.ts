@@ -21,6 +21,7 @@ import { diag, DiagLogLevel } from '@opentelemetry/api';
 import type { FastifyPluginCallback } from 'fastify';
 import { pino } from 'pino';
 
+import { LOG_SAFE_OPTIONS } from '../errors/log-safe.js';
 import { otlpEndpoint, serviceName, telemetryEnabled } from './config.js';
 
 export interface TelemetryHandle {
@@ -131,7 +132,7 @@ export async function startTelemetry(): Promise<TelemetryHandle | null> {
   // channel, so give that channel somewhere to land. ERROR level only — DEBUG
   // on this channel is extremely chatty and would itself become a log volume
   // problem.
-  const diagLog = pino({ name: 'otel', level: 'warn' });
+  const diagLog = pino({ name: 'otel', level: 'warn', ...LOG_SAFE_OPTIONS });
   diag.setLogger(
     {
       error: (message, ...args) => diagLog.warn({ args }, message),

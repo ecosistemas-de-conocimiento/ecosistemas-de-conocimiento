@@ -1910,6 +1910,35 @@
           "message"
         ]
       },
+      "CompletionTruncatedBody": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "CompletionTruncated"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "ERR_COMPLETION_TRUNCATED"
+            ]
+          },
+          "traceId": {
+            "type": "string",
+            "description": "The router trace of the failed call."
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "code",
+          "message"
+        ]
+      },
       "ProviderUnavailableBody": {
         "type": "object",
         "properties": {
@@ -3712,11 +3741,18 @@
             "description": "The client went away mid-generation and the work was abandoned. ZERO-BYTE BODY, and not an IANA status — the socket is usually already gone, so this is mostly visible in logs rather than to the caller."
           },
           "502": {
-            "description": "The provider answered with no text on every attempt of the bounded retry ladder. Not billed, not cached. `code: ERR_EMPTY_COMPLETION`; on `/v1/generate/stream` the same failure is the error frame `code: EmptyCompletion`.",
+            "description": "The provider answered with no text. `EmptyCompletion` (`code: ERR_EMPTY_COMPLETION`): on every attempt of the bounded retry ladder. `CompletionTruncated` (`code: ERR_COMPLETION_TRUNCATED`): with `finish_reason` length, i.e. the output token cap ran out first; not retried. Neither is billed or cached. On `/v1/generate/stream` each is the error frame with the same `code`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EmptyCompletionBody"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/EmptyCompletionBody"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CompletionTruncatedBody"
+                    }
+                  ]
                 }
               }
             }

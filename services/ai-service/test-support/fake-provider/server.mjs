@@ -92,6 +92,22 @@ function directiveReply(messages) {
   return found;
 }
 
+/**
+ * Per-request finish reason: `[[FAKE_FINISH_REASON:<word>]]` anywhere in a
+ * message replaces the computed `stop` / `length`, so a test can script an
+ * empty answer that stopped at the token cap. The LAST directive wins.
+ */
+const FINISH_DIRECTIVE = /\[\[FAKE_FINISH_REASON:([a-z_]+)\]\]/g;
+
+function directiveFinishReason(messages) {
+  let found;
+  for (const m of Array.isArray(messages) ? messages : []) {
+    const content = typeof m?.content === 'string' ? m.content : '';
+    for (const match of content.matchAll(FINISH_DIRECTIVE)) found = match[1];
+  }
+  return found;
+}
+
 /** The marked body, `tokens` tokens long by the chars/4 heuristic. */
 export function fakeBodyText(tokens) {
   const target = Math.max(1, tokens) * CHARS_PER_TOKEN;
@@ -250,7 +266,8 @@ export async function startFakeProvider(options = {}) {
         : (directiveTokens(body.messages) ?? cfg.bodyTokens);
     const cap = Number.isFinite(body.max_tokens) && body.max_tokens > 0 ? Math.floor(body.max_tokens) : Infinity;
     const outTokens = Math.min(configured, cap);
-    const finishReason = outTokens < configured ? 'length' : 'stop';
+    const finishReason =
+      directiveFinishReason(body.messages) ?? (outTokens < configured ? 'length' : 'stop');
     const content =
       scripted !== undefined ? scripted.slice(0, outTokens * CHARS_PER_TOKEN) : fakeBodyText(outTokens);
     const promptTokens = promptTokensOf(body.messages);

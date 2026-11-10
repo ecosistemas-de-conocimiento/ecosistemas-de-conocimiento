@@ -58,7 +58,12 @@ import {
   type PassPurpose,
 } from '../../../metrics/llm.js';
 import { normalizeFinishReason } from './finish-reason.js';
-import { EmptyCompletion, isEmptyCompletion } from './empty-completion.js';
+import {
+  CompletionTruncated,
+  EmptyCompletion,
+  emptyCompletionError,
+  isEmptyCompletion,
+} from './empty-completion.js';
 import {
   PROVIDER_TIMEOUT_REASON,
   ProviderTimeout,
@@ -557,6 +562,7 @@ export class Router implements LLMRouter {
         org: req.org,
         signal,
         committed: () => streamed,
+        onEmpty: (c) => breakdown.push(breakdownEntry(traceId, c, 'generate', true)),
         call: (attemptSignal) =>
           this.adapter({
             model,
@@ -576,14 +582,7 @@ export class Router implements LLMRouter {
       const passDur = Math.round(performance.now() - t0);
       const { flags, parsed } = validatePass(req, completion.contentText);
       genRecord = { completion, flags, durationMs: passDur, parsed };
-      breakdown.push({
-        traceId,
-        model: completion.model,
-        inputTokens: completion.usage.promptTokens,
-        outputTokens: completion.usage.completionTokens,
-        costUsd: completion.usage.costUsd,
-        purpose: 'generate',
-      });
+      breakdown.push(breakdownEntry(traceId, completion, 'generate'));
     } catch (err) {
       // OUR timeout (wall-clock deadline or stall backstop) is a failure the
       // org does not pay for — checked FIRST, because it also arrives as an
@@ -597,7 +596,9 @@ export class Router implements LLMRouter {
           traceId,
           model,
           totalReservedUsd,
-          spentUsd: err instanceof OpenRouterAbortError ? (err.partial?.usage.costUsd ?? 0) : 0,
+          spentUsd:
+            sumCost(breakdown) +
+            (err instanceof OpenRouterAbortError ? (err.partial?.usage.costUsd ?? 0) : 0),
         });
       }
       // Mid-call abort? `streamingCallOpenRouter` throws `OpenRouterAbortError`
@@ -606,10 +607,17 @@ export class Router implements LLMRouter {
       // unspent portion of the reserve. Non-abort errors fall back to the
       // legacy "refund everything, log $0" behaviour.
       const partial = err instanceof OpenRouterAbortError ? err.partial : undefined;
-      // The last empty answer, when every attempt came back empty. Unbilled
-      // like any other failure; what the provider charged stays on the trace.
-      const empty = err instanceof EmptyCompletion ? err.completion : undefined;
-      const actualCostUsd = partial?.usage.costUsd ?? 0;
+      // The last empty answer, when every attempt came back empty (or the one
+      // truncated one). Unbilled like any other failure; what the provider
+      // charged for EVERY empty attempt (`breakdown`, see `onEmpty`) stays on
+      // the trace as `providerCostUsd`.
+      const empty =
+        err instanceof EmptyCompletion || err instanceof CompletionTruncated
+          ? err.completion
+          : undefined;
+      const emptySpendUsd = sumCost(breakdown);
+      // A billed abort pays for the empty attempts that preceded it too.
+      const actualCostUsd = partial ? partial.usage.costUsd + emptySpendUsd : 0;
       const refundUsd = Math.max(0, totalReservedUsd - actualCostUsd);
       const failureStatus: 'aborted' | 'failed' = partial ? 'aborted' : 'failed';
       const inputTokens = partial?.usage.promptTokens ?? 0;
@@ -648,6 +656,7 @@ export class Router implements LLMRouter {
         outputPayload: partial
           ? { content: partial.contentText, partial: true }
           : undefined,
+        costBreakdown: breakdown.length > 0 ? breakdown : undefined,
         tokenUsage: partial
           ? {
               inputTokens,
@@ -663,7 +672,7 @@ export class Router implements LLMRouter {
           errorCode: err instanceof Error ? err.name : 'unknown',
           errorMessage: err instanceof Error ? err.message : String(err),
           ...providerGenerationIdMeta(partial ?? empty),
-          ...(empty ? { providerCostUsd: empty.usage.costUsd } : {}),
+          ...(breakdown.length > 0 ? { providerCostUsd: emptySpendUsd } : {}),
           ...(partial
             ? {
                 partial: true,
@@ -694,6 +703,9 @@ export class Router implements LLMRouter {
       // Re-raised with the trace id so the wire body can quote it.
       if (err instanceof EmptyCompletion) {
         throw new EmptyCompletion({ traceId, completion: err.completion, cause: err });
+      }
+      if (err instanceof CompletionTruncated) {
+        throw new CompletionTruncated({ traceId, completion: err.completion, cause: err });
       }
       throw err;
     }
@@ -922,6 +934,12 @@ export class Router implements LLMRouter {
     call: (signal: AbortSignal) => Promise<OpenRouterCompletion>;
     /** See the streaming note at the primary call site. */
     committed?: () => boolean;
+    /**
+     * Called with EVERY empty attempt, retried or not. The provider may bill
+     * an empty answer, so the caller records its cost (`breakdown`) — the
+     * ladder would otherwise keep only the final attempt's usage.
+     */
+    onEmpty?: (completion: OpenRouterCompletion) => void;
   }): Promise<OpenRouterCompletion> {
     try {
       const completion = await this.resilience.execute(
@@ -932,8 +950,12 @@ export class Router implements LLMRouter {
             // retry ladder, for every adapter and every pass — so it is retried
             // under the same bounded policy as a 5xx, filed as a failure in
             // traces and usage, and never reaches the cache. See
-            // `empty-completion.ts` for the dev measurement.
-            if (isEmptyCompletion(completion)) throw new EmptyCompletion({ completion });
+            // `empty-completion.ts` for the dev measurement. Empty at the
+            // token cap is `CompletionTruncated`, which is NOT retried.
+            if (isEmptyCompletion(completion)) {
+              args.onEmpty?.(completion);
+              throw emptyCompletionError(completion);
+            }
             return completion;
           } catch (err) {
             // Tokens already on the wire ⇒ this attempt is the only attempt.
@@ -1014,6 +1036,7 @@ export class Router implements LLMRouter {
         purpose: args.purpose,
         org: args.req.org,
         signal: args.signal,
+        onEmpty: (c) => args.breakdown.push(breakdownEntry(args.traceId, c, args.purpose, true)),
         call: (attemptSignal) =>
           this.adapter({
             model: args.model,
@@ -1028,14 +1051,7 @@ export class Router implements LLMRouter {
       });
       const passDur = Math.round(performance.now() - t0);
       const { flags, parsed } = validatePass(args.req, completion.contentText);
-      args.breakdown.push({
-        traceId: args.traceId,
-        model: completion.model,
-        inputTokens: completion.usage.promptTokens,
-        outputTokens: completion.usage.completionTokens,
-        costUsd: completion.usage.costUsd,
-        purpose: args.purpose,
-      });
+      args.breakdown.push(breakdownEntry(args.traceId, completion, args.purpose));
       return { record: { completion, flags, durationMs: passDur, parsed }, reservedUsd };
     } catch (err) {
       // Adapter threw — refund this pass's reserve and keep the previous winner.
@@ -1344,7 +1360,25 @@ function providerGenerationIdMeta(
   return completion?.rawId ? { providerGenerationId: completion.rawId } : {};
 }
 
-/** Provider spend across the passes that completed. */
+/** One provider attempt's spend, as a `breakdown` entry. */
+function breakdownEntry(
+  traceId: string,
+  completion: OpenRouterCompletion,
+  purpose: BreakdownEntry['purpose'],
+  empty?: true,
+): BreakdownEntry {
+  return {
+    traceId,
+    model: completion.model,
+    inputTokens: completion.usage.promptTokens,
+    outputTokens: completion.usage.completionTokens,
+    costUsd: completion.usage.costUsd,
+    purpose,
+    ...(empty ? { empty } : {}),
+  };
+}
+
+/** Provider spend across the attempts that answered, empty ones included. */
 function sumCost(breakdown: BreakdownEntry[]): number {
   return breakdown.reduce((s, b) => s + b.costUsd, 0);
 }
