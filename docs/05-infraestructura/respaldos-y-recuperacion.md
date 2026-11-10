@@ -44,11 +44,11 @@ Advertencia sobre la imagen de Hetzner: la bitácora del proyecto del 2026-10-17
 Es el que registra `edc-1.md` §4zzzz (2026-10-29). Se corre en el servidor, por entorno:
 
 1. Ubicar el contenedor de postgres del entorno: `docker ps --format '{{.Names}}' | grep '^postgres-<app uuid>'`.
-2. Crear la carpeta con sello de tiempo UTC: `/root/backups/AAAAMMDDTHHMMZ/`.
+2. `umask 077`, para que los volcados queden en 600 y las carpetas en 700. Luego crear la carpeta con sello de tiempo UTC: `/root/backups/AAAAMMDDTHHMMZ/`.
 3. Para cada base, `docker exec <postgres> pg_dump -U edc -Fc <base> > <carpeta>/<base>.dump`. El formato `-Fc` es el formato propio comprimido de PostgreSQL, que restaura `pg_restore`.
 4. Comprobar cada archivo con `pg_restore -l` (lista el contenido sin restaurar).
 5. `sha256sum *.dump > SHA256SUMS`.
-6. Copiar la carpeta fuera del servidor, a un equipo del equipo de desarrollo, con `scp` (con un tiempo máximo, por ejemplo `timeout 180 scp`, citado de `edc-1.md` §4zn), en una carpeta con el mismo sello, y comprobar con `sha256sum -c SHA256SUMS`.
+6. Copiar la carpeta fuera del servidor, a un equipo del equipo de desarrollo, con `scp` (con un tiempo máximo, por ejemplo `timeout 180 scp`, citado de `edc-1.md` §4zn), en una carpeta con el mismo sello y también con `umask 077`, y comprobar con `sha256sum -c SHA256SUMS`.
 
 El comando exacto está en [Despliegue y runbook](despliegue-y-runbook.md) §6.3.
 

@@ -2938,6 +2938,9 @@ only because pre-§4c spend is booked to it; nothing spends from `demo` any more
 4. Check: `https://<web host>/api/health` and `https://<backend host>/api/health` answer 200.
 5. Check the variables (§4 footgun 1) whenever the compose file changed.
 6. A deploy that adds ai-service migrations: back up `edc_ai` first (§4b).
+   The dumps hold raw text: run `umask 077` before `mkdir /root/backups/...` and `pg_dump` on the box, and
+   again before the `scp` on the receiving machine, so files land 600 and folders 700 (the runbook is
+   `docs/05-infraestructura/despliegue-y-runbook.md` §6.3).
 
 ### Smoke check (what was verified on 2026-10-17)
 
