@@ -23,6 +23,7 @@ import {
   gateResetForTextEdit,
   mayReadGatedOriginal,
   mayReadTestimonioTitle,
+  neutralNameForCaller,
   whereMentions,
 } from './Documents'
 
@@ -108,13 +109,18 @@ describe('field access', () => {
     expect(fieldAccess(gatedQueryableReadable, ben, documento)).toBe(true)
   })
 
-  /** Owner rulings 2026-10-26: a gated documento shares its text redacted only. */
-  it('🔴 a documento filed for anonymisation: original hidden from colleagues, title kept', () => {
+  /**
+   * Owner rulings 2026-10-26: a gated documento shares its text redacted only.
+   * R4-01 (audit 2026-11-10): its title and owner too.
+   */
+  it('🔴 a documento filed for anonymisation: original, title and owner hidden from colleagues', () => {
     const gated = { ...documento, anonymise: true }
     expect(fieldAccess(gatedOriginalReadable, ben, gated)).toBe(false)
     expect(fieldAccess(gatedOriginalReadable, ana, gated)).toBe(true)
     expect(fieldAccess(gatedOriginalReadable, admin, gated)).toBe(true)
-    expect(fieldAccess(gatedQueryableReadable, ben, gated)).toBe(true)
+    expect(fieldAccess(gatedQueryableReadable, ben, gated)).toBe(false)
+    expect(fieldAccess(gatedQueryableReadable, ana, gated)).toBe(true)
+    expect(fieldAccess(gatedQueryableReadable, admin, gated)).toBe(true)
     expect(fieldAccess(gatedOriginalReadable, ben, { ...documento, anonymise: false })).toBe(true)
   })
 
@@ -124,8 +130,10 @@ describe('field access', () => {
     expect(mayReadGatedOriginal(ben, projected)).toBe(false)
     expect(mayReadGatedOriginal(ben, { ...documento, anonymise: null })).toBe(false)
     expect(mayReadGatedOriginal(ana, projected)).toBe(true)
-    // `identity` (name / uploadedBy / session) stays readable on a documento.
-    expect(mayReadGatedOriginal(ben, projected, 'identity')).toBe(true)
+    // `identity` (name / uploadedBy / session) fails closed the same way (R4-01).
+    expect(mayReadGatedOriginal(ben, projected, 'identity')).toBe(false)
+    expect(mayReadGatedOriginal(ben, { ...documento, anonymise: null }, 'identity')).toBe(false)
+    expect(mayReadGatedOriginal(ana, projected, 'identity')).toBe(true)
   })
 
   it('🔴 `anonymise` is force-selected, so a projected row still carries it', () => {
@@ -148,6 +156,34 @@ describe('field access', () => {
   })
 })
 
+describe('🔴 neutralNameForCaller — a gated row\'s file name stays with its uploader (R4-01)', () => {
+  const read = (user: unknown, row: Record<string, unknown>, overrideAccess = false) =>
+    neutralNameForCaller({
+      value: 'Entrevista Juana.pdf',
+      data: row,
+      req: { user } as unknown as PayloadRequest,
+      overrideAccess,
+    } as never)
+  const gated = { ...documento, anonymise: true }
+
+  it('a colleague gets the neutral title on gated content, NULL or a dropped `anonymise` included', () => {
+    expect(read(ben, gated)).toBe('Documento')
+    expect(read(ben, { ...documento, anonymise: null })).toBe('Documento')
+    const { anonymise: _drop, ...projected } = documento
+    expect(read(ben, projected)).toBe('Documento')
+    expect(read(ben, testimonio)).toBe('Testimonio')
+    expect(read(ben, { contentKind: 'conversacion', uploadedBy: ANA })).toBe('Conversación')
+    expect(read(null, gated)).toBe('Documento')
+  })
+
+  it('the uploader, a platform admin and a server read keep it; a plain documento is everyone\'s', () => {
+    expect(read(ana, gated)).toBe('Entrevista Juana.pdf')
+    expect(read(admin, gated)).toBe('Entrevista Juana.pdf')
+    expect(read(ben, gated, true)).toBe('Entrevista Juana.pdf')
+    expect(read(ben, documento)).toBe('Entrevista Juana.pdf')
+  })
+})
+
 describe('🔴 constrainGatedQueries — no title oracle', () => {
   const run = (user: unknown, where: unknown, extra: Record<string, unknown> = {}) =>
     constrainGatedQueries({
@@ -161,7 +197,7 @@ describe('🔴 constrainGatedQueries — no title oracle', () => {
     expect(run(ben, where).where).toEqual({
       and: [
         where,
-        { or: [{ contentKind: { equals: 'documento' } }, { uploadedBy: { equals: BEN } }] },
+        { or: [{ and: [{ contentKind: { equals: 'documento' } }, { anonymise: { equals: false } }] }, { uploadedBy: { equals: BEN } }] },
       ],
     })
   })
@@ -194,7 +230,7 @@ describe('🔴 constrainGatedQueries — no title oracle', () => {
     expect(run(ben, where).where).toEqual({
       and: [
         where,
-        { or: [{ contentKind: { equals: 'documento' } }, { uploadedBy: { equals: BEN } }] },
+        { or: [{ and: [{ contentKind: { equals: 'documento' } }, { anonymise: { equals: false } }] }, { uploadedBy: { equals: BEN } }] },
       ],
     })
   })
@@ -230,8 +266,13 @@ describe('🔴 constrainGatedQueries — no sort oracle (L2)', () => {
   it('keeps it when the query is already narrowed to rows the caller may read', () => {
     expect(run(ben, { sort: 'name', where: { uploadedBy: { equals: BEN } } }).sort).toBe('name')
     expect(
-      run(ben, { sort: '-name', where: { and: [{ contentKind: { equals: 'documento' } }] } }).sort,
+      run(ben, {
+        sort: '-name',
+        where: { and: [{ contentKind: { equals: 'documento' } }, { anonymise: { equals: 'false' } }] },
+      }).sort,
     ).toBe('-name')
+    // R4-01: the kind alone still lets in a documento filed for anonymisation.
+    expect(run(ben, { sort: '-name', where: { contentKind: { equals: 'documento' } } }).sort).toBeUndefined()
     // A `where` on name is narrowed by the hook itself, so its sort is safe too.
     expect(run(ben, { sort: 'name', where: { name: { like: 'a' } } }).sort).toBe('name')
   })
@@ -257,7 +298,7 @@ describe('🔴 the same rule on a relationship path from another collection (L3)
         where,
         {
           or: [
-            { 'document.contentKind': { equals: 'documento' } },
+            { and: [{ 'document.contentKind': { equals: 'documento' } }, { 'document.anonymise': { equals: false } }] },
             { 'document.uploadedBy': { equals: BEN } },
           ],
         },
@@ -291,7 +332,7 @@ describe('🔴 who recorded a testimonio stays with the uploader', () => {
       req: { user } as unknown as PayloadRequest,
     } as never) as { where?: unknown; sort?: unknown }
   const readableToBen = {
-    or: [{ contentKind: { equals: 'documento' } }, { uploadedBy: { equals: BEN } }],
+    or: [{ and: [{ contentKind: { equals: 'documento' } }, { anonymise: { equals: false } }] }, { uploadedBy: { equals: BEN } }],
   }
 
   it('uploadedBy / session: hidden on a colleague\'s testimonio row, shown on a documento', () => {
@@ -342,7 +383,7 @@ describe('🔴 who recorded a testimonio stays with the uploader', () => {
         where,
         {
           or: [
-            { 'document.contentKind': { equals: 'documento' } },
+            { and: [{ 'document.contentKind': { equals: 'documento' } }, { 'document.anonymise': { equals: false } }] },
             { 'document.uploadedBy': { equals: BEN } },
           ],
         },
@@ -375,8 +416,13 @@ describe('🔴 the collection config actually wires the gate', () => {
     expect(field(name)?.access?.read).toBe(gatedOriginalReadable)
   })
 
-  it.each(['name', 'uploadedBy', 'session'])('%s reads through gatedQueryableReadable', (name) => {
+  it.each(['uploadedBy', 'session'])('%s reads through gatedQueryableReadable', (name) => {
     expect(field(name)?.access?.read).toBe(gatedQueryableReadable)
+  })
+
+  it('name is replaced on read by neutralNameForCaller', () => {
+    const name = field('name') as { hooks?: { afterRead?: unknown[] } } | undefined
+    expect(name?.hooks?.afterRead).toContain(neutralNameForCaller)
   })
 
   it.each(['authorsKept', 'citedAuthorsKept', 'keepDocumentAuthor', 'keepCitedAuthors'])('🔴 %s: no caller writes it through the API, not even an admin', (name) => {

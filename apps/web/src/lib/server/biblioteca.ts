@@ -163,8 +163,10 @@ const CLEARED_WHERE: Array<[string, string]> = [
  * the library shows `redactedText` or nothing. Audit 2026-10-26: a published
  * gated documento showed an empty body.
  *
- * ⚠ Text only. A gated documento keeps its own title and contributor (owner
- * ruling 2026-10-26, backend `mayReadGatedOriginal` scope `identity`).
+ * ⚠ Text only. Its title and contributor are the backend's call: since R4-01
+ * (audit 2026-11-10) a gated documento's `name` reaches a colleague as the
+ * neutral title and its `uploadedBy` not at all (`mayReadGatedOriginal` scope
+ * `identity`).
  */
 export function hasGatedText(row: Record<string, unknown>): boolean {
   if (isGatedContent(row.contentKind)) return true;
@@ -281,7 +283,8 @@ async function readIds(
  *
  * ⚠ Two reads, then ids, because one query cannot say it. A member may not
  * query `testimonioTitle` (backend `testimonioTitleReadable`: 400), and any
- * `where` naming `name` is narrowed to documentos and the caller's own uploads
+ * `where` naming `name` is narrowed to documentos not filed for anonymisation
+ * and the caller's own uploads
  * (`constrainGatedQueries`), so an `or` of the two would drop the testimonios
  * again. The titles are read only from cleared rows (`scopeQuery`), which every
  * member already sees on the cards.
