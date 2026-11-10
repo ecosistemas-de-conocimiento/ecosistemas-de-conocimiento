@@ -1,9 +1,9 @@
 # Corpus y datos de prueba
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** repositorio hermano `corpus-generativo/` (`PROMPT_MAESTRO.md`, `resultados/gen_corpus.py`, `resultados/MANIFEST.csv`, `resultados/README.md`, `v2/dengue/`, `v2/discapacidad/`), manifiestos de ingesta e inventario de exclusiones de Semiosis práctica (carpeta de trabajo del proyecto, fuera del repositorio), bitácora del proyecto (2026-10-28 y 2026-10-30), medición del 2026-10-29 en dev, `apps/backend/src/seed/`, `scripts/demo-ecosistemas.sh`, `scripts/demo-ecosistemas-4.sh`, `scripts/corpus-fixtures.sh`, `scripts/corpus-voices.sh`, `scripts/ingest/`. Informe de reunión con desarrollo del 2026-10-21.
+- **Fuentes:** repositorio hermano `corpus-generativo/` (`PROMPT_MAESTRO.md`, `resultados/gen_corpus.py`, `resultados/MANIFEST.csv`, `resultados/README.md`, `v2/dengue/`, `v2/discapacidad/`), manifiestos de ingesta e inventario de exclusiones de Semiosis práctica (carpeta de trabajo del proyecto, fuera del repositorio), bitácora del proyecto (2026-10-28 y 2026-10-30), medición del 2026-10-29 en dev, `apps/backend/src/seed/`, `scripts/demo-ecosistemas.sh`, `scripts/demo-ecosistemas-4.sh`, `scripts/corpus-fixtures.sh`, `scripts/corpus-voices.sh`, `scripts/ingest/`. Informe de reunión con desarrollo del 2026-10-21. Medición del taller de Semiosis en dev del 2026-11-10 (`plan/orchestration/taller-2026-11-10/informe.md` y `consent-ids.txt`). `infra/fleet/edc-1.md` hasta §4zzzzzzzz. `apps/backend/src/lib/consentHold.ts` y `apps/backend/scripts/hold-for-consent.ts` en `main` (`b7dc944f`).
 
 ## Para quién es y qué responde
 
@@ -187,13 +187,38 @@ Este documento no cita conteos de dev porque cambian. El estado actual se consul
 |---|---|
 | 6, Prevención del dengue | Documentos reales y corpus v2. Algunos se retienen a propósito para el video de demostración V2 |
 | 7, Discapacidad | Documentos reales, lista C y corpus v2. Alguno se retiene a propósito para el video V2 |
-| 8, Semiosis práctica | Materiales de consulta publicados. Los materiales del taller (casos, registros de clase, ensayos, emergentes) están en borrador hasta tener el consentimiento de sus autores (decisión del 2026-11-04) |
+| 8, Semiosis práctica | Materiales de consulta publicados. Los materiales del taller (casos, registros de clase, ensayos, emergentes) están en borrador hasta tener el consentimiento de sus autores (decisión del 2026-11-04). Ver §4.5 |
 
-Advertencia: el despliegue de las 06:45 UTC del 2026-10-29 vació la cola del grafo, que corre dentro del proceso del backend. El estado del grafo de los tres ecosistemas hay que volver a medir (pendiente). Ver [Roadmap](../01-proyecto/roadmap.md).
+Advertencia: el despliegue de las 06:45 UTC del 2026-10-29 vació la cola del grafo, que corre dentro del proceso del backend. El estado del grafo de los tres ecosistemas hay que volver a medir (Pendiente). La re-extracción del grafo de todos los publicados está preparada (`apps/backend/scripts/reextract-published-graph.ts`, en seco por omisión) y no se ha corrido; ver [Despliegue y runbook](../05-infraestructura/despliegue-y-runbook.md) §6.21 y [Roadmap](../01-proyecto/roadmap.md).
 
 El presupuesto por defecto de cada ecosistema es `AI_ECOSYSTEM_BUDGET_USD`; es una decisión del responsable, no una necesidad medida (citado de `infra/fleet/env-manifests.md`).
 
-### 4.5 Fuentes en disco
+### 4.5 El taller de Semiosis práctica: retenido por consentimiento
+
+**Decisión.** Los materiales del taller esperan el consentimiento de sus autores (decisión del 2026-11-04). No se borró nada: pasaron a borrador por la misma ruta que usa una persona, `POST /api/documents/:id/unpublish` (citado, `edc-1.md` §4zzzzz y §4zzzzzz, 2026-11-04 y 2026-11-06).
+
+**Estado en dev**, medido el 2026-11-10 en el Postgres de dev, en transacciones de solo lectura (citado de `plan/orchestration/taller-2026-11-10/informe.md`, 07:54 a 08:03 UTC, y `consent-ids.txt`, 18:42 UTC):
+
+| Conjunto | Filas en borrador |
+|---|---:|
+| Casos de estudio (manifiesto `semiosis-2026-10-casos`, ids 1178 a 1254) | 76 |
+| Documentos del manifiesto `semiosis-2026-10-held`, casados por título | 105 |
+| Ids 788, 796 y 799 | 3 |
+| **Total del taller** | **184** |
+| Borradores de org 8 que no son del taller (823, 824 y 1425) | 3 |
+| **Total de borradores en org 8** | **187** |
+
+- Las 184 filas son `documento` de org 8. De los 105 del manifiesto `held`, 68 tienen compuerta, 35 no y 2 están rechazados (891 y 990).
+- En ai-service, el corpus compartido `eco-8` tiene la validez cerrada en todas sus copias. Siguen abiertas en el corpus borrador de quien las subió, `eco-8-draft-1`, que solo esa cuenta consulta en sus propias sesiones (inferido del código en el informe).
+- El grafo solo lee documentos publicados, así que las entidades que solo salen de estas filas no aparecen.
+- Ninguna escritura sobre estas filas desde el 2026-11-07 a las 00:37 UTC.
+- Las tres filas que no son del taller: dos documentos de estudiante sin compuerta del 2026-10-27 y un testimonio de estudiante rechazado del 2026-10-29.
+
+**Retención por consentimiento (`consentHeld`).** Implementado (pendiente de desplegar en dev). La columna `documents.consent_held` llega con la migración `20261110_181621_consent_held_reviews_keep`, que dev todavía no tiene. Una fila marcada no se vuelve a extraer, ingerir, pasar por la compuerta, graficar ni publicar (`apps/backend/src/lib/consentHold.ts`). La marca la pone solo el script `hold-for-consent.ts`, que lee los ids de `CONSENT_IDS_FILE` y omite las líneas `EXTRA-NO-TALLER`: con la lista del 2026-11-10 marca las 184 del taller y deja fuera las otras 3. El procedimiento está en [Despliegue y runbook](../05-infraestructura/despliegue-y-runbook.md) §6.20. Mientras no se despliegue y se corra, en dev estas filas solo están protegidas por estar en borrador. Eso no basta: con el código de dev, apagar `keepDocumentAuthor` o `keepCitedAuthors` en org 8 vuelve a pasar por la compuerta los borradores que conservaron al autor (citado, informe del 2026-11-10 §2; reproducido con Postgres real).
+
+**Pendiente.** Si se vuelven a publicar las filas que parecen material del equipo, y si se cierran también las copias en `eco-8-draft-1` (preguntas abiertas del informe del 2026-11-10).
+
+### 4.6 Fuentes en disco
 
 La carpeta de textos del proyecto (fuera del repositorio) tiene 1549 archivos en seis carpetas: Dengue, Desarrollo (metodología), Discapacidades, Informes Primera etapa, Proyecto y Semiótica (contado en la bitácora del proyecto el 2026-10-30; no verificado en esta versión). Semiótica concentra 1365 de ellos. Estos archivos no se versionan.
 
@@ -241,7 +266,7 @@ Ese reparto en cuatro fue la decisión del 2026-10-21. Desde el 2026-10-27 los e
 
 **Matiz desde el 2026-10-27.** Desde esa fecha dev contiene documentos reales del proyecto, con nombres reales en los textos originales y en los manifiestos. La regla de borrado sigue igual: borrar es seguro. Lo que cambia es el trato de lo que se conserva. Esos textos son datos personales y deben tratarse como tales: no copiarlos a otros entornos, no pegarlos en registros ni en tickets y no versionar los manifiestos. Esta lectura es inferida de la combinación de ambas reglas; no hay una decisión escrita que la formule así. Ver [../06-privacidad-y-seguridad/proteccion-de-datos.md](../06-privacidad-y-seguridad/proteccion-de-datos.md).
 
-**Antes de recibir testimonios reales** el proyecto planea cambiar el respaldo del detector de nombres a `none`, para que ningún texto con nombres salga a un modelo hospedado (citado de la bitácora del proyecto del 2026-10-28, decisión pendiente). Es planeado, no implementado.
+**Respaldo del detector de nombres.** Dev lo pasó a `none` el 2026-11-06 y lo regresó a `hosted` el 2026-11-10, después de activar en OpenRouter la retención cero de datos (ZDR): un texto que sale a un modelo hospedado no queda guardado en el proveedor (citado, `edc-1.md` §4zzzzzz y §4zzzzzzz). El ajuste de plataforma `detectorFallback` permite cambiarlo sin desplegar. Qué valor usar antes de recibir testimonios reales sigue Pendiente de decisión.
 
 ## Referencias
 
@@ -249,6 +274,10 @@ Ese reparto en cuatro fue la decisión del 2026-10-21. Desde el 2026-10-27 los e
 - `corpus-generativo/v2/dengue/` y `corpus-generativo/v2/discapacidad/` (`MANIFEST.csv`, `FICHAS.md`, `DEMO_PREGUNTAS.md`)
 - Manifiestos de ingesta e inventario de exclusiones de Semiosis práctica (carpeta de trabajo fuera del repositorio; contienen nombres reales)
 - Bitácora del proyecto (2026-10-28 y 2026-10-30) y medición del 2026-10-29 en dev
+- `plan/orchestration/taller-2026-11-10/informe.md` y `consent-ids.txt` (medición del taller en dev, 2026-11-10)
+- `infra/fleet/edc-1.md` §4zzzzz a §4zzzzzzzz
+- `apps/backend/src/lib/consentHold.ts`, `apps/backend/scripts/hold-for-consent.ts`, `apps/backend/scripts/reextract-published-graph.ts`
+- [../05-infraestructura/despliegue-y-runbook.md](../05-infraestructura/despliegue-y-runbook.md)
 - `apps/backend/src/seed/` (`admin.ts`, `demo.ts`, `corpus.ts`, `demoUsers.ts`, `semiosisDemo.ts`, `review.ts`, `answerStyleDiscapacidad.ts`, `env-gate.ts`, `backfillCorpusLabels.cli.ts`)
 - `scripts/demo-ecosistemas.sh`, `scripts/demo-ecosistemas-4.sh`, `scripts/corpus-fixtures.sh`, `scripts/corpus-voices.sh`, `scripts/ingest/ingest-folder.sh`
 - `infra/fleet/env-manifests.md`

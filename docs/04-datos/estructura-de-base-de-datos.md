@@ -1,9 +1,9 @@
 # Estructura de base de datos y almacenamiento
 
-- **Versión:** 1.2
-- **Fecha:** 2026-11-07
+- **Versión:** 1.3
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `apps/backend/src/migrations/` (22 migraciones en `main` y la 23 en la rama `feat/anonymise-controls`, `index.ts`, `README.md`, snapshot `20261104_075139_documents_authors_kept.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29.
+- **Fuentes:** `apps/backend/src/migrations/` (25 migraciones en `main`, `index.ts`, `README.md`, snapshot `20261110_181621_consent_held_reviews_keep.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29, revisada contra `main` en `b7dc944f` el 2026-11-10. Estado de dev citado de `infra/fleet/edc-1.md` §4zzzzzzzz (despliegue `367c2698`, 2026-11-10).
 
 ## Para quién es y qué responde
 
@@ -38,7 +38,7 @@ flowchart LR
 
 ## 2. `edc_backend`: la base de Payload
 
-Payload genera el esquema a partir de la configuración de las colecciones. Los nombres de tabla y columna pasan a minúsculas con guion bajo: la colección `graphEntities` vive en `graph_entities` y el campo `uploadedBy` en `uploaded_by_id`. La fuente de esta sección es el último snapshot, `apps/backend/src/migrations/20261029_060304_evals.json`, más el SQL escrito a mano dentro de las migraciones.
+Payload genera el esquema a partir de la configuración de las colecciones. Los nombres de tabla y columna pasan a minúsculas con guion bajo: la colección `graphEntities` vive en `graph_entities` y el campo `uploadedBy` en `uploaded_by_id`. La fuente de esta sección es el último snapshot, `apps/backend/src/migrations/20261110_181621_consent_held_reviews_keep.json`, más el SQL escrito a mano dentro de las migraciones.
 
 ### 2.1 Tablas de negocio
 
@@ -55,7 +55,7 @@ Payload genera el esquema a partir de la configuración de las colecciones. Los 
 | `messages` | `messages` | Turnos de conversación |
 | `ratings` | `ratings` | Valoraciones de respuestas |
 | `anonymisation_reviews` | `anonymisation-reviews` | Bitácora de decisiones humanas sobre textos retenidos |
-| `anonymisation_setting_changes` | `anonymisation-setting-changes` | Bitácora de cambios de los interruptores de anonimización (sin desplegar) |
+| `anonymisation_setting_changes` | `anonymisation-setting-changes` | Bitácora de cambios de los interruptores de anonimización y del respaldo del detector |
 | `graph_entities` | `graphEntities` | Entidades del grafo |
 | `graph_mentions` | `graphMentions` | Menciones de entidades en documentos |
 | `graph_relations` | `graphRelations` | Aristas del grafo |
@@ -63,7 +63,7 @@ Payload genera el esquema a partir de la configuración de las colecciones. Los 
 | `suggestions` | `suggestions` | Sugerencias de estudiantes |
 | `eval_items` | `eval-items` | Preguntas y casos de evaluación |
 | `eval_runs` | `eval-runs` | Corridas de evaluación |
-| `ai_service_callbacks` | `aiServiceCallbacks` | Avisos de ai-service ya procesados |
+| `ai_service_callbacks` | `aiServiceCallbacks` | Avisos de ai-service ya procesados. Una tarea diaria vacía `raw_body` a los 30 días y deja la fila, que es la llave contra duplicados (`lib/callbackRetention.ts`; Implementado, pendiente de desplegar en dev) |
 | `platform_settings` | global `platform-settings` | Ajustes de plataforma (una fila) |
 
 ### 2.2 Tablas de relación
@@ -107,6 +107,8 @@ Payload crea un tipo enum de Postgres por cada campo de selección.
 | `enum_messages_corpus_status` | `pending`, `held-drafts`, `held-gate`, `embedding`, `ingested`, `failed`, `skipped` |
 | `enum_ratings_reason` | `not-grounded`, `invented`, `incomplete`, `unclear`, `wrong-language`, `accurate`, `well-sourced`, `clear`, `complete`, `other` |
 | `enum_anonymisation_reviews_decision` | `approved`, `rejected` |
+| `enum_anonymisation_setting_changes_scope` | `documento`, `ecosistema`, `plataforma` (`plataforma` desde `20261110_070204`) |
+| `enum_anonymisation_setting_changes_key` | `keepDocumentAuthor`, `keepCitedAuthors`, `keepPublicFigures`, `detectorFallback` (los dos últimos desde `20261110_070204`) |
 | `enum_graph_entities_type` | `tema`, `lugar`, `evento`, `organizacion`, `persona` |
 | `enum_graph_relations_type` | `ocurre_en`, `participa_en`, `ubicado_en`, `parte_de`, `afecta_a`, `relacionado_con` |
 | `enum_suggestions_kind` | `contenido`, `arquitectura`, `interaccion` |
@@ -143,13 +145,13 @@ Payload genera toda llave foránea con `ON DELETE set null`. Varias se reescribi
 | `graph_mentions` | `document_id`, `entity_id`, `organization_id` | `20260908_092211_baseline` |
 | `graph_relations` | `document_id`, `from_entity_id`, `to_entity_id`, `organization_id` | `20260908_092211_baseline` |
 | `graph_entities` | `organization_id` | `20260908_092211_baseline` |
-| `anonymisation_reviews` | `document_id`, `organization_id`, `reviewer_id` | `20260908_092211_baseline` |
+| `anonymisation_reviews` | `organization_id`, `reviewer_id`; `document_id` hasta `20261110_181621` (ver abajo) | `20260908_092211_baseline` |
 | `ratings` | `message_id`, `session_id`, `organization_id`, `user_id` | `20261020_193707_ratings_fk_cascade` |
 | `student_profiles` | `user_id`, `organization_id` | `20261027_061014_student_view_fk_cascade` |
 | `suggestions` | `organization_id` | `20261027_061014_student_view_fk_cascade` |
 | `documents` | `revision_of_id` | `20261028_231948_documents_note_revisions` |
 | `eval_items`, `eval_runs` | `organization_id` | `20261029_060304_evals` |
-| `anonymisation_setting_changes` | `organization_id` (`document_id` y `actor_id` quedan en `set null`) | `20261108_001902_documents_anonymise_switches` (sin desplegar) |
+| `anonymisation_setting_changes` | `organization_id` (`document_id` y `actor_id` quedan en `set null`) | `20261108_001902_documents_anonymise_switches` |
 
 Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
@@ -162,6 +164,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 - `sessions`: `user_id`, `organization_id`
 - `messages.session_id`
 - `suggestions.author_id` (aquí es intencional: la sugerencia sobrevive sin autor), `eval_runs.triggered_by_id`
+- `anonymisation_reviews.document_id`, desde `20261110_181621_consent_held_reviews_keep` (antes `cascade`). La columna pasa a admitir nulo y `document_id_snapshot` guarda el id del documento borrado. Así, borrar un documento conserva la decisión que tomó otra persona; solo se van con él las filas de revisión de quien lo borra (`deleteOwnReviewRows` en `Documents.ts`). Implementado (pendiente de desplegar en dev)
 
 **Riesgo 23502.** Varias de esas columnas son `NOT NULL`, porque la relación es requerida. Al borrar al padre, Postgres intenta poner `NULL` y falla con el código 23502 (violación de no nulo). En consecuencia, un `DELETE` directo de un usuario o un ecosistema que tenga membresías, conversaciones o documentos falla en la base, salvo que la aplicación borre antes a los hijos. Este comportamiento está afirmado por una prueba automatizada (`apps/backend/src/collections/Ratings.deletePaths.pg.test.ts`, que espera `23502` al borrar un usuario con conversación y un ecosistema con filas), pero no se ha medido contra la base de dev. Para `messages.session_id` el código ya lo resuelve con el gancho `cascadeConversationDelete` de `Sessions.ts`. Para usuarios y ecosistemas no hay solución equivalente; la prueba lo marca como pendiente de una decisión de producto. Ver [../01-proyecto/registro-de-riesgos.md](../01-proyecto/registro-de-riesgos.md).
 
@@ -169,7 +172,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
 ### 2.7 Migraciones
 
-Hay 22 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído el 2026-10-30; la 22, el 2026-11-04). La rama `feat/anonymise-controls` agrega la 23 (leída el 2026-11-07 en el commit `98619590`). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
+Hay 25 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído en `main` `b7dc944f` el 2026-11-10). Dev tiene aplicadas las 24 primeras: `payload_migrations` pasó de 23 a 24 en el despliegue del 2026-11-10 a las 18:33 UTC (citado, `edc-1.md` §4zzzzzzzz). La 25 está en `main` y no en dev. La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
 
 | # | Migración | Fecha | Propósito |
 |---|---|---|---|
@@ -195,11 +198,13 @@ Hay 22 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído
 | 20 | `20261029_042255_documents_held_text_hash` | 2026-10-29 | Agrega `documents.held_text_hash` |
 | 21 | `20261029_060304_evals` | 2026-10-29 | Crea `eval_items` y `eval_runs` (llave a ecosistema en `cascade`) y agrega `sessions.eval_run` |
 | 22 | `20261104_075139_documents_authors_kept` | 2026-11-04 | Agrega `documents.authors_kept` |
-| 23 | `20261108_001902_documents_anonymise_switches` | 2026-11-08 | Agrega `documents.keep_document_author`, `keep_cited_authors` (boolean, admite nulo) y `cited_authors_kept` (jsonb), y crea `anonymisation_setting_changes` (llave a ecosistema en `cascade`, a mano). Solo en la rama `feat/anonymise-controls`, sin desplegar |
+| 23 | `20261108_001902_documents_anonymise_switches` | 2026-11-08 | Agrega `documents.keep_document_author`, `keep_cited_authors` (boolean, admite nulo) y `cited_authors_kept` (jsonb), y crea `anonymisation_setting_changes` (llave a ecosistema en `cascade`, a mano). En dev desde el 2026-11-10, 05:47 UTC |
+| 24 | `20261110_070204_anonymisation_setting_changes_keys` | 2026-11-10 | Agrega `keepPublicFigures` y `detectorFallback` al enum de claves y `plataforma` al de alcance; `anonymisation_setting_changes.organization_id` admite nulo (un cambio de plataforma no tiene ecosistema). Su `down` borra filas de auditoría: solo para bases desechables. En dev desde el 2026-11-10, 18:33 UTC |
+| 25 | `20261110_181621_consent_held_reviews_keep` | 2026-11-10 | Agrega `documents.consent_held` (boolean, `NOT NULL`, falso por defecto); `anonymisation_reviews.document_id` admite nulo y su llave pasa a `set null` (a mano); agrega `anonymisation_reviews.document_id_snapshot` (numeric, con índice) y lo rellena. Su `down` borra filas de auditoría. Implementado (pendiente de desplegar en dev) |
 
-**Sin desplegar.** La migración 23 solo existe en la rama `feat/anonymise-controls` ([ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)). Se aplicó arriba, abajo y arriba en un Postgres 16 desechable (citado del reporte de la lane de backend, 2026-11-07). En `cited_authors_kept` cada entrada es `{name, model, at}`; un valor nulo en `keep_document_author` o `keep_cited_authors` hereda el del ecosistema. Las claves nuevas `keepDocumentAuthor` y `keepCitedAuthors`, apagadas por defecto, viven dentro de `organizations.features`, que es JSON, así que no cambian el esquema (inferido de que `features` resuelve las claves que faltan con su valor por defecto, `lib/features.ts`).
+**Migraciones 23 a 25.** La 23 acompaña a [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md). En `cited_authors_kept` cada entrada es `{name, model, at}`; un valor nulo en `keep_document_author` o `keep_cited_authors` hereda el del ecosistema. Las tres se probaron arriba, abajo y arriba en un Postgres 16 desechable (citado de `apps/backend/src/migrations/README.md`). En dev, después del despliegue del 2026-11-10 a las 18:33 UTC, `information_schema` mostró los dos enums con sus valores nuevos y `organization_id` con nulo admitido (citado, `edc-1.md` §4zzzzzzzz). `consent_held` no se rellena en la migración: las filas del taller se marcan con `scripts/hold-for-consent.ts` (ver [../05-infraestructura/despliegue-y-runbook.md](../05-infraestructura/despliegue-y-runbook.md) §6.20). Las claves nuevas `keepDocumentAuthor` y `keepCitedAuthors`, apagadas por defecto, viven dentro de `organizations.features`, que es JSON, así que no cambian el esquema (inferido de que `features` resuelve las claves que faltan con su valor por defecto, `lib/features.ts`).
 
-La tabla de la cadena en `apps/backend/src/migrations/README.md` omite cuatro migraciones (6, 7, 9 y 10). Cada una tiene su propio comentario de cabecera que explica lo que hace.
+La tabla de la cadena en `apps/backend/src/migrations/README.md` omite cuatro migraciones (6, 7, 9 y 10) y trae la 22 a la 25. Cada una tiene su propio comentario de cabecera que explica lo que hace.
 
 ### 2.8 Reglas de operación
 
@@ -304,6 +309,8 @@ Una URL prefirmada es un enlace temporal que da acceso directo al bucket sin pas
 
 Cada objeto se guarda bajo `eco_{orgId}/u_{uploaderId}/` (o `eco_none` y `u_none` si falta el dato). El prefijo se calcula al crear y no cambia. Sirve para operar el bucket (respaldos, limpieza, inventario). No es una frontera de acceso.
 
+Desde `74306c42` una subida nueva se guarda con un nombre neutro, su id y la extensión, no con el nombre del archivo original (C-12; Implementado, pendiente de desplegar en dev). "Descargar original" baja el archivo con el nombre del documento (`28d84f03`).
+
 ### 5.4 Tamaño
 
 | Límite | Valor | Dónde |
@@ -312,8 +319,10 @@ Cada objeto se guarda bajo `eco_{orgId}/u_{uploaderId}/` (o `eco_none` y `u_none
 | Navegador, audio | 200 MiB (`MAX_AUDIO_UPLOAD_BYTES`), unas 3.5 horas a 128 kbps (inferido del comentario del código) | `apps/web/src/lib/config.ts` |
 | Navegador, documentos | 20 MiB (`MAX_UPLOAD_BYTES`) | `apps/web/src/lib/config.ts` |
 | audio-service | 512 MiB o 6 horas | Citado del comentario de `apps/web/src/lib/config.ts` |
+| Servidor, subidas simultáneas | 2 por cuenta y proceso (`UPLOAD_MAX_CONCURRENT_PER_USER`); la siguiente recibe 429. Implementado (pendiente de desplegar en dev) | `apps/backend/src/lib/uploadSlots.ts` |
+| Servidor, cuerpos que no son subida | 8 MiB (`API_BODY_MAX_BYTES`), con o sin `Content-Length`; 408 si el cuerpo se detiene 30 s o tarda más de 120 s (los tiempos, pendientes de desplegar en dev) | `apps/backend/src/lib/bodyCap.ts`, `apps/backend/src/middleware.ts` |
 
-El comentario de `MAX_UPLOAD_BYTES` dice que el servidor aplica el mismo tope de 20 MiB a documentos. En `Media.ts` solo se encontró el tope general de 200 MiB; el tope de documentos del proxy inverso no se verificó.
+El comentario de `MAX_UPLOAD_BYTES` dice que el servidor aplica el mismo tope de 20 MiB a documentos. En `Media.ts` solo se encontró el tope general de 200 MiB; el tope de documentos del proxy inverso no se verificó. busboy, el lector de formularios de Payload, corta el archivo en 200 MiB más un byte y cada campo en 1 MiB (`upload.limits` en `apps/backend/src/payload.config.ts`).
 
 ### 5.5 Tipos aceptados
 
@@ -363,7 +372,8 @@ Valores citados de `services/audio-service/app/config.py` y `services/audio-serv
 
 ## Referencias
 
-- `apps/backend/src/migrations/index.ts`, `apps/backend/src/migrations/README.md`, `apps/backend/src/migrations/20260908_092211_baseline.ts`, `apps/backend/src/migrations/20261029_060304_evals.json`
+- `apps/backend/src/migrations/index.ts`, `apps/backend/src/migrations/README.md`, `apps/backend/src/migrations/20260908_092211_baseline.ts`, `apps/backend/src/migrations/20261110_070204_anonymisation_setting_changes_keys.ts`, `apps/backend/src/migrations/20261110_181621_consent_held_reviews_keep.ts` y su `.json`
+- `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/lib/bodyCap.ts`, `apps/backend/src/lib/callbackRetention.ts`
 - `apps/backend/scripts/migrate.sh`
 - `apps/backend/src/payload.config.ts`
 - `apps/backend/src/collections/Media.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/Ratings.deletePaths.pg.test.ts`

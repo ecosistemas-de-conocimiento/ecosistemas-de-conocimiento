@@ -1,9 +1,9 @@
 # Despliegue y runbook
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (§3, §4, §4b a §4zzzz, §6, §7, §8, §9), `infra/fleet/runbook.md` (§3, §4, §5, §6, §7, §8), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `apps/backend/scripts/migrate.sh`, `apps/backend/Dockerfile`, `services/ai-service/Dockerfile`, `services/ai-service/.github/workflows/ci.yml`, `TESTING.md`, `package.json` (raíz), `.git/hooks/reference-transaction`.
+- **Fuentes:** `infra/fleet/edc-1.md` (§3, §4, §4b a §4zzzzzzzz, §6, §7, §8, §9), `infra/fleet/runbook.md` (§3, §4, §5, §6, §7, §8), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `apps/backend/scripts/migrate.sh`, `apps/backend/Dockerfile`, `services/ai-service/Dockerfile`, `services/ai-service/.github/workflows/ci.yml`, `TESTING.md`, `package.json` (raíz), `.git/hooks/reference-transaction`, `apps/backend/scripts/hold-for-consent.ts`, `apps/backend/scripts/reextract-published-graph.ts`, `apps/backend/src/lib/consentHold.ts`. Código de `main` en `b7dc944f` (2026-11-10).
 
 ## Para quién es y qué responde
 
@@ -42,13 +42,17 @@ sequenceDiagram
 
 **1. Integrar en `main`.** Política de integración: solo el integrador designado escribe en `main`. Nadie más escribe directo en la rama `main` local. Un hook de git (`.git/hooks/reference-transaction`) bloquea cualquier otra actualización de `main`. A diferencia de un hook `pre-commit`, este no se salta con `--no-verify` (leído en el hook). El trabajo se hace en una rama aparte y el integrador designado la integra. Después se hace `git push origin main`.
 
+Desde el 2026-11-10 hay dos líneas: `main` solo recibe correcciones, y la funcionalidad nueva va a la rama `etapa-2` (decisión del 2026-11-10). Dev despliega `main`.
+
+**Estado de dev al 2026-11-10.** Dev corre `367c2698`, desplegado ese día a las 18:27 UTC (citado, `edc-1.md` §4zzzzzzzz). `main` está en `b7dc944f`, 40 commits después, con una migración pendiente, `20261110_181621_consent_held_reviews_keep` (medido con `git log --no-merges 367c2698..b7dc944f`). En estos documentos, lo que está en `main` y no en `367c2698` se marca **Implementado (pendiente de desplegar en dev)**.
+
 **2. Revisión previa.** Es práctica registrada desde `edc-1.md` §4zzz (2026-10-29):
 
 - Ningún documento con `graph_status` en extracción ni con `anonymisation_status` pendiente. La cola de extracción del grafo vive en memoria del backend: un redespliegue la tira (citado, `edc-1.md` §4zn).
 - Ninguna consulta activa en `edc_backend` ni en `edc_ai`.
 - Avisar a las demás personas que usan dev.
 
-**3. Respaldo.** Antes de todo despliegue con migración. El procedimiento completo está en [Respaldos y recuperación](respaldos-y-recuperacion.md) §2. En corto: `pg_dump -Fc` de cada base dentro del contenedor de postgres, `sha256sum` hacia `SHA256SUMS`, `pg_restore -l` para comprobar que el archivo se lee, y copia fuera de la caja con `scp`. No siempre se ha hecho: un despliegue del 2026-10-29 registra "No backup taken by this run" (citado, `edc-1.md` §4zzz).
+**3. Respaldo.** Antes de todo despliegue con migración. El procedimiento completo está en [Respaldos y recuperación](respaldos-y-recuperacion.md) §2. En corto: `umask 077`, `pg_dump -Fc` de cada base dentro del contenedor de postgres, `sha256sum` hacia `SHA256SUMS`, `pg_restore -l` para comprobar que el archivo se lee, copia fuera de la caja con `scp` (también con `umask 077`) y poda a los 7 volcados más recientes por entorno, en los dos lados. No siempre se ha hecho: un despliegue del 2026-10-29 registra "No backup taken by this run" (citado, `edc-1.md` §4zzz).
 
 **4. Desplegar.** Por la API o por el panel:
 
@@ -72,7 +76,7 @@ curl -s -H "Authorization: Bearer <EDC_COOLIFY_API_TOKEN>" \
   "https://coolify.ecosistemasdeconocimiento.com/api/v1/deployments/<deployment uuid>"
 ```
 
-Se repite hasta que `status` diga `finished`. Duraciones registradas: un build en frío del stack completo tardó unos 5 minutos (medido el 2026-10-17); los despliegues de ese día, unos 11 minutos (medido el 2026-10-17); los recientes, de 4 a 6 minutos (medido el 2026-10-29, `edc-1.md` §4zzz: 05:37 a 05:43 UTC; §4zzzz: 06:45 a 06:50 UTC).
+Se repite hasta que `status` diga `finished`. Duraciones registradas: un build en frío del stack completo tardó unos 5 minutos (medido el 2026-10-17); los despliegues de ese día, unos 11 minutos (medido el 2026-10-17); los recientes, de 4 a 6 minutos (medido el 2026-10-29, `edc-1.md` §4zzz: 05:37 a 05:43 UTC; §4zzzz: 06:45 a 06:50 UTC) y unos 6 minutos el 2026-11-10 (§4zzzzzzz: 05:41 a 05:47 UTC; §4zzzzzzzz: 18:27 a 18:33 UTC).
 
 **7. Humo, sin llamadas pagadas.** Desde fuera del servidor:
 
@@ -143,7 +147,7 @@ Advertencias:
 | Lint | Solo `apps/backend` tiene script `lint`; `apps/web` usa `check` (svelte-check). Quien toca el código de ai-service debe correr también eslint, porque el CI de ai-service se puso en rojo el 2026-10-17 por omitirlo | leído en los `package.json`; el incidente del 2026-10-17 no está verificado en esta versión |
 | Trampa de copias nuevas | Una copia de trabajo nueva del repositorio debe construir `@edc/ai-client`, `@edc/identity-client` y `@edc/chat-engine` antes de probar, porque su `dist/` está en `.gitignore` y las apps importan `dist`. Un build viejo produce fallas de prueba falsas | citado, `TESTING.md:20-29` |
 
-Los conteos de pruebas no coinciden entre fuentes (`TESTING.md` frente a las notas de contexto del equipo) y deben volver a medirse. Ver [Estrategia de pruebas](../07-calidad/estrategia-de-pruebas.md).
+Los conteos de pruebas medidos están en [Estrategia de pruebas](../07-calidad/estrategia-de-pruebas.md).
 
 Mientras no haya CI, nada impide que llegue a `main` un commit que no compila. La única barrera es la disciplina del equipo de desarrollo y del integrador designado (inferido de lo anterior).
 
@@ -192,6 +196,8 @@ Mejoras pendientes del stack de IA: una cerca contra inyección de instrucciones
 | 6.17 | Reiniciar el Spark | Spark reiniciado o servicios caídos | procedimiento de operación, no verificado en esta versión |
 | 6.18 | Revertir del Spark a servicios hospedados | Spark no disponible por tiempo largo | `edc-1.md` §4za |
 | 6.19 | Activar o quitar la redirección del apex | cambio de dominio principal | `edc-1.md` §9 |
+| 6.20 | Retener documentos por consentimiento | material cuyos autores no han dado su consentimiento | `apps/backend/scripts/hold-for-consent.ts` |
+| 6.21 | Re-extraer el grafo de los publicados | cambio de las reglas del grafo | `apps/backend/scripts/reextract-published-graph.ts` |
 
 ## 6. Procedimientos detallados
 
@@ -229,6 +235,8 @@ cd /root/backups/$STAMP && sha256sum *.dump > SHA256SUMS
 ```
 
 Luego, copia fuera del servidor, en equipo del equipo de desarrollo: `umask 077` también en ese equipo, `scp` de la carpeta y `sha256sum -c SHA256SUMS`.
+
+Al final, la retención: se quedan los 7 volcados más recientes de cada entorno, en el servidor y en la copia, y se borran los anteriores. Un sello con los dos entornos cuenta en cada uno. Decisión del 2026-11-10; primera purga el mismo día (citado, `edc-1.md` §7 paso 7; ver [Respaldos y recuperación](respaldos-y-recuperacion.md) §2.2).
 
 ### 6.4 Restaurar una base
 
@@ -313,6 +321,9 @@ docker exec -i "$C" psql -U edc -d edc_ai -v ON_ERROR_STOP=1 -v from_org=demo -v
 - Ruido del grafo: `apps/backend/scripts/purge-graph-noise.ts`. Filas con texto sin limpiar: `apps/backend/scripts/purge-unscrubbed-graph-rows.ts`.
 - Reconstrucción o relleno: `payload run src/lib/graph/backfill.cli.ts` y `src/lib/graph/policy.cli.ts`, con los argumentos `GRAPH_BACKFILL_*` y `GRAPH_POLICY_*` solo en la línea de comando, nunca en Coolify (citado, `env-manifests.md` §2f).
 - El relleno corre dentro del contenedor del backend: un redespliegue lo mata. A ritmo de una extracción por minuto, un relleno de 200 documentos tarda de 3 a 4 horas (inferido en `edc-1.md` §4p a partir de 14 extracciones en 16 minutos).
+- El relleno solo extrae documentos publicados y nunca los retenidos por consentimiento (`feae7e18`, `ccce6281`; Implementado, pendiente de desplegar en dev).
+- Entidades huérfanas: una tarea diaria del backend borra las entidades que ya no menciona ningún documento (`apps/backend/src/lib/graph/orphanJanitor.ts`, `GRAPH_ORPHAN_JANITOR_*`; Implementado). Ya no hace falta correr el relleno a mano para eso.
+- Re-extracción completa: ver §6.21.
 
 ### 6.11 Volver a pasar documentos por el gate o repararlos
 
@@ -327,6 +338,11 @@ Scripts en `apps/backend/scripts/` (leído el 2026-10-30), todos de un solo uso 
 | `repair-pending-published.ts` | Pone `ingestStatus: 'ready'` en documentos publicados atorados en `pending`, solo si ai-service confirma que están en el corpus. En seco por defecto |
 | `reset-infra-holds.ts` | Devuelve a estado reintentable las retenciones causadas solo porque el detector no respondió. Nunca toca retenciones por contenido. En seco por defecto |
 | `auto-publish-participant-drafts.ts`, `backfill-testimonio-titles.ts`, `backfill-lengua.ts`, `reextract-wikilink-notes.ts` | Rellenos de datos tras cambios de reglas |
+| `refresh-ai-titles.ts` | Reescribe en ai-service el título de documentos con compuerta y testimonios publicados, sin volver a calcular vectores. En seco por defecto (`--apply` o `TITLES_APPLY=1`). Implementado (pendiente de desplegar en dev) |
+| `backfill-provenance-titles.ts` | Reescribe el título de las citas guardadas en `messages.provenance` de documentos con compuerta. En seco por defecto (`PROVENANCE_APPLY=1`). Implementado (pendiente de desplegar en dev) |
+| `check-turn-corpus.ts` | Revisa turnos de chat en ai-service sin fila en `messages`. Solo lectura por defecto |
+
+Los scripts de re-gate (`regate-documents-by-id.ts`, `regate-member-documentos.ts`) rechazan o saltan las filas retenidas por consentimiento (`28d84f03`; Implementado, pendiente de desplegar en dev).
 
 El uso exacto de cada uno está en el encabezado del archivo y en las secciones de `edc-1.md` desde §4q. Desde el 2026-10-29 el gate rechaza reintentar sobre el mismo texto retenido (hash `heldTextHash`), así que un repaso solo cambia el resultado si cambió el texto o la regla.
 
@@ -386,11 +402,43 @@ Los servicios del Spark corren en `tmux` y no arrancan solos (procedimiento de o
 
 ### 6.18 Revertir del Spark a servicios hospedados
 
-Para embeddings (citado, `edc-1.md` §4za): borrar en `edc-dev` las variables `EMBEDDINGS_*` (copias normal y preview) y redesplegar. ai-service vuelve a calcular embeddings en OpenRouter, así que antes hay que apuntar `EMBEDDINGS_URL` a DeepInfra. Para el detector: con `ANONYMISE_DETECT_FALLBACK=hosted` ya cae solo a hospedado; con `none` los documentos se retienen hasta que vuelva el Spark. Hay un interruptor en tiempo de ejecución en la configuración de plataforma que tiene prioridad sobre la variable (citado, `platformSettings.ts:58-61`). Transcripción: no hay respaldo hospedado; el audio espera o se pierde (ver [Respaldos y recuperación](respaldos-y-recuperacion.md) §6.3).
+Para embeddings (citado, `edc-1.md` §4za y §4zzzzzz): el respaldo de dev ya es DeepInfra (`EMBEDDINGS_FALLBACK_URL` y `EMBEDDINGS_FALLBACK_API_KEY`, desde el 2026-11-06). Para una caída larga, apuntar `EMBEDDINGS_URL` a DeepInfra con su llave y recrear ai-service (§1.4). No borrar las variables `EMBEDDINGS_*` sin más: ai-service volvería a OpenRouter, y la decisión del 2026-11-06 es no mandar embeddings ahí. Para el detector: si el respaldo efectivo es `hosted`, ya cae solo a hospedado, por OpenRouter con ZDR; con `none` los documentos se retienen hasta que vuelva el Spark. El ajuste de plataforma `detectorFallback` tiene prioridad sobre `ANONYMISE_DETECT_FALLBACK` (`apps/backend/src/lib/platformSettings.ts:58-62`). Transcripción: no hay respaldo hospedado; el audio espera o se pierde (ver [Respaldos y recuperación](respaldos-y-recuperacion.md) §6.3).
 
 ### 6.19 Redirección del apex
 
 Crear o borrar `/data/coolify/proxy/dynamic/edc-apex-redirect.yaml` en el servidor. Traefik vigila ese directorio y aplica el cambio en segundos, sin reiniciar. Al borrarlo, el apex vuelve a la página 503 por defecto. No se debe poner esa regla en `coolify.yaml` ni en `default_redirect_503.yaml`, porque Coolify los regenera. Para cubrir `www`, primero hay que crear su registro DNS (citado, `edc-1.md` §9).
+
+### 6.20 Retener documentos por consentimiento
+
+Implementado (pendiente de desplegar en dev): el código está en `main` desde `512dcc1f` y `7987c171`, y la migración `20261110_181621_consent_held_reviews_keep`, que crea `documents.consent_held`, todavía no corre en dev. Hasta desplegarla, el script no puede marcar nada en dev.
+
+Un documento retenido por consentimiento (`consentHeld`) no se vuelve a extraer, ingerir, pasar por la compuerta, graficar ni publicar. No se borra nada: la fila y lo que ya exista quedan como están. Ninguna API escribe la columna; solo el script. No hay camino de liberación en el código: levantar una retención es decisión del responsable y un `UPDATE` a mano (`apps/backend/src/lib/consentHold.ts`).
+
+Uso, dentro del contenedor del backend, con el binario de Payload:
+
+```sh
+# 1. en seco (por omisión): lista los ids y el conteo, no escribe
+docker exec -w /repo/apps/backend -e CONSENT_ORG=8 -e CONSENT_IDS_FILE=/tmp/consent-ids.txt <backend> \
+  node_modules/.bin/payload run scripts/hold-for-consent.ts
+# 2. aplicar: lo mismo con CONSENT_APPLY=1
+```
+
+- `CONSENT_ORG` es obligatorio. El script rechaza ids de otro ecosistema y una selección sin filtro.
+- `CONSENT_IDS_FILE`: archivo separado por tabuladores (`id<TAB>origen<TAB>nota`, comentarios con `#`). Las líneas marcadas `EXTRA-NO-TALLER` se omiten. Se lee tal cual; los ids no se copian a mano. Hay que copiarlo al contenedor antes (`docker cp`).
+- En lugar del archivo: `CONSENT_IDS` (lista separada por comas) o filtros (`CONSENT_STATUS`, `CONSENT_UPLOADED_BY`, `CONSENT_HAS_FILE=1`, `CONSENT_ID_FROM` y `CONSENT_ID_TO`).
+- No despublica. Las filas que siguen compartidas aparecen en la salida como `notDraft`; se despublican después. Una fila retenida solo se retira, sin volver a calcular vectores.
+- Con la lista del taller de Semiosis del 2026-11-10 da 184 ids, sin 823, 824 ni 1425 (medido por la prueba de `7987c171`). Ver [Corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md) §4.4.
+
+Orden en dev: desplegar `main` (aplica la migración), respaldar antes como siempre, correr en seco, revisar el conteo, aplicar.
+
+### 6.21 Re-extraer el grafo de los publicados
+
+Preparado y **sin correr** en dev (`feae7e18`, `apps/backend/scripts/reextract-published-graph.ts`; Implementado, pendiente de desplegar en dev).
+
+- En seco por omisión: lista cada documento que enviaría, con su ecosistema, el largo del texto y un costo estimado. No llama a ningún modelo ni escribe. Aplica con `GRAPH_REEXTRACT_APPLY=1`. `GRAPH_REEXTRACT_ORG` y `GRAPH_REEXTRACT_LIMIT` acotan la corrida.
+- Nunca toca un borrador, una fila retenida por consentimiento ni una fila con compuerta sin texto aprobado.
+- Al aplicar, cada documento hace hasta 8 llamadas `generate.sync` a ai-service, cargadas al presupuesto de su ecosistema, que van a OpenRouter con ZDR.
+- Se corre igual que §6.6: `docker exec -w /repo/apps/backend <backend> node_modules/.bin/payload run scripts/reextract-published-graph.ts`. Un redespliegue lo interrumpe.
 
 ## 7. Trampas conocidas de Coolify y Payload
 
@@ -416,10 +464,10 @@ Crear o borrar `/data/coolify/proxy/dynamic/edc-apex-redirect.yaml` en el servid
 1. **Una sola caja.** Coolify, los builds, dev y staging comparten `edc-1`. Una falla del servidor tumba todo, y restaurar la imagen de Hetzner revierte ambos entornos a la vez.
 2. **Disco.** Es la falla que más se ha repetido (2026-10-17 y 2026-10-21). No hay alerta de disco.
 3. **Despliegue manual y dependiente de una persona.** El procedimiento vive en `edc-1.md` y en la práctica de quien opera el despliegue. No hay CI que impida integrar código roto.
-4. **Respaldos manuales y no siempre tomados** (§1.2, paso 3). Sin simulacro de restauración.
+4. **Respaldos manuales y no siempre tomados** (§1.2, paso 3). Sin simulacro de restauración. La retención de 7 por entorno también es manual.
 5. **Spark prestado sin arranque automático ni supervisión.** Si se reinicia de noche, dev pierde audio y micrófono en vivo, y el detector cae a hospedado sin que nadie se entere.
 6. **Staging desactualizado** desde el 2026-10-17: ya no sirve para reproducir problemas de dev ni para ensayar migraciones.
-7. **Rollback lento**: no hay imágenes viejas guardadas y el botón de Coolify no es fiable; cada reversión cuesta un build.
+7. **Rollback lento**: el botón de Coolify no es fiable. Desde el 2026-11-10 se conservan las imágenes del despliegue anterior (`3f14306b`) para revertir (citado, `edc-1.md` §4zzzzzzzz), pero la limpieza de disco las borra; sin ellas, cada reversión cuesta un build.
 8. **Cambio incompatible pendiente en el stack de IA**: `ai-client` 0.32 trae verificación estricta de capacidades (§4).
 9. **Documentación desactualizada**: varios documentos de `infra/fleet/` describen una flota de cuatro cajas que no existe. El procedimiento del Spark está en `edc-1.md` §4y.
 

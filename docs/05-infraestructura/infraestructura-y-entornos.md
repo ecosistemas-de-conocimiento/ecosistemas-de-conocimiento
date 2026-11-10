@@ -1,9 +1,9 @@
 # Infraestructura y entornos
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (bitácora del servidor, hasta §4zzzz, 2026-10-29), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/fleet/backups.md`, `infra/fleet/runbook.md`, `infra/fleet/topology.md`, `plan/spark-ai-adopcion.md`, `plan/servidor-desarrollo.md`, `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, notas de contexto del equipo, `TESTING.md`.
+- **Fuentes:** `infra/fleet/edc-1.md` (bitácora del servidor, hasta §4zzzzzzzz, 2026-11-10), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/fleet/backups.md`, `infra/fleet/runbook.md`, `infra/fleet/topology.md`, `plan/spark-ai-adopcion.md`, `plan/servidor-desarrollo.md`, `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, notas de contexto del equipo, `TESTING.md`, código de `main` en `b7dc944f` (2026-11-10).
 
 ## Para quién es y qué responde
 
@@ -101,9 +101,9 @@ flowchart LR
     HB[("Respaldos Hetzner<br/>7 imágenes diarias")] -.-> E1
   end
   GH["GitHub, repositorio privado"] -->|"llave de despliegue, solo lectura"| C
-  dA -->|"chat, condensar, grafo"| OR["OpenRouter<br/>deepseek-chat-v3.1"]
+  dA -->|"chat, condensar, grafo"| OR["OpenRouter, ZDR<br/>deepseek-chat-v3.1"]
   sA --> OR
-  sA -->|rerank| DI["DeepInfra<br/>Qwen3-Reranker"]
+  sA -->|rerank| DI["DeepInfra<br/>rerank de staging; respaldo de embeddings de dev"]
   subgraph SP["DGX Spark prestado · otra organización"]
     PX["proxy con token :8178"] --> WH["whisper.cpp large-v3"]
     PX --> QD["Qwen3-30B-A3B detector"]
@@ -113,7 +113,7 @@ flowchart LR
   dA -->|Tailscale| PX
   dB -->|"detector, Tailscale"| PX
   dAu -->|Tailscale| PX
-  dA -.->|"respaldo de embeddings"| OR
+  dA -.->|"respaldo de embeddings"| DI
 ```
 
 Notas del diagrama:
@@ -121,6 +121,8 @@ Notas del diagrama:
 - ai-service llama de vuelta al backend por su URL **pública https**, aunque los dos estén en la misma caja. La petición sale a Traefik y vuelve a entrar ("hairpin"). Es intencional: en producción ai-service rechaza direcciones privadas para los callbacks (citado, `env-manifests.md` §2a, variable `PUBLIC_BACKEND_URL`).
 - El rerank de dev aparece en el diagrama hacia el Spark. Eso es **inferido**: `edc-1.md` §4za registra que el token del proxy del Spark comparte prefijo sha256 con `RERANK_API_KEY` de dev, pero ninguna sección lo dice de forma explícita, y §4f todavía dice "DeepInfra en ambos entornos". Falta verificarlo en las variables de Coolify. Ver [Pila de IA](../03-arquitectura/pila-de-ia.md).
 - Staging no usa el Spark ni tiene audio (citado, `edc-1.md` §3 y §4zzzz).
+- El respaldo de embeddings de dev es DeepInfra desde el 2026-11-06, no OpenRouter (citado, `edc-1.md` §4zzzzzz). Staging sigue con OpenRouter para embeddings.
+- Toda llamada de chat de ai-service a OpenRouter lleva `provider: {zdr: true}` (retención cero de datos): OpenRouter solo enruta a proveedores que no guardan la petición, o responde 404 (código `9b755298`, en dev desde el 2026-11-10; llamadas reales medidas en `edc-1.md` §4zzzzzzz). DeepInfra no lleva esa marca.
 
 ### 2.5 Vista local con Docker Compose
 
@@ -166,11 +168,11 @@ Cada entorno es **un solo recurso Docker Compose** de Coolify con estos ajustes:
 
 Datos de esta tabla:
 
-- **dev tiene 9 contenedores y staging 6** (medido al desplegar el 2026-10-29, `edc-1.md` §4zzzz: "0 error lines in all 9 dev containers").
-- La etiqueta de la imagen de postgres ya lleva el entorno (`infra/docker-compose.yml:255`). Eso corrige la trampa 3 de `edc-1.md` §4, que avisaba del choque de etiquetas entre dev y staging.
+- **dev tiene 9 contenedores y staging 6** (medido al desplegar el 2026-11-10, `edc-1.md` §4zzzzzzzz: "9 dev containers up", 7 con healthcheck).
+- La etiqueta de la imagen de postgres ya lleva el entorno (`infra/docker-compose.yml:253`). Eso corrige la trampa 3 de `edc-1.md` §4, que avisaba del choque de etiquetas entre dev y staging.
 - El healthcheck de RustFS solo confirma que el proceso responde. `runbook.md` §8.1 advierte que "miente": puede responder bien con el almacenamiento roto. La señal fiable es la readiness del backend.
-- Volúmenes por entorno (`infra/docker-compose.yml:1012-1055`): `pg_data` (las dos bases), `redis_data` (estado de colas), `backend_media` (respaldo en disco local si se quitan las variables `S3_*`), `rustfs_data` (los archivos subidos y el almacén de credenciales de RustFS, con llaves en texto claro) y `audio_work` (temporal del audio).
-- Logs: driver `json-file` con `max-size 10m` y `max-file 3` por contenedor (`infra/docker-compose.yml:224-230`).
+- Volúmenes por entorno (`infra/docker-compose.yml:1030` en adelante): `pg_data` (las dos bases), `redis_data` (estado de colas), `backend_media` (respaldo en disco local si se quitan las variables `S3_*`), `rustfs_data` (los archivos subidos y el almacén de credenciales de RustFS, con llaves en texto claro) y `audio_work` (temporal del audio).
+- Logs: driver `json-file` con `max-size 10m` y `max-file 3` por contenedor (`infra/docker-compose.yml:221-226`).
 
 ### Dominios
 
@@ -201,8 +203,8 @@ Qué pasa cuando el Spark no responde:
 
 | Función | Respuesta ante falla | Procedencia |
 |---|---|---|
-| Embeddings | Cambia a bge-m3 en OpenRouter. Se activa por error de red, timeout de 5 s, 5xx o 429, y deja un enfriamiento de 60 s. Los vectores son equivalentes (similitud coseno de al menos 0.99997) | medido el 2026-10-22, `edc-1.md` §4za; la cifra del coseno no está verificada en esta versión |
-| Detector de anonimización | Con `ANONYMISE_DETECT_FALLBACK=hosted` (valor actual) el texto **sin anonimizar** va a un modelo hospedado vía ai-service. Con `none` el documento queda retenido | citado, `apps/backend/src/lib/anonymise/fallbackGenerator.ts:1-9` |
+| Embeddings | Cambia a bge-m3 en DeepInfra (desde el 2026-11-06; antes, OpenRouter). Se activa por error de red, timeout de 5 s, 5xx o 429, y deja un enfriamiento de 60 s. Vectores del Spark y de DeepInfra: coseno de 0.99998 o más en dos textos de prueba | medido el 2026-11-06, `edc-1.md` §4zzzzzz; mecanismo citado de §4za |
+| Detector de anonimización | Manda el ajuste de plataforma `detectorFallback` (`platform_settings`); si está vacío, `ANONYMISE_DETECT_FALLBACK`. Con `hosted` el texto **sin anonimizar** va a un modelo hospedado vía ai-service, por OpenRouter con ZDR. Con `none` el documento queda retenido, y `none` también frena el modelo hospedado cuando no hay URL del Spark, como en staging. Si falla la lectura del ajuste, `none`. En dev: `hosted` por variable desde el 2026-11-10, con `platform_settings` vacío | código: `apps/backend/src/lib/platformSettings.ts`, `apps/backend/src/lib/anonymise/detector.ts` (P-05, en dev); estado de dev citado de `edc-1.md` §4zzzzzzz |
 | Rerank | Falla abierto: devuelve el orden sin reordenar | no verificado en esta versión |
 | Audio y micrófono en vivo | Los trabajos se reintentan y luego van a una cola de descarte. El micrófono en vivo responde 503 | citado, [Pila de IA](../03-arquitectura/pila-de-ia.md) |
 
@@ -210,7 +212,7 @@ Costo medido de una caída: si el Spark se cuelga (no responde, pero tampoco rec
 
 **Documentación de operación.** Las variables, la reversión y el arranque del Spark están en `infra/fleet/edc-1.md` §4y. La dirección del gateway no se versiona: el repositorio la escribe como `<spark-url>`.
 
-**Advertencia de privacidad.** El valor `hosted` del detector es aceptable solo mientras los datos sean sintéticos. Antes del primer testimonio real hay que cambiarlo a `none` y obtener la autorización del responsable para procesar datos en un equipo que EDC no controla (decisión pendiente del responsable técnico; ver [Protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md)).
+**Advertencia de privacidad.** Dev pasó el detector a `none` el 2026-11-06 y lo regresó a `hosted` el 2026-11-10, ya con ZDR en OpenRouter (decisión del responsable del 2026-11-09, citada de `edc-1.md` §4zzzzzzz). Con `hosted`, un texto con nombres reales puede salir a un proveedor hospedado cuando el Spark no responde, aunque ese proveedor no lo retenga. Antes del primer testimonio real falta decidir si se queda en `hosted` con ZDR o pasa a `none`, y obtener la autorización del responsable para procesar datos en un equipo que EDC no controla (Pendiente; ver [Protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md)).
 
 ## 5. Entornos
 
@@ -220,14 +222,14 @@ Costo medido de una caída: si el Spark se cuelga (no responde, pero tampoco rec
 | `EDC_ENV` | `dev` | `stage` (exacto: `montaje` haría que el seed se niegue en silencio) | `local` (valor por defecto) |
 | Bases de datos | `edc_backend` y `edc_ai` en su propio postgres | igual, en una instancia separada | igual, puerto 45432, usuario `edc` |
 | Bucket | RustFS `edc`, instancia propia | RustFS `edc`, instancia propia | RustFS `edc` |
-| IA | OpenRouter para chat, condensación, expansión y grafo. Spark para embeddings, detector, transcripción y (inferido) rerank, con respaldo hospedado | OpenRouter, más DeepInfra para rerank. Sin Spark ni audio | OpenRouter con llave local, o el proveedor falso `fake-provider` (perfil `fake`). Rerank apagado |
+| IA | OpenRouter con ZDR para chat, condensación, expansión y grafo. Spark para embeddings, detector, transcripción y (inferido) rerank. Respaldo de embeddings en DeepInfra; respaldo del detector hospedado vía OpenRouter con ZDR | OpenRouter, más DeepInfra para rerank. Sin Spark ni audio | OpenRouter con llave local, o el proveedor falso `fake-provider` (perfil `fake`). Rerank apagado |
 | Ecosistemas | ids 1, 3, 6, 7 y 8 (citado, `edc-1.md` §4x y §4zp) | organización `Montaje` (id 1), creada a mano el 2026-10-17 | los del seed de `corpus-generativo` |
 | Usuarios demo (solo roles) | admin de plataforma; participante (rol `member`); `investigador`; dos `estudiante`; investigador de Semiosis; investigador de Dengue (citado, `edc-1.md` §4w y §4zq) | admin de plataforma; usuario de humo con rol `owner` de `Montaje` (citado, `edc-1.md` §3) | admin creado por el seed |
-| Versión desplegada | Desplegada el 2026-10-29 a las 06:50 UTC (medido, `edc-1.md` §4zzzz). Lo posterior en `main` solo agrega documentación (medido con `git log` el 2026-10-30) | una versión anterior, desplegada el 2026-10-17 a las 23:03 UTC; seguía así el 2026-10-29 ("Up 11 days", medido, `edc-1.md` §4zzzz) | lo que haya en el árbol de trabajo |
+| Versión desplegada | `367c2698`, desplegada el 2026-11-10 entre las 18:27 y las 18:33 UTC, con 24 migraciones de Payload (medido, `edc-1.md` §4zzzzzzzz). `main` (`b7dc944f`) lleva 40 commits más sin desplegar, con una migración nueva, `20261110_181621_consent_held_reviews_keep` (medido con `git log --no-merges 367c2698..b7dc944f` el 2026-11-10) | web y backend de la versión del 2026-10-17 ("Up 3 weeks"); ai-service "Up 3 days", etiqueta `97d5316a` (medido el 2026-11-10, `edc-1.md` §4zzzzzzzz) | lo que haya en el árbol de trabajo |
 | Propósito | Iteración y demostración. Los datos son desechables por decisión del responsable | Copia congelada para pruebas de aceptación | Desarrollo individual |
 | Quién despliega | Quien opera el despliegue, por la API o el panel de Coolify. "Auto-deploy" está encendido en Coolify, pero no existe webhook de GitHub, así que en la práctica es manual (citado, `edc-1.md` §3) | Igual; auto-deploy apagado | Cada desarrollador con `docker compose` |
 
-Consecuencia que conviene tener presente: staging lleva 12 días sin desplegarse (inferido de las dos fechas anteriores). Ya no refleja lo que corre en dev, así que hoy no sirve para reproducir un problema de dev ni para probar una migración antes de dev.
+Consecuencia que conviene tener presente: el código de web y backend de staging es del 2026-10-17 y no ha vuelto a desplegarse (citado, `edc-1.md` §4zzzzzzzz). Ya no refleja lo que corre en dev, así que hoy no sirve para reproducir un problema de dev ni para probar una migración antes de dev.
 
 Credenciales de los usuarios demo: viven fuera del repositorio, en el archivo local de secretos y en un archivo aparte de cuentas demo (modo 0600), ambos en equipo del equipo de desarrollo. Ver [Guía del desarrollador](../08-manuales/guia-del-desarrollador.md).
 
@@ -281,7 +283,7 @@ Regla de diseño importante: **cada variable de Coolify llega a `backend`, `web`
 | `SPARSE_ENABLED` | Embeddings dispersos; apagado | no |
 | `EMBEDDINGS_URL`, `EMBEDDINGS_FALLBACK_URL`, `EMBEDDINGS_FALLBACK_COOLDOWN_S`, `EMBEDDINGS_PRIMARY_TIMEOUT_MS` | Embeddings en el Spark y su respaldo hospedado (solo dev) | no |
 | `EMBEDDINGS_API_KEY` | Token del proxy del Spark (solo dev) | sí |
-| `EMBEDDINGS_FALLBACK_API_KEY` | Llave del respaldo; sin asignar, así que se usa `OPENROUTER_API_KEY` | sí |
+| `EMBEDDINGS_FALLBACK_API_KEY` | Llave del respaldo. En dev, la de DeepInfra desde el 2026-11-06; en staging, sin asignar, así que se usa `OPENROUTER_API_KEY` (citado, `edc-1.md` §4zzzzzz) | sí |
 
 ### 6.4 Gate de anonimización (backend)
 
@@ -293,7 +295,8 @@ Regla de diseño importante: **cada variable de Coolify llega a `backend`, `web`
 | `ANONYMISE_VERIFY_ROUNDS` | Pasadas de verificación | no |
 | `ANONYMISE_DETECT_MIN_GAP_MS` | Pausa mínima entre llamadas, para no agotar el límite de tasa | no |
 | `ANONYMISE_DETECT_URL`, `ANONYMISE_DETECT_MODEL` | Detector en el Spark | no |
-| `ANONYMISE_DETECT_FALLBACK`, `ANONYMISE_DETECT_FALLBACK_COOLDOWN_S` | `hosted` o `none`, y enfriamiento del respaldo | no |
+| `ANONYMISE_DETECT_FALLBACK`, `ANONYMISE_DETECT_FALLBACK_COOLDOWN_S` | `hosted` o `none`, y enfriamiento del respaldo. El ajuste de plataforma `detectorFallback` tiene prioridad sobre la variable | no |
+| `ANONYMISE_REGATE_CONCURRENCY`, `ANONYMISE_REGATE_ATTEMPTS`, `ANONYMISE_REGATE_RETRY_MS`, `ANONYMISE_REGATE_PENDING_WAIT_MS`, `ANONYMISE_REGATE_PENDING_POLL_MS` | Re-gate de un ecosistema al apagar un interruptor: compuertas a la vez (2), intentos por fila (3), espera inicial (2000 ms, luego doble), espera sobre una fila con compuerta en curso (15 min) y cada cuánto mirarla (3000 ms). Valores por omisión inferidos, no medidos (`apps/backend/src/lib/anonymisationControls.ts:715-735`). No están en el compose: valen los del código | no |
 | `ANONYMISE_DETECT_API_KEY` | Token del proxy del Spark | sí |
 
 ### 6.5 Grafo y chat (configuración, ninguna es secreta)
@@ -310,9 +313,11 @@ Regla de diseño importante: **cada variable de Coolify llega a `backend`, `web`
 | `AUDIO_SERVICE_API_KEY`, `AUDIO_SERVICE_ADMIN_API_KEY` | Llaves `app` y `admin` de audio-service | sí |
 | `WHISPER_MODEL`, `WHISPER_BAKE`, `WHISPER_BACKEND`, `WHISPER_REMOTE_URL`, `WHISPER_REMOTE_TIMEOUT_S`, `WHISPER_COMPUTE_TYPE`, `WHISPER_LANGUAGE` | Modelo y backend de transcripción (remoto, en el Spark) | no |
 | `WHISPER_REMOTE_TOKEN` | Token del proxy del Spark | sí |
-| `AUDIO_LOG_LEVEL`, `AUDIO_CPUS`, `AUDIO_MEMORY`, `COMPOSE_PROFILES`, `PUBLIC_AUDIO_UPLOAD_ENABLED`, `BODY_SIZE_LIMIT` | Recursos, perfil compose y tamaño máximo de cuerpo en web (201 MB, citado de `edc-1.md` §4zl) | no |
+| `AUDIO_LOG_LEVEL`, `AUDIO_CPUS`, `AUDIO_MEMORY`, `COMPOSE_PROFILES`, `PUBLIC_AUDIO_UPLOAD_ENABLED` | Recursos y perfil compose | no |
 
-Hallazgo abierto: `infra/docker-compose.yml:905` todavía da a `AUDIO_SERVICE_ADMIN_API_KEY` el valor por defecto público `dev-audio-key-admin`. Si dev no define la variable, cualquiera que conozca el repositorio tiene la llave admin de audio, que lee transcripciones crudas. No se ha verificado si dev la define (auditoría de código del 2026-10-28, hallazgo 11; ver [Seguridad](../06-privacidad-y-seguridad/seguridad.md)).
+`BODY_SIZE_LIMIT=201M`, el tamaño máximo de cuerpo en web, no es variable de Coolify: lo fija la imagen (`apps/web/Dockerfile:45`; citado también de `edc-1.md` §4zl).
+
+Hallazgo abierto: `infra/docker-compose.yml:918` todavía da a `AUDIO_SERVICE_ADMIN_API_KEY` el valor por defecto público `dev-audio-key-admin`. Si dev no define la variable, cualquiera que conozca el repositorio tiene la llave admin de audio, que lee transcripciones crudas. No se ha verificado si dev la define (auditoría de código del 2026-10-28, hallazgo 11; ver [Seguridad](../06-privacidad-y-seguridad/seguridad.md)).
 
 ### 6.7 Fijas, prohibidas y opcionales
 
@@ -320,7 +325,22 @@ Hallazgo abierto: `infra/docker-compose.yml:905` todavía da a `AUDIO_SERVICE_AD
 - **Deben quedar sin asignar**: `MOCK_LLM`, `MOCK_EMBEDDINGS`, `MOCK_LLM_STREAM` (ai-service no arranca si alguna vale "on"); `CALLBACK_ALLOW_PRIVATE` (prohibida en producción); `PAYLOAD_ALLOW_PUSH` (borraría en silencio índices únicos escritos a mano); `CORPUS_DIR`; las `*_HOST_PORT`.
 - **Observabilidad opcional**: `OTEL_EXPORTER_OTLP_ENDPOINT` y `OTEL_SERVICE_NAME` (ai-service), `METRICS_TOKEN` (protege `GET /metrics`). Sin endpoint, OpenTelemetry no arranca. No consta que estén configuradas en `edc-1` (citado, `env-manifests.md` §2e: "No collector on edc-1").
 
-### 6.8 Archivo local de secretos (fuera del repositorio)
+### 6.8 Límites, retención y tareas del backend
+
+Ninguna es secreta. Ninguna está en el compose ni en Coolify salvo que se indique: valen los del código. La columna "En dev" sigue la regla de [Despliegue y runbook](despliegue-y-runbook.md) §1.2: desplegado en `367c2698` o no.
+
+| Variable | Valor por omisión | Qué hace | Código | En dev |
+|---|---|---|---|---|
+| `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX`, `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S`, `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX` | 4, 3600 s, 100 por hora | Inicios de sesión fallidos por correo e IP y por IP. 4 queda uno por debajo del bloqueo de Payload (5 intentos, 10 min) | `apps/backend/src/lib/rateLimit.ts`, `apps/web/src/lib/server/loginRateLimit.ts` | Implementado |
+| `API_BODY_IDLE_TIMEOUT_MS`, `API_BODY_TOTAL_TIMEOUT_MS` | 30 000, 120 000 | Un cuerpo `/api/*` que no es subida y no manda nada, o tarda demasiado, recibe 408. El tope de 8 MiB (`API_BODY_MAX_BYTES`) es constante, no variable | `apps/backend/src/lib/bodyCap.ts` | Tope de 8 MiB: Implementado (medido con 413 en `edc-1.md` §4zzzzzzzz). Tiempos: Implementado (pendiente de desplegar en dev), `780f614d` |
+| `UPLOAD_MAX_CONCURRENT_PER_USER` | 2 | Subidas simultáneas por cuenta y proceso; la siguiente recibe 429 con `Retry-After: 5`. El archivo tiene tope de 200 MiB (`MAX_MEDIA_UPLOAD_BYTES`, constante) | `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/payload.config.ts` | Implementado (pendiente de desplegar en dev), `780f614d` |
+| `CALLBACK_RETENTION_JANITOR_ENABLED`, `CALLBACK_RETENTION_JANITOR_INTERVAL_MIN`, `CALLBACK_RETENTION_DAYS` | encendida, 1440 min, 30 días | Tarea diaria que vacía `ai_service_callbacks.raw_body` a los 30 días; la fila queda porque es la llave contra duplicados | `apps/backend/src/lib/callbackRetention.ts`, arrancada en `payload.config.ts` | Implementado (pendiente de desplegar en dev), `f8294d65` |
+| `GRAPH_ORPHAN_JANITOR_ENABLED`, `GRAPH_ORPHAN_JANITOR_INTERVAL_MIN` | encendida, 1440 min | Barrido diario de entidades del grafo que ya no menciona ningún documento | `apps/backend/src/lib/graph/orphanJanitor.ts`, arrancada en `payload.config.ts` | Implementado |
+| `CONSENT_IDS_FILE` | sin valor | Solo del script `scripts/hold-for-consent.ts`: archivo de ids por retener. Nunca en Coolify | `apps/backend/scripts/hold-for-consent.ts` | Implementado (pendiente de desplegar en dev), `7987c171` |
+
+`env-manifests.md` documenta todas salvo `GRAPH_ORPHAN_JANITOR_*`, `ANONYMISE_REGATE_*` y `CONSENT_IDS_FILE` (leído el 2026-11-10).
+
+### 6.9 Archivo local de secretos (fuera del repositorio)
 
 El responsable guarda copias en el archivo local de secretos, fuera del repositorio y del servidor. Contiene, por nombre: el token de Hetzner, la llave de OpenRouter, la llave de rerank, las credenciales y el token de la API de Coolify, la llave de despliegue de GitHub en base64, y por entorno (prefijos `EDC_DEV_` y `EDC_STAGE_`) las variables secretas de §6.1 y §6.2. Las cuentas demo de los perfiles nuevos están en un archivo aparte de cuentas demo (citado, `edc-1.md` §5). El archivo contiene llaves PEM y caracteres especiales: no se carga con `source`, se lee una clave a la vez.
 
@@ -423,6 +443,7 @@ El registro completo está en [Registro de riesgos](../01-proyecto/registro-de-r
 4. **Secretos sin aislamiento entre servicios** por el `env_file` compartido.
 5. **Sin alertas ni monitoreo externo.**
 6. **Staging desactualizado** respecto a dev desde el 2026-10-17.
+7. **Memoria del backend con subidas simultáneas.** Cada subida en curso puede ocupar unos 400 MiB; con 2 por cuenta, dos cuentas a la vez se acercan al límite de 2 GB del contenedor. El margen en reposo no se ha medido (inferido, citado de `env-manifests.md`).
 
 ## Referencias
 

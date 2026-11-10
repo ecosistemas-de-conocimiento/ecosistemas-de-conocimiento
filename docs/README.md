@@ -1,6 +1,6 @@
 # Documentación de Ecosistemas de Conocimiento (EDC)
 
-**Versión** 1.1 · **Fecha** 2026-11-03 · **Estado** vigente · **Código documentado** `main` del 2026-10-29
+**Versión** 1.2 · **Fecha** 2026-11-10 · **Estado** vigente · **Código documentado** `main` en `b7dc944f` (2026-11-10) · **Desplegado en dev** `367c2698` (2026-11-10, 18:27 UTC, citado de `infra/fleet/edc-1.md`)
 
 Esta carpeta documenta la plataforma entregada en la Etapa 1 (agosto a octubre de 2026) del proyecto SECIHTI IH-2025-I-445 del CIDE, cuyo componente de software es la plataforma **Ecosistemas de Conocimiento** y cuyo marco conceptual se llama **Repositorio de Voces y Resonancias**.
 
@@ -40,17 +40,17 @@ La documentación se derivó del código, de las migraciones, de las pruebas, de
 - [Arquitectura del sistema](03-arquitectura/arquitectura-del-sistema.md): contexto, contenedores, componentes, flujos de extremo a extremo, multitenencia.
 - [Pila de IA](03-arquitectura/pila-de-ia.md): modelos, qué corre en el DGX Spark y qué en proveedores hospedados, recuperación, costos.
 - [API](03-arquitectura/api.md): rutas de la web, endpoints del backend, API `/v1` de ai-service, audio-service, contratos.
-- [Registro de decisiones (ADR)](03-arquitectura/adr/README.md): diecinueve decisiones de arquitectura con contexto, alternativas y consecuencias.
+- [Registro de decisiones (ADR)](03-arquitectura/adr/README.md): veintidós decisiones de arquitectura con contexto, alternativas y consecuencias. Las más recientes: [ADR-0020](03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) (anonimizar todo y conservar nombres por documento), [ADR-0021](03-arquitectura/adr/ADR-0021-titulos-con-compuerta-fallan-cerrado.md) (el título de un documento con compuerta falla cerrado) y [ADR-0022](03-arquitectura/adr/ADR-0022-retencion-por-consentimiento.md) (retenido por consentimiento). Las que se agreguen después, ver [adr/README.md](03-arquitectura/adr/README.md).
 
 ### 04 Datos
 - [Modelo de datos](04-datos/modelo-de-datos.md): entidades, relaciones, reglas de acceso, máquinas de estado, diccionario de `documents`.
 - [Estructura de base de datos](04-datos/estructura-de-base-de-datos.md): las dos bases Postgres, migraciones, índices, almacenamiento de archivos, Redis.
-- [Corpus y datos de prueba](04-datos/corpus-y-datos-de-prueba.md): corpus sintético v1 y v2, corpus real ingerido, seeds.
+- [Corpus y datos de prueba](04-datos/corpus-y-datos-de-prueba.md): corpus sintético v1 y v2, corpus real ingerido, el taller de Semiosis retenido por consentimiento, seeds.
 
 ### 05 Infraestructura
 - [Infraestructura y entornos](05-infraestructura/infraestructura-y-entornos.md): topología, entornos dev y staging, Spark, variables, observabilidad, servidor propuesto.
-- [Despliegue y runbook](05-infraestructura/despliegue-y-runbook.md): pipeline de despliegue, CI, procedimientos operativos.
-- [Respaldos y recuperación](05-infraestructura/respaldos-y-recuperacion.md): política vigente, restauración, plan ante desastres.
+- [Despliegue y runbook](05-infraestructura/despliegue-y-runbook.md): pipeline de despliegue, CI, procedimientos operativos, retención por consentimiento y re-extracción del grafo.
+- [Respaldos y recuperación](05-infraestructura/respaldos-y-recuperacion.md): política vigente (7 volcados por entorno), restauración, plan ante desastres.
 
 ### 06 Privacidad y seguridad
 - [Protección de datos](06-privacidad-y-seguridad/proteccion-de-datos.md): inventario de datos personales, gate de anonimización, flujos a terceros, retención.
@@ -60,7 +60,7 @@ La documentación se derivó del código, de las migraciones, de las pruebas, de
 
 ### 07 Calidad
 - [Estrategia de pruebas](07-calidad/estrategia-de-pruebas.md): tipos de prueba, cómo correrlas, cobertura, huecos.
-- [Evaluaciones de IA](07-calidad/evaluaciones-de-ia.md): qué se mide, con qué, resultados y limitaciones.
+- [Evaluaciones de IA](07-calidad/evaluaciones-de-ia.md): qué se mide, con qué, resultados y limitaciones; `/admin/evals` y el kit diferencial de la compuerta.
 
 ### 08 Manuales
 - [Manual de usuario](08-manuales/manual-de-usuario.md): tareas por rol en lenguaje llano.
@@ -71,7 +71,8 @@ La documentación se derivó del código, de las migraciones, de las pruebas, de
 - Español de México en la prosa; identificadores de código en inglés tal como aparecen en el repositorio.
 - Fechas absolutas (AAAA-MM-DD).
 - Procedencia en cada número: `medido` (cómo, cuándo, dónde), `inferido` (de qué) o `citado` (de qué documento y fecha). Un documento registra el estado del sistema en la fecha en que se escribió.
-- Lo planeado se marca como planeado, con una excepción: en `06-privacidad-y-seguridad/` los controles planeados se describen en presente, por indicación del responsable técnico, y cada archivo de esa carpeta termina con un comentario oculto que lista qué controles son planeados.
+- Estados visibles, sin comentarios ocultos, en toda la carpeta: **Implementado** (en el código y desplegado en dev), **Implementado (pendiente de desplegar en dev)** (en `main`, todavía no en `367c2698`), **Planeado** (sin código, con plan) y **Pendiente** (sin código ni plan).
+- Desde el 2026-11-10, `main` solo recibe correcciones y la funcionalidad nueva va a la rama `etapa-2`. Lo diferido a esa etapa va en una sección "Etapa 2" del documento que corresponda.
 - Nunca se escriben valores de secretos, direcciones IP, correos de usuarios ni contraseñas.
 
 ## Documentos de origen
