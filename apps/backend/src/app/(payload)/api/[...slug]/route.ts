@@ -29,9 +29,10 @@ const capped =
       const payload = await getPayload({ config: configPromise })
       const { user } = await payload.auth({ headers: request.headers })
       if (!isActiveUser(user)) {
+        // Payload's own answer to the same refusal (`Media.access`): 403, same copy.
         return Response.json(
-          { errors: [{ message: 'Authentication required.' }] },
-          { status: 401, headers: { 'cache-control': 'no-store' } },
+          { errors: [{ message: 'You are not allowed to perform this action.' }] },
+          { status: 403, headers: { 'cache-control': 'no-store' } },
         )
       }
       return handler(request, args)

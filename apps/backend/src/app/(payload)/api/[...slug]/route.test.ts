@@ -144,20 +144,20 @@ describe('Payload REST routes', () => {
     expect(await res.json()).toEqual({ size: null, data: { title: 'Ñandú' } })
   })
 
-  it('🔴 an anonymous upload to /api/media is 401 before busboy reads it', async () => {
+  it('🔴 an anonymous upload to /api/media is 403 before busboy reads it', async () => {
     const { POST } = await import('./route')
     const { body, seen: pulled } = counted(64 * MiB)
     const res = await POST(req('POST', body, 'multipart/form-data; boundary=x', '/api/media'), slugOf('/api/media'))
-    expect(res.status).toBe(401)
+    expect(res.status).toBe(403)
     expect(pulled.bytes).toBeLessThan(4 * MiB)
     expect(handler).not.toHaveBeenCalled()
   })
 
-  it('a deactivated account gets the same 401', async () => {
+  it('a deactivated account gets the same 403', async () => {
     auth.mockResolvedValue({ user: { id: 1, isActive: false } })
     const { PATCH } = await import('./route')
     const res = await PATCH(req('PATCH', 'x', 'Multipart/Form-Data; boundary=x', '/api/media/1'), slugOf('/api/media/1'))
-    expect(res.status).toBe(401)
+    expect(res.status).toBe(403)
     expect(handler).not.toHaveBeenCalled()
   })
 
