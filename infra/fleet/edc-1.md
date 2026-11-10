@@ -2995,6 +2995,12 @@ only because pre-§4c spend is booked to it; nothing spends from `demo` any more
 7. Retención de volcados: se quedan los 7 más recientes de cada entorno, en `/root/backups/` y en la
    copia fuera del servidor; los anteriores se borran. Un sello con los dos entornos cuenta en cada uno
    (`docs/05-infraestructura/respaldos-y-recuperacion.md` §2.2, paso 7).
+   - 2026-11-10 ~20:30 UTC, primera purga (medido): en `/root/backups/` y en la copia del portátil se
+     borraron 52 volcados de dev (51 sellos y los archivos de dev de `20261017T0421Z/`), y en edc-1 además
+     el suelto `edc_backend-dev-users-memberships-20261110T0457Z.dump`, que no es respaldo completo.
+     Liberado: 1231.3 MB en cada lado (`du -sb` antes y después). Quedan en dev `20261110T1825Z`,
+     `20261110T0538Z`, `20261029T0643Z`, `20261029T0439Z`, `20261029T0053Z`, `20261029T0016Z` y
+     `20261028T1717Z`, con `sha256sum -c` OK antes y después en los dos lados; staging, sus 7 sin cambio.
 
 ### Smoke check (what was verified on 2026-10-17)
 
