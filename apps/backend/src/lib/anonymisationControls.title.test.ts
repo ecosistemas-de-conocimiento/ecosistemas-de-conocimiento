@@ -1,7 +1,8 @@
 /**
- * 🔴 P-13 (owner decision 2026-11-10): the anonymisation page's title of a
- * gated documento is the gate's redacted title, never the raw `name` — not
- * even for a caller who may read the name (`mayReadName`).
+ * 🔴 P-13 / R4-01 (2026-11-10): the anonymisation page's title of a gated
+ * documento follows REST. Whoever may read its name (`mayReadName` =
+ * `mayReadGatedOriginal(user, row, 'identity')`: its uploader, a platform
+ * admin) sees `name`; everyone else the gate's redacted title, else "Documento".
  */
 import { describe, expect, it, vi } from 'vitest'
 
@@ -24,23 +25,32 @@ const row = (extra: Record<string, unknown>) => ({
 })
 
 describe('viewOf — the title (P-13)', () => {
-  it.each([true, false])('🔴 a gated documento shows its redacted title (mayReadName %s)', (mayReadName) => {
+  it('🔴 a caller who may not read the name sees the redacted title', () => {
     const view = viewOf(
       row({ anonymise: true, anonymisationReport: { redactedTitle: 'Entrevista a [Persona A].pdf' } }),
       SWITCHES,
-      mayReadName,
+      false,
     )
     expect(view.name).toBe('Entrevista a [Persona A].pdf')
   })
 
+  it('🔴 its uploader (or a platform admin) sees the file name, as in Mis documentos and REST', () => {
+    const view = viewOf(
+      row({ anonymise: true, anonymisationReport: { redactedTitle: 'Entrevista a [Persona A].pdf' } }),
+      SWITCHES,
+      true,
+    )
+    expect(view.name).toBe('Entrevista a María López.pdf')
+  })
+
   it('🔴 a gated documento with no redacted title yet is "Documento"', () => {
-    expect(viewOf(row({ anonymise: true }), SWITCHES, true).name).toBe('Documento')
+    expect(viewOf(row({ anonymise: true }), SWITCHES, false).name).toBe('Documento')
   })
 
   it('🔴 anonymise NULL is gated for the title (2026-11-10): redacted, else "Documento"', () => {
-    expect(viewOf(row({ anonymise: null }), SWITCHES, true).name).toBe('Documento')
+    expect(viewOf(row({ anonymise: null }), SWITCHES, false).name).toBe('Documento')
     expect(
-      viewOf(row({ anonymise: null, anonymisationReport: { redactedTitle: 'Entrevista a [Persona A].pdf' } }), SWITCHES, true).name,
+      viewOf(row({ anonymise: null, anonymisationReport: { redactedTitle: 'Entrevista a [Persona A].pdf' } }), SWITCHES, false).name,
     ).toBe('Entrevista a [Persona A].pdf')
   })
 
