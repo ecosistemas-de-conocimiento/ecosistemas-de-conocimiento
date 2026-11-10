@@ -226,6 +226,37 @@ describe('🔴 the callback ledger never keeps a transcript (audit 2026-10-28)',
     expect(written().extractedText).toBe('La junta empezó a las diez')
   })
 
+  it('🔴 drops the title and the file name audio-service echoes (audit 2026-11-10, C-11)', async () => {
+    // For a testimonio those are the very name the rest of the system hides, and
+    // these rows outlive the document. Old jobs in flight still echo them.
+    const body = completed({
+      title: 'Testimonio de María López',
+      audio: { filename: 'maria-lopez-juchitan.m4a', bytes: 8123904, durationSeconds: 1834.2, chunks: 4 },
+    })
+    await post(body, headersFor(body))
+    const stored = String((created[0]?.data as Record<string, unknown>).rawBody)
+    expect(stored).not.toContain('María')
+    expect(stored).not.toContain('maria-lopez')
+    const parsed = JSON.parse(stored)
+    expect(parsed.title).toBeNull()
+    expect(parsed.audio).toEqual({ filename: null, bytes: 8123904, durationSeconds: 1834.2, chunks: 4 })
+  })
+
+  it('🔴 drops the title from a transcribe.failed body too', async () => {
+    const body = JSON.stringify({
+      event: 'transcribe.failed',
+      transcribeId: 'tr_1',
+      externalId: '42',
+      title: 'Testimonio de María López',
+      error: { code: 'no_audio_stream', message: 'no audio' },
+      attempts: 3,
+    })
+    await post(body, headersFor(body))
+    const parsed = JSON.parse(String((created[0]?.data as Record<string, unknown>).rawBody))
+    expect(parsed.title).toBeNull()
+    expect(parsed).toMatchObject({ event: 'transcribe.failed', error: { code: 'no_audio_stream' }, attempts: 3 })
+  })
+
   it('keeps a body with no transcript text as received', async () => {
     const body = JSON.stringify({ event: 'transcribe.progress', transcribeId: 'tr_1', chunksDone: 1 })
     await post(body, headersFor(body))
@@ -364,15 +395,48 @@ describe('transcribe.completed — a transcript too big for the webhook', () => 
     expect(written().extractedText).toBe('texto completo desde el GET')
   })
 
-  it('fails the row visibly when the full text can no longer be fetched', async () => {
+  it('fails the row visibly when the full text has expired (a 404)', async () => {
     // audio-service is Redis-only with a TTL. Past it the transcript is gone and
-    // the audio must be re-uploaded — which the user can only do if they are
-    // told.
+    // the audio must be transcribed again — which the user can only do if they
+    // are told. Not as "no speech": that tells them to bring another file.
     fetchTranscriptText.mockResolvedValueOnce(null as never)
     const body = completed({ transcript: { truncated: true, text: null } })
-    await post(body, headersFor(body))
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(200)
     expect(written()).toMatchObject({ ingestStatus: 'failed' })
+    expect(String(written().ingestError)).toMatch(/^transcript_expired:/)
     expect(ingestEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('🔴 answers 500 and forgets the event when the fetch fails transiently (audit 2026-11-10, C-04)', async () => {
+    // A 200 here makes audio-service cut the transcript's TTL to 1 h and never
+    // deliver again: hours of transcript lost behind a false "no speech". A 500
+    // with the dedupe row gone is what makes the retry land.
+    fetchTranscriptText.mockRejectedValueOnce(new Error('audio-service transcript fetch responded 503') as never)
+    const deleted: Array<Record<string, unknown>> = []
+    const withDelete = fakePayload as typeof fakePayload & {
+      delete?: (args: Record<string, unknown>) => Promise<unknown>
+    }
+    const createBefore = fakePayload.create
+    withDelete.create = async (args: Record<string, unknown>) => {
+      created.push(args)
+      return { id: 'cb_1' }
+    }
+    withDelete.delete = async (args: Record<string, unknown>) => {
+      deleted.push(args)
+      return {}
+    }
+    try {
+      const body = completed({ transcript: { truncated: true, text: null } })
+      const res = await post(body, headersFor(body))
+      expect(res.status).toBe(500)
+      expect(deleted).toEqual([expect.objectContaining({ collection: 'aiServiceCallbacks', id: 'cb_1' })])
+      // Nothing written to the row: it stays `transcribing` for the redelivery.
+      expect(updated).toHaveLength(0)
+    } finally {
+      withDelete.create = createBefore
+      delete withDelete.delete
+    }
   })
 
   it('fails a recording with no speech in it rather than embedding nothing', async () => {

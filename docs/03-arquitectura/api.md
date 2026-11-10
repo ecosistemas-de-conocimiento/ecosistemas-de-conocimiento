@@ -313,7 +313,7 @@ Lo usan ai-service y audio-service para avisar al backend que terminó un trabaj
 |---|---|---|
 | Navegador a `web` (adapter-node) | 512 KB por defecto; la imagen fija `BODY_SIZE_LIMIT=201M` para que quepa un audio de 200 MB más el encabezado multipart | `apps/web/Dockerfile`:42-45 |
 | Validación de la web por tipo | 20 MB documentos, 200 MB audio (`MAX_UPLOAD_BYTES`, `MAX_AUDIO_UPLOAD_BYTES`) | `apps/web/src/lib/config.ts` |
-| `web` a `backend`, colección `media` | 200 MiB para todo tipo (`MAX_MEDIA_UPLOAD_BYTES`), aplicado en `beforeValidate` como último límite | `apps/backend/src/collections/Media.ts`:227 |
+| `web` a `backend`, colección `media` | 200 MiB para todo tipo (`MAX_MEDIA_UPLOAD_BYTES`). El parser multipart deja de guardar en memoria al pasar el tope y descarta el resto; luego `beforeValidate` rechaza el archivo. Un archivo por petición | `apps/backend/src/collections/Media.ts`:227, clave `upload` de `apps/backend/src/payload.config.ts` |
 | `backend` `/api/live/:sid` | 4 MiB por rebanada, contada mientras se lee, porque Next.js no pone límite a los route handlers | `apps/backend/src/app/api/live/[sid]/route.ts`:35 |
 | `backend`, límite general de 2M | No verificado: no se encontró en `apps/backend/next.config.ts` ni en el código. Next.js aplica por defecto un límite a server actions, no a route handlers | búsqueda en el código, 2026-10-30 |
 | A ai-service `/v1` | 1 MiB | `services/ai-service/src/server-limits.ts` |

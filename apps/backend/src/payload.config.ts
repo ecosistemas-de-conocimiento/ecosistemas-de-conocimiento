@@ -12,7 +12,7 @@ import { Documents } from './collections/Documents'
 import { GraphEntities } from './collections/GraphEntities'
 import { GraphMentions } from './collections/GraphMentions'
 import { GraphRelations } from './collections/GraphRelations'
-import { Media } from './collections/Media'
+import { MAX_MEDIA_UPLOAD_BYTES, Media } from './collections/Media'
 import { AiServiceCallbacks } from './collections/AiServiceCallbacks'
 import { AnonymisationReviews } from './collections/AnonymisationReviews'
 import { AnonymisationSettingChanges } from './collections/AnonymisationSettingChanges'
@@ -105,6 +105,33 @@ export default buildConfig({
     headers: ['authorization', 'content-type', 'x-csrf-token'],
   },
   csrf: allowedOrigins,
+  /**
+   * 🔴 THE MEDIA CAP, WHILE THE BODY STREAMS (audit 2026-11-10, C-03). Without
+   * this key Payload's multipart parser buffers a whole file in memory and only
+   * then `rejectOversizedUpload` (collections/Media.ts) refuses it. Process RSS
+   * after an 800 MB POST: 1677 MB without this key, 479 MB with it; after a
+   * 300 MB POST, 675 MB and 494 MB (measured on torre, 2026-11-10, Payload's
+   * parser behind a local HTTP socket, load average 30-40). With it the cost no
+   * longer grows with the body; it is about twice the cap while the hook
+   * decides (inferred: the buffered parts plus Payload's concatenated copy).
+   *
+   * `fileSize` is the cap PLUS ONE byte: busboy stops buffering there and drains
+   * the rest, and a file of cap + 1 bytes is one the hook refuses (`size > cap`).
+   * `files: 1` because a cap per file is no cap if one request carries ten;
+   * Payload reads only the `file` field, and busboy drains any extra file
+   * without buffering it.
+   *
+   * ⚠ No `abortOnLimit`. In 3.88 it rejects a promise nobody is awaiting yet
+   * (`processMultipart.js`), and over a socket that is an unhandled rejection:
+   * plain Node exits on it, so an oversized upload would take the process down
+   * unless Next's own handler swallows it. No `useTempFiles` either:
+   * `generateFileData` reads the temp file back into a Buffer for every
+   * non-image upload, and `unlinkTempFiles` runs only after a create that
+   * SUCCEEDS, so every refused upload would leave its temp file behind.
+   */
+  upload: {
+    limits: { fileSize: MAX_MEDIA_UPLOAD_BYTES + 1, files: 1 },
+  },
   /**
    * 🔴 `withoutDuplicate` wraps EVERY collection: Payload's duplicate copies the
    * source row with field read access skipped, which leaked a testimonio's

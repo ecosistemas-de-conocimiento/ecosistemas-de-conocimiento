@@ -401,9 +401,28 @@ describe('fetchTranscriptText', () => {
     expect(await fetchTranscriptText('tr_1')).toBeNull()
   })
 
-  it('returns null rather than throwing on a network failure', async () => {
+  // 🔴 audit 2026-11-10, C-04. A null here fails the row as "no speech" and the
+  // 200 that follows tells audio-service to drop the transcript. Only a 404 may
+  // mean "gone"; everything that might work on a second try has to throw.
+  it('throws on a network failure, so the callback is retried', async () => {
     fetchMock.mockRejectedValue(new Error('ECONNRESET'))
-    expect(await fetchTranscriptText('tr_1')).toBeNull()
+    await expect(fetchTranscriptText('tr_1')).rejects.toThrow(/ECONNRESET/)
+  })
+
+  it.each([500, 502, 503, 429])('throws on a %i, so the callback is retried', async (status) => {
+    fetchMock.mockResolvedValue(new Response('{}', { status }))
+    await expect(fetchTranscriptText('tr_1')).rejects.toThrow(String(status))
+  })
+
+  it('throws on a 200 whose body is not JSON', async () => {
+    fetchMock.mockResolvedValue(new Response('<html>proxy</html>', { status: 200 }))
+    await expect(fetchTranscriptText('tr_1')).rejects.toThrow(/not JSON/)
+  })
+
+  it('throws when audio-service is not configured — it cannot tell "expired"', async () => {
+    vi.stubEnv(AUDIO_SERVICE_URL_VAR, '')
+    await expect(fetchTranscriptText('tr_1')).rejects.toThrow(/not configured/)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('treats a blank transcript as absent', async () => {
