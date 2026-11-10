@@ -22,6 +22,23 @@
  *
  * ── What it selects ────────────────────────────────────────────────────────
  *
+ * 🔴 PUBLISHED ROWS ONLY, and never one {@link isConsentHeld} (2026-11-10,
+ * audit `taller-2026-11-10/rutas.md` #6). The graph views and the chat's
+ * graph context read published documents only (`queries.ts`, a JOIN on
+ * `publication_status = 'published'`), so a draft's graph is never shown and
+ * the backfill has no reason to send a draft's text to a model. A draft keeps
+ * its stale stamp, so the first backfill after it is published picks it up.
+ * This is what keeps the Semiosis workshop drafts (org 8, held until their
+ * authors consent) out; it holds for every ecosistema. Filtered in the query
+ * and checked again per row. ⚠ A draft therefore also loses the backfill's
+ * cleanup of rows a pre-fix run built from raw text (`clearGraphRows` below);
+ * those rows are invisible (published-only reads) and `purgeUnscrubbed.ts`
+ * is the tool for them.
+ *
+ * Among those, the stale ones ({@link staleDocumentsWhere}), or EVERY one
+ * with `allPublished` ({@link publishedDocumentsWhere}: the deliberate
+ * re-extraction, `scripts/reextract-published-graph.ts`):
+ *
  *   · `graphPromptVersion` ≠ the current {@link GRAPH_PROMPT_VERSION} — the
  *     stamp is what makes stale rows FINDABLE after a prompt change. Includes
  *     rows that were never extracted (the column is NULL).
@@ -66,6 +83,7 @@ import { contentKindOf, titleFor } from '@/lib/contentKind'
 import { updateDocumentColumns } from '@/lib/documentColumns'
 import { errSummary } from '@/lib/errorSummary'
 
+import { isConsentHeld } from './consentHold'
 import { clearGraphRows, runGraphExtraction, type GraphSchedulerPayload } from './schedule'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 
@@ -85,6 +103,12 @@ export interface BackfillOptions {
   /** Skip the orphan sweep (useful when running the backfill in slices). */
   skipOrphanSweep?: boolean
   /**
+   * Every published document with text, whatever its stamp
+   * ({@link publishedDocumentsWhere}): a forced re-extraction. Default: the
+   * stale ones only.
+   */
+  allPublished?: boolean
+  /**
    * An `extracting` row older than this is treated as a lost run and retried.
    * Default {@link DEFAULT_STALE_EXTRACTING_MS}.
    */
@@ -99,6 +123,11 @@ export interface BackfillResult {
   skipped: number
   orphansDeleted: number
   dryRun: boolean
+  /**
+   * What a run would send (or sent) to the extractor: id, ecosistema and the
+   * length of the corpus text. Filled on a dry run too, so it can be priced.
+   */
+  planned: Array<{ id: number | string; organizationId: number | string; chars: number }>
 }
 
 interface DocRow {
@@ -111,6 +140,8 @@ interface DocRow {
   extractedText?: unknown
   redactedText?: unknown
   anonymisationStatus?: unknown
+  /** 🔴 Carries a gated documento's redacted title (P-13, `titleFor`). */
+  anonymisationReport?: unknown
   graphStatus?: unknown
   graphPromptVersion?: unknown
 }
@@ -162,8 +193,23 @@ export function staleDocumentsWhere(
   const hasText = { extractedText: { exists: true } }
 
   return organizationId == null
-    ? { and: [stale, hasText] }
-    : { and: [{ organization: { equals: organizationId } }, stale, hasText] }
+    ? { and: [stale, hasText, PUBLISHED] }
+    : { and: [{ organization: { equals: organizationId } }, stale, hasText, PUBLISHED] }
+}
+
+/** 🔴 The backfill never reads a draft (module header). */
+const PUBLISHED = { publicationStatus: { equals: 'published' } } as const
+
+/**
+ * Every published document with text, whatever its graph stamp: the forced
+ * re-extraction (`allPublished`). Same tenancy and text rules as
+ * {@link staleDocumentsWhere}.
+ */
+export function publishedDocumentsWhere(organizationId?: string | number): Record<string, unknown> {
+  const hasText = { extractedText: { exists: true } }
+  return organizationId == null
+    ? { and: [hasText, PUBLISHED] }
+    : { and: [{ organization: { equals: organizationId } }, hasText, PUBLISHED] }
 }
 
 /**
@@ -184,9 +230,11 @@ export async function runGraphBackfill(
 
   const found = await payload.find({
     collection: 'documents',
-    where: staleDocumentsWhere(options.organizationId, {
-      staleExtractingMs: options.staleExtractingMs,
-    }),
+    where: options.allPublished
+      ? publishedDocumentsWhere(options.organizationId)
+      : staleDocumentsWhere(options.organizationId, {
+          staleExtractingMs: options.staleExtractingMs,
+        }),
     limit: limit || 0,
     depth: 0,
     overrideAccess: true,
@@ -208,6 +256,7 @@ export async function runGraphBackfill(
     skipped: 0,
     orphansDeleted: 0,
     dryRun,
+    planned: [],
   }
 
   log(
@@ -216,6 +265,15 @@ export async function runGraphBackfill(
   )
 
   for (const doc of docs) {
+    // 🔴 Before anything reads its text or writes to it (module header). The
+    // query already filtered both; this holds if a row moved since, or a
+    // caller's payload ignores the where.
+    if (doc.publicationStatus !== 'published' || isConsentHeld(doc)) {
+      log(`[graph-backfill] doc ${doc.id} no publicado o retenido por consentimiento — omitido`)
+      result.skipped++
+      continue
+    }
+
     const organizationId = relationId(doc.organization)
     if (organizationId == null) {
       // No ecosistema means no tenant to scope the rows to. Refuse rather than
@@ -252,9 +310,12 @@ export async function runGraphBackfill(
       continue
     }
 
+    result.planned.push({ id: doc.id, organizationId, chars: corpusText.text.length })
+
     if (dryRun) {
       log(
-        `[graph-backfill] (simulación) doc ${doc.id} ` +
+        `[graph-backfill] (simulación) doc ${doc.id} ecosistema=${String(organizationId)} ` +
+          `tipo=${String(doc.contentKind ?? '—')} caracteres=${corpusText.text.length} ` +
           `estado=${String(doc.graphStatus ?? 'n/a')} versión=${String(doc.graphPromptVersion ?? '—')}`,
       )
       result.skipped++
@@ -274,9 +335,11 @@ export async function runGraphBackfill(
       // 🔴 `titleFor`, as the live path. ⚠ The name is withheld for ANY gated
       // raw kind: `contentKindOf` maps an unknown kind to `documento`, whose
       // title is the free-text name — the one value the gate never reads.
+      // 🔴 P-13: a gated documento (`anonymise`) gets its redacted title.
       title: titleFor(
         contentKindOf(doc),
         mustPassAnonymisationGate(doc.contentKind) || typeof doc.name !== 'string' ? null : doc.name,
+        doc,
       ),
     })
 

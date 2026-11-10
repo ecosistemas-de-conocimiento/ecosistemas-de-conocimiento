@@ -12,6 +12,7 @@ vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 import {
   DEFAULT_STALE_EXTRACTING_MS,
   deleteOrphanEntities,
+  publishedDocumentsWhere,
   runGraphBackfill,
   staleDocumentsWhere,
   type GraphBackfillPayload,
@@ -33,7 +34,7 @@ function fakePayload(rows: {
     async find(args) {
       finds.push(args)
       const collection = String(args.collection)
-      if (collection === 'documents') return { docs: rows.documents ?? [] }
+      if (collection === 'documents') return { docs: (rows.documents ?? []).map((d) => ({ publicationStatus: 'published', ...d })) }
       if (collection === 'graphEntities') return { docs: rows.graphEntities ?? [] }
       if (collection === 'graphMentions') {
         const and = (args.where as { and: Record<string, Record<string, unknown>>[] }).and
@@ -105,6 +106,38 @@ describe('staleDocumentsWhere', () => {
   it('🔴 names the organization in its own predicate when one is given', () => {
     const where = staleDocumentsWhere(7) as { and: Record<string, unknown>[] }
     expect(where.and[0]).toEqual({ organization: { equals: 7 } })
+  })
+
+  it('🔴 published rows only, with or without an ecosistema (taller route #6)', () => {
+    for (const where of [staleDocumentsWhere(), staleDocumentsWhere(8)] as Array<{ and: Record<string, unknown>[] }>) {
+      expect(where.and).toContainEqual({ publicationStatus: { equals: 'published' } })
+    }
+  })
+})
+
+describe('publishedDocumentsWhere (the forced re-extraction)', () => {
+  it('🔴 every published row with text, whatever its stamp; the ecosistema first when given', () => {
+    expect(publishedDocumentsWhere()).toEqual({
+      and: [{ extractedText: { exists: true } }, { publicationStatus: { equals: 'published' } }],
+    })
+    expect(publishedDocumentsWhere(6)).toEqual({
+      and: [{ organization: { equals: 6 } }, { extractedText: { exists: true } }, { publicationStatus: { equals: 'published' } }],
+    })
+  })
+
+  it('allPublished queries it, and a dry run lists what it would send and sends nothing', async () => {
+    const { payload, finds, deletes, updates } = fakePayload({
+      documents: [
+        { id: 1, organization: 5, contentKind: 'documento', extractedText: 'abc', graphStatus: 'ready', graphPromptVersion: GRAPH_PROMPT_VERSION },
+        { id: 2, organization: 8, contentKind: 'documento', extractedText: 'taller', publicationStatus: 'draft' },
+      ],
+    })
+    const result = await runGraphBackfill(payload, { allPublished: true, dryRun: true, organizationId: 5, log: silent })
+    expect(finds.find((f) => f.collection === 'documents')?.where).toEqual(publishedDocumentsWhere(5))
+    expect(result.planned).toEqual([{ id: 1, organizationId: 5, chars: 3 }])
+    expect(result).toMatchObject({ candidates: 2, extracted: 0, skipped: 2, dryRun: true })
+    expect(deletes).toEqual([])
+    expect(updates).toEqual([])
   })
 })
 

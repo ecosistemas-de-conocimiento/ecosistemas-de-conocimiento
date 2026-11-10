@@ -11,11 +11,16 @@
  * `GRAPH_BACKFILL_ORG=<id> payload run src/lib/graph/backfill.cli.ts`.
  *
  * 🔴 DRY RUN BY DEFAULT: lists ids and an estimated cost, writes nothing.
+ * 🔴 PUBLISHED NOTES ONLY, never one held for consent (2026-11-10, audit
+ * `taller-2026-11-10/rutas.md` #7): the backfill that follows reads published
+ * rows only (`backfill.ts` header), so clearing a draft's stamp would only
+ * queue it for later, and org 8's drafts are the Semiosis workshop's.
  * ⚠ No model call here. The cost is in the backfill run that follows.
  */
 import { sql } from '@payloadcms/db-postgres'
 
 import { DEFAULT_STALE_EXTRACTING_MS } from './backfill'
+import { isConsentHeld } from './consentHold'
 import { graphMaxWindows, graphWindowChars } from './extract'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 import { wikiLinkSeedingEnabled } from './schedule'
@@ -94,12 +99,13 @@ export async function planWikilinkReextraction(
   // column the corpus reads (redacted first), for the estimate only.
   const rows = rowsOf(
     await db.execute(sql`
-      SELECT id, length(coalesce(nullif(redacted_text, ''), extracted_text, '')) AS chars
+      SELECT id, publication_status, length(coalesce(nullif(redacted_text, ''), extracted_text, '')) AS chars
         FROM documents
        WHERE organization_id = ${org} AND kind = 'markdown' AND content_kind = 'documento'
+         AND publication_status = 'published'
          AND body_markdown LIKE '%[[%'${idFilter}
        ORDER BY id`),
-  )
+  ).filter((r) => r.publication_status === 'published' && !isConsentHeld(r))
   const ids = rows.map((r) => Number(r.id))
   const windows = rows.reduce((n, r) => n + estimateWindows(Number(r.chars) || 0), 0)
 
@@ -111,6 +117,7 @@ export async function planWikilinkReextraction(
       SELECT id, length(coalesce(nullif(redacted_text, ''), extracted_text, '')) AS chars
         FROM documents
        WHERE organization_id = ${org} AND extracted_text IS NOT NULL
+         AND publication_status = 'published'
          AND (graph_prompt_version IS NULL OR graph_prompt_version <> ${GRAPH_PROMPT_VERSION}
               OR graph_status = 'failed'
               OR (graph_status = 'extracting' AND updated_at < ${cutoff}))
@@ -138,7 +145,8 @@ export async function planWikilinkReextraction(
   const queued = rowsOf(
     await db.execute(sql`
       UPDATE documents SET graph_prompt_version = NULL, updated_at = ${new Date().toISOString()}
-       WHERE organization_id = ${org} AND id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+       WHERE organization_id = ${org} AND publication_status = 'published'
+         AND id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
        RETURNING id`),
   )
   plan.queued = queued.length

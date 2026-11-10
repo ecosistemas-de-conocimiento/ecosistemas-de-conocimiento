@@ -17,6 +17,9 @@ vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
 const runGraphExtraction = vi.fn(async (_args: Record<string, unknown>) => 'ready' as const)
 
+const isConsentHeld = vi.fn((_row: unknown) => false)
+vi.mock('./consentHold', () => ({ isConsentHeld: (row: unknown) => isConsentHeld(row) }))
+
 vi.mock('./schedule', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./schedule')>()),
   runGraphExtraction: (args: Record<string, unknown>) => runGraphExtraction(args),
@@ -35,7 +38,8 @@ function fakePayload(documents: Record<string, unknown>[]) {
   const documentUpdates: { id: unknown; data: Record<string, unknown> }[] = []
   const payload: Payload = {
     async find(args) {
-      return { docs: args.collection === 'documents' ? documents : [] }
+      // A published row unless the case says otherwise: the backfill reads no draft.
+      return { docs: args.collection === 'documents' ? documents.map((d) => ({ publicationStatus: 'published', ...d })) : [] }
     },
     async create() {
       return { id: 1 }
@@ -159,6 +163,30 @@ describe('runGraphBackfill — privacy', () => {
     expect(args.title).toBe('Acta 2024')
   })
 
+  // 🔴 P-13 (owner decision 2026-11-10): a gated documento's title is gated too.
+  it.each([
+    [{ redactedTitle: 'Entrevista a [PERSONA].pdf' }, 'Entrevista a [PERSONA].pdf'],
+    [null, 'Documento'],
+  ])('🔴 a documento filed for anonymisation extracts under its redacted title (report %o)', async (report, title) => {
+    const { payload } = fakePayload([
+      {
+        id: 4,
+        organization: 5,
+        contentKind: 'documento',
+        anonymise: true,
+        name: 'Entrevista a María López.pdf',
+        extractedText: RAW,
+        redactedText: REDACTED,
+        anonymisationStatus: 'ready',
+        anonymisationReport: report,
+      },
+    ])
+    await runGraphBackfill(payload, { log: silent, skipOrphanSweep: true })
+    const args = runGraphExtraction.mock.calls[0]![0]
+    expect(args.text).toBe(REDACTED.trim())
+    expect(args.title).toBe(title)
+  })
+
   it('⚠ an unknown content kind is gated, and its name never becomes the title', async () => {
     const { payload } = fakePayload([
       {
@@ -175,5 +203,40 @@ describe('runGraphBackfill — privacy', () => {
     const args = runGraphExtraction.mock.calls[0]![0]
     expect(args.text).toBe(REDACTED.trim())
     expect(String(args.title)).not.toContain('María')
+  })
+
+  it.each([['draft'], ['publishing'], ['unpublishing'], [null]])(
+    '🔴 a %s row is never read, sent or written, whatever its ecosistema (taller route #6, org 8)',
+    async (publicationStatus) => {
+      const { payload, deletes, documentUpdates } = fakePayload([
+        // A row the query should not have returned (it filters `published`):
+        // stale, with raw text, in the workshop's ecosistema.
+        { id: 80, organization: 8, contentKind: 'documento', extractedText: RAW, graphStatus: 'failed', publicationStatus },
+        { id: 81, organization: 8, contentKind: 'testimonio', extractedText: RAW, anonymisationStatus: 'held', publicationStatus },
+      ])
+      const result = await runGraphBackfill(payload, { log: silent })
+      expect(runGraphExtraction).not.toHaveBeenCalled()
+      expect(result).toMatchObject({ candidates: 2, extracted: 0, skipped: 2, planned: [] })
+      expect(deletes).toEqual([])
+      expect(documentUpdates).toEqual([])
+    },
+  )
+
+  it('🔴 a row held for consent is never read, sent or written (isConsentHeld)', async () => {
+    isConsentHeld.mockImplementation((row: unknown) => (row as { id?: unknown }).id === 82)
+    try {
+      const { payload, deletes, documentUpdates } = fakePayload([
+        { id: 82, organization: 8, contentKind: 'documento', name: 'Taller', extractedText: RAW },
+        { id: 2, organization: 5, contentKind: 'documento', name: 'Acta 2024', extractedText: RAW },
+      ])
+      const result = await runGraphBackfill(payload, { log: silent, skipOrphanSweep: true })
+      expect(runGraphExtraction).toHaveBeenCalledTimes(1)
+      expect(runGraphExtraction.mock.calls[0]![0].docId).toBe(2)
+      expect(result.planned.map((p) => p.id)).toEqual([2])
+      expect(deletes).toEqual([])
+      expect(documentUpdates).toEqual([])
+    } finally {
+      isConsentHeld.mockReset().mockReturnValue(false)
+    }
   })
 })

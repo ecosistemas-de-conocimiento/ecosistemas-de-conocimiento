@@ -3,6 +3,10 @@
  *
  *     payload run src/lib/graph/backfill.cli.ts
  *
+ * 🔴 Published documents only, never one held for consent (`backfill.ts`
+ * header; 2026-11-10). To re-extract EVERY published document whatever its
+ * stamp, with a dry run by default: `scripts/reextract-published-graph.ts`.
+ *
  * Environment:
  *     GRAPH_BACKFILL_LIMIT=20     stop after N documents (default: all)
  *     GRAPH_BACKFILL_ORG=3        only this ecosistema (default: all)

@@ -493,6 +493,16 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
                               WHERE id = ${ROSA}`)
     await pg!.db.execute(sql`UPDATE documents SET graph_status = 'extracting', graph_prompt_version = ${GRAPH_PROMPT_VERSION},
                                     updated_at = now() - interval '2 hours' WHERE id = ${SPLIT}`)
+    // 🔴 Published notes only (2026-11-10, taller route #7): every row here is a
+    // draft; these four are published for this test, HELD stays a draft.
+    const PUBLISHED_IDS = [NOTE, SILENT, ROSA, SPLIT]
+    await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published'
+                              WHERE id IN (${sql.join(PUBLISHED_IDS.map((i) => sql`${i}`), sql`, `)})`)
+    const withDraft = await planWikilinkReextraction(pg!.db, { organizationId: SEMIOSIS, ids: [NOTE, SILENT, HELD], apply: false })
+    expect(withDraft.ids).toEqual([NOTE, SILENT])
+    expect(withDraft.alreadyStale.ids).not.toContain(HELD)
+    const draftApply = await planWikilinkReextraction(pg!.db, { organizationId: SEMIOSIS, ids: [HELD], apply: true })
+    expect(draftApply).toMatchObject({ ids: [], queued: 0 })
     const dry = await planWikilinkReextraction(pg!.db, { organizationId: SEMIOSIS, ids: [NOTE, SILENT], apply: false })
     expect(dry.ids).toEqual([NOTE, SILENT])
     expect(dry.windows).toBe(2)
@@ -521,6 +531,8 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
     // 🔴 An explicit but empty id list is refused, never "all notes".
     await expect(planWikilinkReextraction(pg!.db, { organizationId: SEMIOSIS, ids: [], apply: true })).rejects.toThrow(/empty/)
     await expect(planWikilinkReextraction(pg!.db, { organizationId: OTHER, apply: false })).rejects.toThrow(/WIKILINK_SEED_ORGS/)
+    await pg!.db.execute(sql`UPDATE documents SET publication_status = 'draft'
+                              WHERE id IN (${sql.join(PUBLISHED_IDS.map((i) => sql`${i}`), sql`, `)})`)
   }, 30_000)
 
   describe('🔴 the kept author (authors_kept) is no node', () => {
