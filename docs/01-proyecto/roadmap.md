@@ -1,15 +1,17 @@
 # Roadmap
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** en el repositorio: `plan/ux-demo-backlog.md`, `plan/corpus-recomendaciones.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/auditoria-ia-2026-10-17.md`, `plan/auditoria-codigo-2026-10-28.md`, `plan/servidor-desarrollo.md` y `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, `plan/adr-corpus-graph.md`, `TESTING.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, historial de git de `main` (hasta el 2026-10-29). Fuera del repositorio: el brief v1 (2026-05-11), el informe de reunión con desarrollo del 21 de octubre de 2026 (§I a §VIII), la bitácora del proyecto (registros del 2026-10-21 y 2026-10-28) y los resultados de evaluación del 2026-10-29.
+- **Fuentes:** en el repositorio: `plan/ux-demo-backlog.md`, `plan/corpus-recomendaciones.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/auditoria-ia-2026-10-17.md`, `plan/auditoria-codigo-2026-10-28.md`, `plan/servidor-desarrollo.md` y `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, `plan/adr-corpus-graph.md`, `TESTING.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, historial de git de `main` (hasta el 2026-10-29; la versión 1.2 lo contrasta con `main` en b7dc944f y con lo desplegado en dev, 367c2698, el 2026-11-10). Fuera del repositorio: el brief v1 (2026-05-11), el informe de reunión con desarrollo del 21 de octubre de 2026 (§I a §VIII), la bitácora del proyecto (registros del 2026-10-21 y 2026-10-28) y los resultados de evaluación del 2026-10-29.
 
 ## Para quién es y qué responde
 
 Este documento es para quien planee y ejecute las etapas siguientes del proyecto. Responde: hacia dónde va EDC en las Etapas 2 y 3; qué trabajo queda pendiente, agrupado por tema; qué se aplazó a propósito en la Etapa 1 y por qué; y qué decisiones del proyecto siguen abiertas. Lo que sigue es horizonte, no compromiso: ninguna línea tiene fecha ni presupuesto asignado en las fuentes, salvo donde se indica. La prioridad (**Alta**, Media, Baja) es juicio de este documento a partir de las fuentes: Alta significa que bloquea algo o toca privacidad.
 
 Lo construido en la Etapa 1 está en [Visión y alcance](vision-y-alcance.md) §6 y en [Historias de usuario](../02-requisitos/historias-de-usuario.md). La secuencia de hechos está en [Cronología e hitos](cronologia-e-hitos.md).
+
+Desde el 2026-11-10 el trabajo va por dos ramas: `main` solo lleva correcciones de la Etapa 1, y la rama `etapa-2` lleva la funcionalidad nueva. Lo que la revisión del 2026-11-10 clasificó como funcionalidad nueva está en la sección [Etapa 2](#etapa-2), al final.
 
 ## 1. Punto de partida
 
@@ -76,24 +78,46 @@ El informe del 21 de octubre §VIII lista acciones del equipo que no son código
 
 ## 3. Trabajo pendiente por tema
 
+### 3.0 Hecho el 2026-11-10
+
+La revisión de `main` del 2026-11-10 cerró varios pendientes de esta lista. Salen de las tablas de abajo. «Desplegado» quiere decir que el commit está en 367c2698, lo que corre en dev desde el 2026-11-10 a las 18:27 UTC (citado de `infra/fleet/edc-1.md`).
+
+| Hecho | Estado | Prueba |
+|---|---|---|
+| Límite de intentos de inicio de sesión por (IP, correo) y por IP, antes del bloqueo de Payload | Desplegado | `apps/backend/src/lib/loginRateLimit.ts`; commits a7ca4b48, 2a4b8a44 |
+| Una cuenta desactivada no inicia sesión, pierde sus sesiones y no lee ni sube (A-01) | Desplegado | commits ce46db7b, 6841b71a, b2d6958d |
+| Cuerpos JSON y campos de texto acotados (8 MiB) | Desplegado | `apps/backend/src/lib/bodyCap.ts`; commit cac9d6ad |
+| Subidas simultáneas por cuenta (2) y cuerpos lentos (30 s sin bytes, 120 s en total) | Pendiente de desplegar en dev | commit 780f614d |
+| Barrido diario de entidades huérfanas del grafo | Desplegado | `apps/backend/src/lib/graph/orphanJanitor.ts`; commits 3d971397, fdee543a |
+| Cuerpo de los avisos entre servicios vaciado a los 30 días, tarea diaria | Pendiente de desplegar en dev | `apps/backend/src/lib/callbackRetention.ts`; commit f8294d65 |
+| Volcados de base de datos: se quedan los 7 más recientes por entorno; primera purga hecha (52 volcados de dev, 1231.3 MB por lado, medido el 2026-11-10) | Hecho en edc-1 y en la copia fuera de él; paso manual del runbook | `infra/fleet/edc-1.md` |
+| Cambios de `keepPublicFigures` y del respaldo del detector auditados y con re-gate | Desplegado | commit 887fae32 |
+| Ajustes solo para el responsable; `keepPublicFigures` solo para la administración de plataforma; quien revisa no entra a borradores ajenos (A-07) | Pendiente de desplegar en dev | commit 50bde2ae |
+| Un estudiante solo ve en el roster al personal, a sí mismo y a quien activó `shareWithPeers` | Pendiente de desplegar en dev | commit f685923d |
+| Título de un `documento` con compuerta redactado en todas las superficies; falla cerrado si falta `anonymise` | Pendiente de desplegar en dev | commits b2a51aed, 2f21e91b, a2ba0e19, ed35b605, b7dc944f |
+| Retenido por consentimiento (`consentHeld`): bloquea re-gate, backfill, ingesta y publicación | Pendiente de desplegar en dev | `apps/backend/src/lib/consentHold.ts`; commits 512dcc1f, 7987c171, ccce6281 |
+| Ningún registro lleva el texto de un error crudo ni los parámetros de una consulta (P-07) | En parte desplegado | commits c50608fd, fdee543a (desplegados); 780f614d, 752b60f3 (pendientes) |
+
+
 ### 3.1 Privacidad y seguridad
 
 Antes de recibir el primer testimonio real conviene cerrar los tres primeros puntos ([Registro de riesgos](registro-de-riesgos.md) §4).
 
 | Pendiente | Prioridad | Fuente |
 |---|---|---|
-| Poner el respaldo del detector de anonimización en `none` (retener en vez de enviar a un modelo hospedado si el Spark falla) y obtener el visto bueno sobre el equipo que aloja el Spark | **Alta** | `apps/backend/src/lib/anonymise/fallbackGenerator.ts`; `plan/spark-ai-adopcion.md` |
+| Poner el respaldo del detector de anonimización en `none` (retener en vez de enviar a un modelo hospedado si el Spark falla) y obtener el visto bueno sobre el equipo que aloja el Spark. Mientras siga en `hosted`, el texto va a OpenRouter con ZDR (`provider.zdr: true`, nunca se reintenta sin esa marca). Desde el 2026-11-10 `none` frena también el hospedado cuando no hay URL del Spark, como en staging (commit 14e958e2, desplegado) | **Alta** | `apps/backend/src/lib/anonymise/fallbackGenerator.ts`; `apps/backend/src/lib/anonymise/detector.ts`; `plan/spark-ai-adopcion.md` |
 | Encontrar la causa de la fuga del ecosistema 6 en la primera corrida de evals: un `documento` sintético terminó `ready` con sus 3 nombres privados. Puede ser el detector, la regla de figuras públicas o el comparador de la evaluación | **Alta** | Resultados de evaluación del 2026-10-29 |
 | Construir el aviso de privacidad, el consentimiento y el comprobante (ver §2.2) | **Alta** | Brief v1 §3 y §4 |
 | Quitar el valor por defecto público de la llave de administración de audio-service y confirmar qué valor usa dev | **Alta** | `infra/docker-compose.yml`; auditoría del 2026-10-28, hallazgo 11 |
 | Rotar la contraseña del admin inicial y cinco credenciales compartidas. Pendiente: confirmar y rotar una de ellas, que podría seguir en el historial de `main` | **Alta** | Bitácora del proyecto (2026-10-21) |
-| Límites de tamaño de cuerpo y puertos publicados solo hacia la interfaz local en `infra/docker-compose.override.yml` | Media | Auditoría del 2026-10-28 |
+| Puertos publicados solo hacia la interfaz local en `infra/docker-compose.override.yml`. Los límites de tamaño de cuerpo ya existen (ver §3.0) | Media | Auditoría del 2026-10-28 |
 | Comprobar qué hallazgos medios de privacidad (8 a 11) quedaron cubiertos por las correcciones del 2026-10-29 | Media | `plan/auditoria-codigo-2026-10-28.md` |
 | Rastrear qué documentos originan nombres de colonias en el grafo | Media | Bitácora del proyecto (2026-10-28) |
 | Verificar que la cabecera CSP de imágenes existe; el código muestra la imagen como texto, la cabecera no está verificada | Media | Auditoría del 2026-10-28, hallazgo 6 |
-| Política de retención de transcripciones crudas, conserje de conversaciones y trazas del servicio de IA | Media | [Registro de riesgos](registro-de-riesgos.md), R-10 |
+| Plazo para las trazas del servicio de IA (`edc_ai.traces`, que guardan la salida del detector hospedado) y conserje de conversaciones. Los cuerpos de los avisos y los volcados ya tienen plazo (ver §3.0) | Media | [Registro de riesgos](registro-de-riesgos.md), R-10; auditoría del 2026-11-10, P-14 |
 | Borrado de cuenta y canal para derechos ARCO | Media | [Registro de riesgos](registro-de-riesgos.md), R-07 |
-| Confirmar si se ejecutó en dev la purga de filas del grafo sacadas de texto sin depurar | Baja | `plan/auditoria-ia-2026-10-17.md`, G-2 |
+| Correr en dev la re-extracción del grafo de los documentos publicados (`scripts/reextract-published-graph.ts`, preparada el 2026-11-10 y sin correr), que reemplaza las filas sacadas antes de que la compuerta quitara autores | Media | `plan/auditoria-ia-2026-10-17.md`, G-2; commit feae7e18 |
+| Desplegar en dev las correcciones de `main` posteriores a 367c2698 (40 commits sin merges, medido con `git log --no-merges 367c2698..b7dc944f` el 2026-11-10) | **Alta** | `infra/fleet/edc-1.md` |
 
 ### 3.2 Infraestructura y operación
 
@@ -125,7 +149,8 @@ El NVIDIA DGX Spark prestado sirve hoy la transcripción, el detector de anonimi
 | Antes de recargar el acervo, borrar del servicio de IA los 12 documentos retenidos que siguen publicados ahí (medido el 2026-10-24) | Media | `plan/corpus-recomendaciones.md` |
 | Corpus nuevo de unas 280 piezas (costo estimado de $2 a $3.5 USD, inferido en la fuente) | Media | `plan/corpus-recomendaciones.md` |
 | Semiosis práctica: reconocimiento de texto para 72 PDF escaneados sin capa de texto y siembra por wikilinks | Media | Bitácora del proyecto (2026-10-28) |
-| Volver a medir el estado del grafo en los ecosistemas 6, 7 y 8 tras el despliegue del 2026-10-29 y limpiar 18 entidades huérfanas | Media | Bitácora del proyecto (2026-10-28) |
+| Volver a medir el estado del grafo en los ecosistemas 6, 7 y 8 tras el despliegue del 2026-10-29. Las entidades huérfanas ya las limpia un barrido diario (ver §3.0) | Media | Bitácora del proyecto (2026-10-28) |
+| Semiosis práctica: decidir qué filas del taller se republican cuando haya consentimiento. Las retenidas por consentimiento se marcan con `scripts/hold-for-consent.ts` a partir de `CONSENT_IDS_FILE` | Media | `apps/backend/src/lib/consentHold.ts`; commit 7987c171 |
 | Resolver los documentos retenidos a propósito para la demostración de Revisión (1031, 1039 y 1129) | Baja | Bitácora del proyecto (2026-10-28) |
 | Limpiar ecosistemas y usuarios de prueba acumulados en dev | Baja | Lista de pendientes del proyecto |
 
@@ -159,7 +184,7 @@ El 2026-10-28, antes de grabar la evidencia en video, el proyecto adoptó un cri
 
 | Aplazado | Por qué | Fuente |
 |---|---|---|
-| Unos 70 hallazgos medios y bajos de la auditoría del 2026-10-28: equipos creados en otra organización, cambio de correo hacia una dirección sin reclamar, sin tope de reintentos del gate, sin límite de turnos de chat, columnas de control escribibles por REST, CSRF solo con SameSite, cabeceras de seguridad, imagen del servicio de IA como root, audio atascado tras 4 h, WebM que crece 37 veces al pasar a WAV, caída larga del Spark que borra el audio fuente | Criterio de triaje del 2026-10-28: no estaban en los flujos grabados | `plan/auditoria-codigo-2026-10-28.md` |
+| Unos 70 hallazgos medios y bajos de la auditoría del 2026-10-28: equipos creados en otra organización, sin tope de reintentos del gate, sin límite de turnos de chat, columnas de control escribibles por REST, CSRF solo con SameSite, cabeceras de seguridad, imagen del servicio de IA como root, audio atascado tras 4 h, WebM que crece 37 veces al pasar a WAV, caída larga del Spark que borra el audio fuente | Criterio de triaje del 2026-10-28: no estaban en los flujos grabados | `plan/auditoria-codigo-2026-10-28.md` |
 | Turnos de conversación que citan un documento después despublicado o borrado siguen en el acervo como orientación | Aplazado desde la auditoría del 2026-10-21; el borrado real cubre documentos y conversaciones, no los turnos que los citan | `apps/backend/src/lib/conversationIngest.ts`; `apps/web/src/lib/server/engine/orientation.ts` |
 | Borrado de cuenta y de organizaciones; falla si hay conversación o membresía | Sin flujo de autoservicio; las cascadas solo se arreglaron para valoraciones y estudiantes | Auditoría del 2026-10-17 |
 | Cola durable para la extracción del grafo; un reinicio pierde la corrida y un documento de más de unos 96,000 caracteres se trunca sin marca | Deuda aceptada en el diseño del grafo | `plan/adr-corpus-graph.md` §5.1, §10 |
@@ -175,16 +200,33 @@ El 2026-10-28, antes de grabar la evidencia en video, el proyecto adoptó un cri
 | Modelo de chat en hardware propio | La evaluación del 2026-10-26 concluyó que el modelo local aún no iguala al hospedado en las respuestas | [ADR-0013](../03-arquitectura/adr/ADR-0013-chat-no-se-mueve-al-spark.md); `plan/spark-chat-eval-2026-10-26.md` |
 | Etiquetas de la vista de administración | Se decidió dejarlas como están | `plan/ux-demo-backlog.md` #17 |
 
+## Etapa 2
+
+Lo que la revisión del 2026-11-10 encontró y clasificó como funcionalidad nueva. Va a la rama `etapa-2`, no a `main` (clasificación citada de `plan/orchestration/auditoria-2026-11-10/resumen.md`, fuera del repositorio).
+
+| Aplazado a la Etapa 2 | Hallazgo | Fuente |
+|---|---|---|
+| Verificar un correo nuevo. Hoy solo la administración de plataforma cambia un correo | A-03 | commit ce46db7b |
+| Obligar a cambiar la contraseña temporal de `/miembros` en el primer acceso | A-04 | auditoría del 2026-11-10 |
+| Límite de inicio de sesión por correo desde varias IP | A-11 | `apps/backend/src/lib/loginRateLimit.ts` |
+| Límite de turnos de chat por persona | auditoría del 2026-10-28 | [Requisitos no funcionales](../02-requisitos/requisitos-no-funcionales.md) |
+| ZDR o garantía de no retención para DeepInfra (reordenamiento) | P-06 | auditoría del 2026-11-10 |
+| Reintentar el borrado en ai-service, que hoy se intenta una vez | P-08 | auditoría del 2026-11-10 |
+| Plazo para `edc_ai.traces` | P-14 | auditoría del 2026-11-10 |
+| Cifrar los volcados de base de datos | P-11 | auditoría del 2026-11-10 |
+| Endurecer la regla de «edición sustantiva» al aprobar una retención | R4-12 | revisión de la ola 4 del 2026-11-10 |
+
 ## 5. Decisiones pendientes
 
-Decisiones del proyecto que siguen abiertas al 2026-11-03. Cada una afecta al producto o a la protección de datos.
+Decisiones del proyecto que siguen abiertas al 2026-11-10. Cada una afecta al producto o a la protección de datos.
 
 - **Dónde corren las cargas privadas.** Seguir con el Spark prestado, servidor propio o capacidad pública. La ubicación física del Spark sigue sin confirmar (`plan/spark-ai-adopcion.md` §7; `plan/servidor-desarrollo.md`).
 - **Qué pasa si el Spark cae.** Enviar el texto al detector hospedado (`hosted`) o retenerlo (`none`).
 - **Qué datos puede ver en crudo el detector hospedado:** direcciones, teléfonos, CURP y RFC.
-- **Cuánto tiempo se guarda una transcripción cruda.** No hay política.
+- **Cuánto tiempo se guarda una transcripción cruda.** No hay política para el texto extraído de un documento. Los cuerpos de los avisos entre servicios se vacían a los 30 días (decisión del 2026-11-10).
 - **Si un revisor puede aprobar una retención sobre su propia subida** o se exige otra persona (auditoría del 2026-10-28).
-- **Cómo se libera una retención:** el diseño del flujo no consta.
+- **Cómo se libera una retención:** el diseño del flujo no consta. Desde el 2026-11-10, una retención cuya verificación no terminó exige editar el texto antes de aprobar (commit 346b380d, pendiente de desplegar en dev).
+- **Cómo se levanta una retención por consentimiento.** No hay camino en el código: es una decisión del responsable y un `UPDATE` escrito a mano (`apps/backend/src/lib/consentHold.ts`).
 - **Límite de tasa por ecosistema.** Hoy todos comparten un contador de 30 generaciones por minuto (auditoría del 2026-10-28).
 - **Si importa la latencia transatlántica** (caja en Alemania, usuarios en México): medir o mover la caja.
 - **Qué GPU lleva el servidor propio.** La RTX 5070 de 12 GB cotizada o una RTX 5060 Ti de 16 GB (`plan/servidor-desarrollo.md`).

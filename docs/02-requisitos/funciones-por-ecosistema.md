@@ -1,6 +1,6 @@
 # Funciones por ecosistema
 
-**Versión:** 1.2 · **Fecha:** 2026-11-07 · **Estado:** vigente
+**Versión:** 1.3 · **Fecha:** 2026-11-10 · **Estado:** vigente
 
 **Fuentes:**
 - `apps/backend/src/lib/features.ts` (defaults, dónde se aplica cada función, interruptores bloqueados, lectura con caché)
@@ -14,7 +14,7 @@
 
 ## Para quién es y qué responde
 
-Este documento es para responsables e investigadores que configuran un ecosistema, para el administrador de la plataforma y para quien desarrolle. Responde: qué funciones se pueden encender o apagar en cada ecosistema de Ecosistemas de Conocimiento (EDC), qué hace cada una, cuál es su valor inicial, quién puede cambiarla, cuáles dependen de otra y qué pasa si el sistema no puede leerlas. Al final describe los ajustes que no son funciones por ecosistema: estilos de respuesta, respaldo del detector y variables de entorno. Todo se leyó en el código de `main` el 2026-10-30.
+Este documento es para responsables e investigadores que configuran un ecosistema, para el administrador de la plataforma y para quien desarrolle. Responde: qué funciones se pueden encender o apagar en cada ecosistema de Ecosistemas de Conocimiento (EDC), qué hace cada una, cuál es su valor inicial, quién puede cambiarla, cuáles dependen de otra y qué pasa si el sistema no puede leerlas. Al final describe los ajustes que no son funciones por ecosistema: estilos de respuesta, respaldo del detector y variables de entorno. Todo se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10. Lo que está en `main` pero aún no en dev (desplegado: 367c2698, citado de `infra/fleet/edc-1.md`) se marca **pendiente de desplegar en dev**.
 
 ## Qué es una función por ecosistema
 
@@ -30,7 +30,7 @@ Se cambian en Ajustes (`/ajustes`), en cuatro pestañas con interruptores y una 
 
 ```mermaid
 flowchart LR
-  U[Responsable o investigador] -->|Ajustes, acción funciones| W[apps/web]
+  U[Responsable o admin de plataforma] -->|Ajustes, acción funciones| W[apps/web]
   W -->|PATCH /api/funciones| B[apps/backend]
   B -->|valida claves y bloqueos| O[(organizations.features)]
   O -->|featuresFor, caché 30 s| E1[Documentos: audio]
@@ -55,8 +55,8 @@ flowchart LR
 | `autoPublishMembers` | Publicar automáticamente lo de participantes | Publicación | Lo que sube un participante se publica solo cuando pasa la compuerta de anonimización | encendida | `lib/autoPublish.ts`: apagada, los borradores de participantes se quedan en borrador |
 | `testimonioTitles` | Títulos automáticos para testimonios | Publicación | Un modelo genera un título genérico para cada testimonio | encendida | `lib/testimonioTitle.ts`: apagada, no corre |
 | `keepPublicFigures` | Conservar nombres de figuras públicas en documentos | Publicación | La compuerta conserva nombres de figuras públicas, solo en documentos de tipo `documento` que pasan por ella; nunca en testimonios ni conversaciones | apagada | `lib/publicFigures.ts`, dentro de la compuerta |
-| `keepDocumentAuthor` | Conservar al autor del documento | Publicación | Valor de partida de cada documento con compuerta y de cada testimonio: conserva el nombre completo de quien subió. Cada documento puede cambiarlo. Sin desplegar ([ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) | apagada | La compuerta, sobre un resultado `ready` |
-| `keepCitedAuthors` | Conservar autores citados | Publicación | Valor de partida de cada documento con compuerta y de cada testimonio: conserva los nombres de citas bibliográficas y de la lista de referencias. Cada documento puede cambiarlo. Sin desplegar | apagada | La compuerta, sobre un resultado `ready` |
+| `keepDocumentAuthor` | Conservar al autor del documento | Publicación | Valor de partida de cada documento con compuerta y de cada testimonio: conserva el nombre completo de quien subió. Cada documento puede cambiarlo. Implementado (commit 87e2468f, desplegado; [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) | apagada | La compuerta, sobre un resultado `ready` |
+| `keepCitedAuthors` | Conservar autores citados | Publicación | Valor de partida de cada documento con compuerta y de cada testimonio: conserva los nombres de citas bibliográficas y de la lista de referencias. Cada documento puede cambiarlo. Implementado (desplegado) | apagada | La compuerta, sobre un resultado `ready` |
 | `studentView` | Vista de estudiante | Estudiantes | Mi investigación (`/estudiante`), Estudiantes (`/seguimiento`), alcance del chat del estudiante y notas publicables | apagada | `endpoints/estudiante.ts`; `lib/studentNotes.ts` |
 | `studentTestimonios` | Testimonios de estudiantes en el reporte (anonimizados) | Estudiantes (hija de `studentView`) | El reporte docente lista los testimonios del estudiante, solo en su versión anonimizada | apagada | `endpoints/estudiante.ts`; `lib/student/logic.ts` (`reportTestimonios`) |
 
@@ -72,8 +72,8 @@ Cinco funciones arrancan apagadas, cada una por una razón registrada:
 
 | Funciones | Quién las cambia | Quién las ve solo de lectura |
 |---|---|---|
-| `audioUpload`, `liveMic`, `interviewerMode`, `chatOrientation`, `graph`, `graph3d`, `combinedGraph`, `autoPublishMembers`, `testimonioTitles`, `studentView`, `keepDocumentAuthor`, `keepCitedAuthors` | Quien tiene `organization:manage` en ese ecosistema (investigador y responsable) y el administrador de plataforma | nadie más entra a Ajustes |
-| `keepPublicFigures`, `studentTestimonios` | Solo el administrador de plataforma (`PLATFORM_ADMIN_ONLY_FEATURES`) | Investigador y responsable las ven bloqueadas |
+| `audioUpload`, `liveMic`, `interviewerMode`, `chatOrientation`, `graph`, `graph3d`, `combinedGraph`, `autoPublishMembers`, `testimonioTitles`, `studentView`, `keepDocumentAuthor`, `keepCitedAuthors` | Quien tiene `organization:manage` en ese ecosistema (el responsable) y el administrador de plataforma. Hasta el 2026-11-10 también el investigador; el cambio (commit 50bde2ae) está pendiente de desplegar en dev | nadie más entra a Ajustes |
+| `keepPublicFigures`, `studentTestimonios` | Solo el administrador de plataforma (`PLATFORM_ADMIN_ONLY_FEATURES`) | El responsable las ve bloqueadas |
 
 El bloqueo de las dos funciones de plataforma se aplica en tres lugares:
 - en `Organizations` (`beforeChange`), que cubre cualquier vía de escritura;
@@ -82,7 +82,7 @@ El bloqueo de las dos funciones de plataforma se aplica en tres lugares:
 
 La comparación se hace sobre valores resueltos: una escritura del objeto completo que omita un `true` guardado cuenta como cambio y se rechaza (`lockedFeatureChange`).
 
-Ninguna de estas reglas guarda una bitácora de quién cambió qué y cuándo. Los cambios de funciones no se auditan (inferido de la búsqueda de colecciones de auditoría; ver [seguridad](../06-privacidad-y-seguridad/seguridad.md)).
+Los tres interruptores de anonimización (`keepDocumentAuthor`, `keepCitedAuthors` y, desde el 2026-11-10, `keepPublicFigures`) sí se auditan: cada clave que cambia deja una fila en `anonymisation-setting-changes` (quién, ecosistema, clave, antes y después), en la misma transacción; si esa escritura falla, el cambio no se guarda (`auditAnonymisationSwitches` en `collections/Organizations.ts`; commits 491841fb y 887fae32, desplegados). Apagar `keepDocumentAuthor` o `keepCitedAuthors` re-anonimiza los documentos que conservaron un nombre bajo ese valor. Las demás funciones no guardan bitácora (leído en `Organizations.ts`; ver [seguridad](../06-privacidad-y-seguridad/seguridad.md)).
 
 ## Dependencias padre-hijo
 
@@ -128,13 +128,13 @@ El detector es el modelo que, dentro de la compuerta de anonimización, busca no
 | Aspecto | Valor |
 |---|---|
 | Qué es | Un ajuste global de la plataforma, no por ecosistema: `platform-settings.detectorFallback` |
-| Valores | `hosted`: el texto va al modelo hospedado por medio de ai-service (OpenRouter). `none`: el documento queda retenido (falla cerrada). Vacío: se usa la variable de entorno `ANONYMISE_DETECT_FALLBACK`. |
+| Valores | `hosted`: el texto va al modelo hospedado por medio de ai-service (OpenRouter, que siempre recibe `provider.zdr: true` y solo enruta a proveedores sin retención de datos; `services/ai-service/src/services/ai/router/adapters/openrouter.ts`). `none`: el documento queda retenido (falla cerrada); desde el 2026-11-10 `none` también frena el modelo hospedado cuando no hay URL del Spark, como en staging (`detector.ts`, commit 14e958e2, desplegado). Vacío: se usa la variable de entorno `ANONYMISE_DETECT_FALLBACK`. |
 | Default | Vacío; la variable de entorno vale `hosted` por defecto (`fallbackGenerator.ts`), por decisión del responsable del 2026-10-21 (citado de la revisión de la pila de IA) |
-| Quién | Solo la marca `isPlatformAdmin`, desde la sección de plataforma de Ajustes (`PATCH /api/plataforma`) |
+| Quién | Solo la marca `isPlatformAdmin`, desde la sección de plataforma de Ajustes (`PATCH /api/plataforma`). Cada cambio deja una fila en `anonymisation-setting-changes` con alcance `plataforma` (commit 887fae32, desplegado) |
 | Si falla la lectura | Devuelve `none`: falla cerrada, sin caché, para no deshacer un `none` guardado a propósito |
 | Caché | 30 s (`TTL_MS` en `apps/backend/src/lib/platformSettings.ts`) |
 | Valor de entorno inválido | Si no hay valor guardado y la variable es inválida, la llamada lanza error y el documento queda retenido |
-| Riesgo | Con `hosted`, el texto sin anonimizar de un testimonio puede salir a un proveedor externo. El plan es poner `none` antes del primer testimonio real. Ver [protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md). |
+| Riesgo | Con `hosted`, el texto sin anonimizar de un testimonio puede salir a un proveedor externo. Por OpenRouter va con ZDR (sin retención en el proveedor). DeepInfra, que ai-service usa para el reordenamiento (`rerank-client.ts`), no lleva ZDR. El plan es poner `none` antes del primer testimonio real. Ver [protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md). |
 | Historia | F3.2 |
 
 ### Variables de entorno que actúan como funciones

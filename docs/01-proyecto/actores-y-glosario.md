@@ -1,7 +1,7 @@
 # Actores y glosario
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
 - **Fuentes:** en el repositorio: `apps/backend/src/lib/permissions.ts`, `apps/web/src/lib/miembros.ts`, `apps/web/src/lib/features.ts`, `plan/anonimizacion-y-voces.md`, `plan/adr-corpus-graph.md`, `infra/fleet/edc-1.md`. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v1-brief-repositorio-voces-resonancias.md`, `reus/260418/` (reunión del 18 de abril de 2026), `reus/260511-kickoff/` (kickoff del 11 de mayo de 2026), las minutas de `docs/Textos del proyecto/Desarrollo (metodología)/` (18 de junio, 3 de julio, 8 de agosto, 21 de octubre), y la bitácora del proyecto (registros del 2026-10-21, 2026-10-27 y 2026-10-28).
 
@@ -69,8 +69,8 @@ flowchart LR
 | `estudiante` | estudiante | Participa como un participante y, si el ecosistema tiene encendida la vista de estudiante, tiene su propia vista con sus temas, sus autores, sus compañeros y la publicación de sus notas. |
 | `member` | participante | Conversa con el acervo, sube sus documentos y notas, valora respuestas y explora la Biblioteca y las Conexiones; lo suyo se publica solo al pasar el gate si el ecosistema lo permite. |
 | `admin` | administra | Además de lo del participante, sube testimonios, revisa lo retenido, borra documentos, lee los comentarios de las valoraciones y gestiona miembros; la pantalla Miembros no lo ofrece y solo se asigna por datos (`apps/web/src/lib/miembros.ts`). |
-| `investigador` | investigador | Es «como admin, pero solo dentro de los ecosistemas que tiene asignados»: además entra a Ajustes del ecosistema, al resumen de administración y a la vista docente de seguimiento. |
-| `owner` | responsable | Tiene los mismos permisos que el investigador y además gestiona investigadores, cambia el identificador del ecosistema o lo apaga. |
+| `investigador` | investigador | Es «como admin, pero solo dentro de los ecosistemas que tiene asignados»: además entra al resumen de administración y a la vista docente de seguimiento. Hasta el 2026-11-10 también guardaba Ajustes del ecosistema; desde esa fecha no (en `main`, pendiente de desplegar en dev). |
+| `owner` | responsable | Tiene los permisos del investigador y además guarda Ajustes del ecosistema (`organization:manage`), gestiona investigadores, cambia el identificador del ecosistema o lo apaga. |
 | `isPlatformAdmin` (marca del usuario) | Admin | Administra toda la plataforma: recibe permisos de responsable en todos los ecosistemas activos, crea ecosistemas, decide el respaldo del detector, los estilos de respuesta, las funciones bloqueadas y corre las evaluaciones. |
 
 La matriz completa de permisos está en [Matriz de roles y permisos](../02-requisitos/matriz-roles-y-permisos.md).
@@ -82,7 +82,7 @@ El brief v1 §5 proponía, como preliminares: super admin, admin de ecosistema, 
 | Rol del brief | Equivalente en EDC |
 |---|---|
 | Super admin | Administrador de plataforma |
-| Admin de ecosistema | `owner` (responsable) e `investigador` |
+| Admin de ecosistema | `owner` (responsable); `investigador` para todo menos Ajustes |
 | Usuario contribuidor | `member` (participante) |
 | Moderador-facilitador | No existe como rol. Sus tareas de revisión las hacen `admin`, `investigador` y `owner` |
 | Capturador | No existe. Ver [Visión y alcance](vision-y-alcance.md) §7 |
@@ -164,7 +164,7 @@ Cada término lleva una definición en lenguaje llano y, cuando aplica, su nombr
 | Término | Definición | Fuente |
 |---|---|---|
 | **Testimonio** | Un `contentKind` de valor `testimonio`: una voz personal. Siempre se anonimiza con el gate, nunca guarda quién habla y su grabación no se comparte | Decisión del responsable de desarrollo del 2026-10-21; `Documents.ts` |
-| **Documento** | Un `contentKind` de valor `documento`: material subido, como un PDF o una hoja de cálculo. No pasa por el gate salvo que se marque «Anonimizar» | Ídem |
+| **Documento** | Un `contentKind` de valor `documento`: material subido, como un PDF o una hoja de cálculo. No pasa por el gate salvo que se marque «Anonimizar»; desde el 2026-11-10 esa casilla arranca encendida al subir (en `main`, pendiente de desplegar en dev). Si pasa por el gate, su título se redacta para todos salvo quien lo subió y el admin de plataforma (en `main`, pendiente de desplegar en dev) | Ídem; `apps/backend/src/lib/contentKind.ts` |
 | **Conversación** | Un `contentKind` de valor `conversacion`: los turnos de chat que entran al acervo después del gate | `plan/adr-corpus-graph.md` |
 | **Nota** | Un texto escrito en la plataforma por una persona; el estudiante puede publicarla y publicar sus cambios | Historias C1.2 y C3.2 |
 | **Generales** | La pestaña de conversación que responde con fuentes citadas [n] | Decisión del responsable de desarrollo (octubre de 2026) |
@@ -175,14 +175,14 @@ Cada término lleva una definición en lenguaje llano y, cuando aplica, su nombr
 | **Mis documentos** | La lista de lo que subió la persona, con opción de usarlo en una conversación, fijarlo como contexto, descargar el original o borrarlo | Historias C2.x |
 | **Revisión** | La pantalla donde quien tiene permiso aprueba o rechaza los documentos retenidos por el gate. Muestra la cola y el motivo, nunca el texto original | Commits del 28 de agosto de 2026 |
 | **Miembros** | La pantalla para agregar personas a un ecosistema y cambiar su rol | Historias F2.x |
-| **Ajustes** | La pantalla donde se encienden o apagan las funciones del ecosistema y se elige el estilo de respuesta | Historias F3.x |
+| **Ajustes** | La pantalla del responsable del ecosistema donde se encienden o apagan sus funciones. El estilo de respuesta y la sección de plataforma solo los edita el admin de plataforma | Historias F3.x; `apps/web/src/routes/ajustes/+page.server.ts` |
 | **Interruptor por ecosistema** | Una función que se activa o desactiva por ecosistema: micrófono en vivo, grafo, vista 3D, modo entrevista, publicación automática, vista de estudiante, entre otras | `apps/web/src/lib/features.ts` |
 | **Vista de estudiante** | La ruta `/estudiante`, con temas, autores, compañeros, preguntas para investigar y sugerencias. Solo Semiosis práctica la tiene encendida | Decisión del responsable de desarrollo (octubre de 2026) |
 | **Seguimiento** | La vista docente (`/seguimiento`) que muestra la actividad de un estudiante si este dio su consentimiento | Historias E2.x |
 | **Consentimiento versionado** | El consentimiento del estudiante para compartir sus testimonios: lleva fecha y versión y nombra a todos los lectores | Commit del 28 de octubre de 2026 |
 | **Estilo de respuesta** | El tono y la forma en que el chat de un ecosistema responde; lo elige el admin de plataforma | `apps/web/src/lib/answerStyle.ts` |
 | **Valoración** | Las estrellas de 1 a 5 y el comentario opcional que una persona deja sobre una respuesta | Historias B2.x |
-| **Micrófono en vivo** | El dictado que muestra el texto mientras se habla. El texto parcial nunca se guarda | `app/api/live/[sid]/route.ts` |
+| **Micrófono en vivo** | El dictado que muestra el texto mientras se habla. El servidor nunca guarda el texto parcial. En dev (367c2698) ese texto todavía cae en el cuadro del chat y, si se envía, se guarda como mensaje; desde el 2026-11-10 se ve al grabar y no pasa al cuadro (commit aa73e01f, pendiente de desplegar en dev) | `app/api/live/[sid]/route.ts`; auditoría del 2026-11-10, C-13 |
 | **Panorama del corpus** | Una pregunta sobre el acervo completo («dame un resumen del corpus») que se responde con los temas principales del grafo y la lista de documentos, sin buscar pasajes | `apps/web/src/lib/server/engine/overview.ts` |
 | **Figura pública** | Una persona cuyo nombre se conserva en un `documento` con gate si un admin de plataforma enciende `keepPublicFigures`. Nunca aplica a testimonios | `apps/backend/src/lib/features.ts` |
 
@@ -198,8 +198,11 @@ Cada término lleva una definición en lenguaje llano y, cuando aplica, su nombr
 | **`kind`** | El campo de `documents` que dice el formato del archivo (markdown, pdf, docx, audio…). Es distinto de `contentKind` | Ídem |
 | **Gate (de anonimización)** | El paso obligatorio que, antes de publicar, quita datos que identifican a personas. Tiene cuatro etapas: estructural, determinista (correos, teléfonos, CURP, RFC, códigos postales, URLs, miembros), detector con modelo y verificación. Solo devuelve `ready` o `hold` y falla cerrado | `apps/backend/src/lib/anonymise/gate.ts` |
 | **Detector** | El modelo de lenguaje que, dentro del gate, encuentra nombres y otros datos personales en ventanas de unas 250 palabras. En dev corre en el Spark | `apps/backend/src/lib/anonymise/detector.ts` |
-| **Respaldo del detector** | Qué pasa si el Spark falla: `hosted` manda el texto a un modelo hospedado; `none` retiene. Hoy el valor por defecto es `hosted` | `apps/backend/src/lib/anonymise/fallbackGenerator.ts` |
+| **Respaldo del detector** | Qué pasa si el Spark falla: `hosted` manda el texto a un modelo hospedado por OpenRouter, con ZDR; `none` retiene, y sin URL del Spark tampoco llama al hospedado. Hoy el valor por defecto es `hosted`, y es el que usa dev desde el 2026-11-09 (citado de `infra/fleet/edc-1.md` §4zzzzzzz) | `apps/backend/src/lib/anonymise/fallbackGenerator.ts`; `apps/backend/src/lib/anonymise/detector.ts` |
 | **Held (retenido)** | El estado de un documento que el gate no pudo anonimizar con certeza. Espera revisión humana en Revisión | Bitácora del proyecto |
+| **Retenido por consentimiento (`consentHeld`)** | Una marca en un documento cuyos autores no han dado su consentimiento. Mientras la tenga, no se re-anonimiza, no se vuelve a ingerir ni a extraer al grafo y no se publica; no se borra nada. Los ids salen de `CONSENT_IDS_FILE`, por el script `scripts/hold-for-consent.ts`. Levantarla es un `UPDATE` a mano. En `main`, pendiente de desplegar en dev | `apps/backend/src/lib/consentHold.ts` |
+| **Re-gate** | Volver a pasar por la compuerta un documento cuyo veredicto se hizo con otros interruptores; antes se retira del acervo y se borran sus copias y sus filas del grafo | `apps/backend/src/lib/anonymisationControls.ts` |
+| **ZDR (retención cero de datos)** | La marca `provider.zdr: true` que ai-service manda en cada llamada a OpenRouter: solo responden proveedores que no guardan lo que reciben. DeepInfra, usado para el reordenamiento y el respaldo de vectores, no la lleva | `services/ai-service/src/services/ai/router/adapters/openrouter.ts` |
 | **Ready** | El veredicto del gate cuando el texto quedó anonimizado y puede publicarse | `gate.ts` |
 | **Seudónimo** | La marca que reemplaza un dato tachado, como `[Persona A]` o `[Domicilio A]`. El mapa vive solo en memoria y para un documento | `apps/backend/src/lib/anonymise/pseudonyms.ts` |
 | **Voces sin sujeto** | La decisión de no guardar quién habla en un testimonio, porque un sujeto guardado sería un mapa de reidentificación | Decisión del 2026-08-28; `plan/anonimizacion-y-voces.md` |
