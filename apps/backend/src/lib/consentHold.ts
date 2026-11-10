@@ -191,3 +191,24 @@ export async function holdForConsent(
   }
   return { apply: opts.apply, rows: found, refused, held, notDraft }
 }
+
+/** A line of an ids file that names a row NOT to hold. */
+export const NOT_TO_HOLD_MARK = 'EXTRA-NO-TALLER'
+
+/**
+ * Ids from a tab-separated list (`id<TAB>origin<TAB>note`): `#` lines and
+ * blank lines skipped, and any line marked {@link NOT_TO_HOLD_MARK} left out.
+ * A first column that is not a number is an error, never a silent skip.
+ */
+export function parseConsentIdsFile(text: string): string[] {
+  const ids: string[] = []
+  for (const [i, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    if (line.includes(NOT_TO_HOLD_MARK)) continue
+    const id = line.split('\t')[0]!.trim()
+    if (!/^\d+$/.test(id)) throw new Error(`line ${i + 1}: first column is not an id`)
+    ids.push(id)
+  }
+  return [...new Set(ids)]
+}

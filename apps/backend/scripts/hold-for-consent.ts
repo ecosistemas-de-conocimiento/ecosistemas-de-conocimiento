@@ -27,6 +27,9 @@
  * honoured too when it does).
  *   CONSENT_ORG          required, the ecosistema id.
  *   CONSENT_IDS          csv of document ids. When set, the filters are ignored.
+ *   CONSENT_IDS_FILE     a tab-separated ids file (`id<TAB>origin<TAB>note`, `#`
+ *                        comments); lines marked EXTRA-NO-TALLER are left out.
+ *                        Read in place of CONSENT_IDS, never copied by hand.
  *   CONSENT_STATUS       filter: `publication_status` (draft, published, …).
  *   CONSENT_UPLOADED_BY  filter: uploader's user id.
  *   CONSENT_HAS_FILE=1   filter: only rows with an uploaded file (not in-app notes).
@@ -35,7 +38,10 @@
  * plus the backend's usual DATABASE_URI.
  */
 
-import { holdForConsent, type ConsentHoldSelection } from '../src/lib/consentHold'
+import { readFileSync } from 'node:fs'
+
+import { holdForConsent, parseConsentIdsFile, type ConsentHoldSelection } from '../src/lib/consentHold'
+import { errSummary } from '../src/lib/errorSummary'
 
 const env = (name: string): string | undefined => {
   const v = process.env[name]?.trim()
@@ -50,10 +56,14 @@ const int = (name: string): number | undefined => {
 
 async function main(): Promise<void> {
   const apply = process.env.CONSENT_APPLY === '1' || process.argv.includes('--apply')
-  const ids = (env('CONSENT_IDS') ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const file = env('CONSENT_IDS_FILE')
+  const ids = file
+    ? parseConsentIdsFile(readFileSync(file, 'utf8'))
+    : (env('CONSENT_IDS') ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+  if (file) console.log(`[hold-for-consent] ${ids.length} ids read from ${file}`)
   const selection: ConsentHoldSelection = {
     organizationId: env('CONSENT_ORG') ?? '',
     ...(ids.length > 0
@@ -98,6 +108,6 @@ try {
   await main()
   process.exit(process.exitCode ?? 0)
 } catch (err) {
-  console.error('[hold-for-consent] failed:', err)
+  console.error('[hold-for-consent] failed:', errSummary(err))
   process.exit(1)
 }
