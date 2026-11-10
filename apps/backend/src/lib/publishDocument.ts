@@ -60,6 +60,7 @@ import { CONSENT_HELD_MESSAGE, isConsentHeld, readConsentHeld } from './consentH
 import { updateDocumentColumns } from './documentColumns'
 import { chunkMetadata, contentKindOf, knownContentKind, titleFor } from './contentKind'
 import { draftCorpus, publishedCorpus } from './corpus'
+import { safeErrMessage } from './errorSummary'
 
 /**
  * The publication states a document can be in.
@@ -998,7 +999,7 @@ export async function eraseWithdrawnCopies(
       }
       failed.push(corpus)
       logger.warn(
-        { corpus, documentId: String(documentId), err: String(err) },
+        { corpus, documentId: String(documentId), err: safeErrMessage(err) },
         '[withdraw] could not erase a withdrawn document — it is retired but its chunks are still stored.',
       )
     }
@@ -1069,7 +1070,7 @@ export async function retireDeletedDocument(
     } catch (err) {
       if (isDocumentAbsent(err)) continue
       log?.warn(
-        { corpus, documentId: String(doc.id), err: String(err) },
+        { corpus, documentId: String(doc.id), err: safeErrMessage(err) },
         '[delete] per-document delete failed — falling back to retiring it (chunks stay stored).',
       )
     }
@@ -1080,7 +1081,7 @@ export async function retireDeletedDocument(
       // this document to colleagues, and one unreachable corpus must not stop
       // us reaching it.
       log?.warn(
-        { corpus, documentId: String(doc.id), err: String(err) },
+        { corpus, documentId: String(doc.id), err: safeErrMessage(err) },
         '[delete] could not delete or retire a deleted document — its chunks remain retrievable in this corpus.',
       )
     }

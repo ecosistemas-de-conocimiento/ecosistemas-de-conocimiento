@@ -46,7 +46,7 @@ import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
 import { startCallbackRetentionJanitor } from './lib/callbackRetention'
 import { startEmbeddingJanitor } from './lib/embeddingJanitor'
-import { safeErrSerializer } from './lib/errorSummary'
+import { safeErrMessage, safeErrSerializer } from './lib/errorSummary'
 import { startGraphOrphanJanitor } from './lib/graph/orphanJanitor'
 import { startIngestRecoveryJanitor } from './lib/ingestRecovery'
 import { ensureEcosystemBudgets } from './lib/provisionEcosystem'
@@ -336,7 +336,7 @@ export default buildConfig({
         }
       } catch (err) {
         payload.logger.warn(
-          { err: (err as Error).message },
+          { err: safeErrMessage(err) },
           '[seed-demo] failed to bootstrap the demo organization (continuing)',
         )
       }

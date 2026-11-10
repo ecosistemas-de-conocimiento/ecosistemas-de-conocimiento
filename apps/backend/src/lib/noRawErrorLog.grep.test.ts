@@ -25,12 +25,7 @@ const SHAPES = [
  * Each must leave this list once its sites are fixed; the test fails when one
  * is clean and still listed.
  */
-const PENDING = new Set([
-  'app/api/ai-service/callback/route.ts',
-  'collections/Documents.ts',
-  'lib/publishDocument.ts',
-  'payload.config.ts',
-])
+const PENDING = new Set<string>([])
 
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((d) => {

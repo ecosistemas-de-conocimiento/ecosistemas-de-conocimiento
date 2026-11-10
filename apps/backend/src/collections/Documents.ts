@@ -44,7 +44,7 @@ import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '..
 import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote, publishStudentNoteChanges } from '../lib/studentNotes'
 import { anonimizacionEndpoints } from '../lib/anonymisationControls'
 import { CONSENT_HELD_MESSAGE, isConsentHeld, readConsentHeld } from '../lib/consentHold'
-import { errSummary } from '../lib/errorSummary'
+import { errSummary, safeErrMessage } from '../lib/errorSummary'
 import {
   consumeCorpusCleanupSkip,
   isOwnersMedia,
@@ -1637,7 +1637,7 @@ const invalidateGraphOnContentKindChange: CollectionAfterChangeHook = async ({
           `${String(after.contentKind)}: graph rows dropped, marked for re-extraction`,
       )
     })().catch((err) => {
-      console.error('[graph] could not invalidate the graph for reclassified doc', docId, err)
+      console.error('[graph] could not invalidate the graph for reclassified doc', docId, safeErrMessage(err))
     })
   })
 
@@ -1710,7 +1710,7 @@ const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ context, d
     // Includes "the AI service is not configured at all", which is a normal
     // state for a local run with no admin key. Never fatal here.
     req.payload.logger.warn(
-      { documentId: String(row.id), err: String(err) },
+      { documentId: String(row.id), err: safeErrMessage(err) },
       '[delete] could not retire the deleted document; its chunks may stay retrievable.',
     )
   }
@@ -1824,7 +1824,7 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
       docId,
       `still not readable after ${RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)}ms —`,
       'giving up on extract+ingest',
-      lastError,
+      safeErrMessage(lastError),
     )
     return
   }
@@ -1945,7 +1945,7 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
         throw new TextTooLongError(DOCUMENT_TEXT_MAX_LENGTH)
       }
     } catch (err) {
-      console.error('[documents] extraction failed for doc', docId, err)
+      console.error('[documents] extraction failed for doc', docId, safeErrMessage(err))
       await payload.update({
         collection: 'documents',
         id: docId as never,
@@ -2169,7 +2169,7 @@ export async function scheduleGraphExtractionForDoc(args: {
       title: titleFor(knownContentKind(fresh), fresh.name),
     })
   } catch (err) {
-    console.error('[graph] could not schedule extraction for doc', docId, err)
+    console.error('[graph] could not schedule extraction for doc', docId, safeErrMessage(err))
   }
 }
 
@@ -2467,7 +2467,7 @@ export async function enqueueIngestForDoc(args: {
   try {
     client = getAppAIClient(organizationId)
   } catch (err) {
-    console.error('[documents] ai-client unavailable; ingest skipped for doc', docId, err)
+    console.error('[documents] ai-client unavailable; ingest skipped for doc', docId, safeErrMessage(err))
     return
   }
 
@@ -2584,7 +2584,7 @@ export async function enqueueIngestForDoc(args: {
       `[documents] enqueued ingest for doc ${docId} → ingestId=${result.ingestId} corpus=${corpus}`,
     )
   } catch (err) {
-    console.error('[documents] ingest.enqueue failed for doc', docId, err)
+    console.error('[documents] ingest.enqueue failed for doc', docId, safeErrMessage(err))
     // Use the same no-transaction `payload` handle as every other write here.
     // This used to be `req.payload`, whose transaction has already committed by
     // the time this `setImmediate` body runs — so the one write that reports a
@@ -4175,7 +4175,7 @@ async function deleteRevisionsHook({ id, req }: Parameters<CollectionBeforeDelet
       req,
     })
   } catch (err) {
-    console.error('[documents] could not delete the revision of note', id, err)
+    console.error('[documents] could not delete the revision of note', id, safeErrMessage(err))
   }
 }
 
