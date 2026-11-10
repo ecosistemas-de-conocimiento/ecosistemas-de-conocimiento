@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   RATE_LIMIT_WINDOW_MS,
   checkRateLimits,
+  createInProcessRateLimitStore,
   rateLimits,
   reserveRateLimits,
   resetRateLimits,
@@ -189,6 +190,17 @@ describe('reserve and release', () => {
     await held.release()
     expect((await reserveRateLimits([rule('r', 1)])).allowed).toBe(true)
     expect((await reserveRateLimits([rule('r', 1)])).allowed).toBe(false)
+  })
+
+  it('a release that empties a bucket deletes its key, so refunds leave nothing behind', async () => {
+    const store = createInProcessRateLimitStore()
+    const keys = (store as unknown as { buckets: Map<string, unknown> }).buckets
+    store.hit('emptied', 3, 60_000)
+    store.hit('kept', 3, 60_000)
+    store.hit('kept', 3, 60_000)
+    store.release('emptied')
+    store.release('kept')
+    expect([...keys.keys()]).toEqual(['kept'])
   })
 
   it('a denial counts nothing, not even in the rules before it', async () => {

@@ -105,6 +105,12 @@ const OVER_CAP_SWEEP_MIN_MS = 1_000
 /**
  * Hard ceiling on tracked keys, so a flood of distinct keys (spoofed
  * `X-Forwarded-For`, say) cannot exhaust memory. ~20MB at this size.
+ *
+ * ⚠ Reaching it evicts live buckets, which hands their owners fresh budget, so
+ * one caller must not be able to reach it alone. The login buckets see to that
+ * for themselves: one IP holds at most its per-IP ceiling of (IP, email) keys,
+ * because a refused request creates none and a refund deletes an emptied one
+ * (see `loginRateLimit.ts`).
  */
 const MAX_TRACKED_KEYS = 50_000
 /**
@@ -174,7 +180,12 @@ class InProcessSlidingWindowStore implements RateLimitStore {
   release(key: string): void {
     // `hits` is in time order, so the newest is last. It is the slot just
     // reserved, or one taken a moment later; either way the count drops by one.
-    this.buckets.get(key)?.hits.pop()
+    const bucket = this.buckets.get(key)
+    if (!bucket) return
+    bucket.hits.pop()
+    // An empty bucket holds no budget, so it goes: a refunded attempt leaves
+    // no key behind, and a stream of refunds cannot fill the map to its cap.
+    if (bucket.hits.length === 0) this.buckets.delete(key)
   }
 
   reset(): void {

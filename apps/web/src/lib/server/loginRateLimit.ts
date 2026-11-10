@@ -7,7 +7,7 @@
 //
 // Payload's per-account lockout (5 failures, 10 minutes; quoted from Payload
 // 3.88's `collections/config/defaults.js`) stays as it is. In front of it:
-//   - per (IP, email): 4 failures per 10 minutes by default, one below the
+//   - per (IP, email): 4 failures per hour (3600 s) by default, one below the
 //     lockout (inferred from the quoted 5), so one IP cannot lock that account
 //     within a window, and a shared NAT does not block other accounts;
 //   - per IP across every email: 100 failures an hour by default (inferred: far
@@ -18,13 +18,34 @@
 // wrong password or a locked account. Synchronous, so two concurrent sign-ins
 // cannot both pass a check that has counted neither.
 //
+// One IP holds at most its per-IP ceiling of keys: the per-IP bucket is
+// checked first, a refused attempt counts nothing, the email is length-capped
+// (in `signIn`) and hashed before it is keyed, and a release that empties a
+// bucket deletes it. So one IP cannot fill the map to its cap and evict someone
+// else's live bucket (re-audit 2026-11-10, N3/N4).
+//
+// ⚠ Accepted, not fixed: more than 4 concurrent sign-ins to ONE account from
+// ONE IP get 429 even with the right password, since each holds a slot until
+// its answer refunds it. Only a shared account signed in to at the same instant
+// behind one NAT meets it, and a retry a moment later passes (inferred from the
+// reserve-then-refund order, not measured).
+//
 // ⚠ In-process: one web replica, reset by a deploy. That is what runs today.
 // A per-email limit across IPs is not here: new functionality, etapa 2.
 
+import { createHash } from 'node:crypto';
 import { env } from '$env/dynamic/private';
 
 /** The per-IP ceiling's window. */
 export const LOGIN_FAIL_WINDOW_MS = 60 * 60_000;
+/**
+ * Longer than this is refused before any key is built. 254 is the commonly
+ * cited practical maximum for an address (RFC 5321's 256-octet path, less its
+ * angle brackets); Payload 3.88's own `email` validation has no length cap
+ * (measured, `payload/dist/fields/validations.js`). The backend refuses the
+ * same length (`MAX_LOGIN_EMAIL_LENGTH` in `apps/backend/src/lib/loginRateLimit.ts`).
+ */
+export const MAX_LOGIN_EMAIL_LENGTH = 254;
 /** A flood of distinct keys must not grow this without bound. */
 const MAX_TRACKED_KEYS = 10_000;
 
@@ -46,15 +67,21 @@ interface Bucket {
   windowMs: number;
 }
 
+/** sha256, first 128 bits: a fixed-size key whatever was posted (collision ~2^64 addresses; inferred, birthday bound). */
+function emailKey(email: string): string {
+  return createHash('sha256').update(normaliseLoginEmail(email)).digest('hex').slice(0, 32);
+}
+
 function buckets(ip: string, email: string): Bucket[] {
   return [
+    // Per IP first, so a refusal by the ceiling is decided before the email is keyed.
+    { key: `ip:${ip}`, limit: envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX', 100), windowMs: LOGIN_FAIL_WINDOW_MS },
     // `|` cannot appear in an IP, so no (IP, email) pair aliases another.
     {
-      key: `ip-email:${ip}|${normaliseLoginEmail(email)}`,
+      key: `ip-email:${ip}|${emailKey(email)}`,
       limit: envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX', 4),
       windowMs: envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S', 3600) * 1000,
     },
-    { key: `ip:${ip}`, limit: envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX', 100), windowMs: LOGIN_FAIL_WINDOW_MS },
   ];
 }
 
@@ -105,9 +132,16 @@ export function reserveLoginAttempt(ip: string, email: string): LoginReservation
         const list = hits.get(b.key);
         const i = list?.indexOf(now) ?? -1;
         if (list && i >= 0) list.splice(i, 1);
+        // An empty bucket holds no budget: a refund leaves no key behind.
+        if (list?.length === 0) hits.delete(b.key);
       }
     },
   };
+}
+
+/** The keys held now. Tests. */
+export function loginRateLimitKeys(): string[] {
+  return [...hits.keys()];
 }
 
 /** Drop every counter. Tests. */

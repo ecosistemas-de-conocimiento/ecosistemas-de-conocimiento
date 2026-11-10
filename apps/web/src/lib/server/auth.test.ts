@@ -73,6 +73,19 @@ describe('loginWithBackend', () => {
     );
   });
 
+  it("reads the backend's 429 wait from Retry-After, else from its message", async () => {
+    const message = { errors: [{ message: 'Too many failed sign-ins. Retry in 1234s.' }] };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(message), { status: 429, headers: { 'Retry-After': '777' } })),
+    );
+    expect(await loginWithBackend('a@b.mx', 'x')).toMatchObject({ failure: 'rate-limited', retryAfterSeconds: 777 });
+    replyOnce(429, message);
+    expect((await loginWithBackend('a@b.mx', 'x')).retryAfterSeconds).toBe(1234);
+    replyOnce(429, { errors: [{ message: 'Too many.' }] });
+    expect((await loginWithBackend('a@b.mx', 'x')).retryAfterSeconds).toBeUndefined();
+  });
+
   it('classifies a 5xx as a server problem, not a bad password', async () => {
     replyOnce(500, { message: 'Internal Server Error' });
     expect((await loginWithBackend('a@b.mx', 'x')).failure).toBe('server');
