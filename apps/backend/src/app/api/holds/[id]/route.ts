@@ -33,7 +33,7 @@
  *   GET  200 HeldDetail
  *   POST 200 { id, decision, reviewId, anonymisationStatus }
  *        400 malformed body — `decision`, or an empty/oversized `text`
- *        401 not signed in
+ *        401 not signed in   413 body over 8 MiB
  *        404 no such held document, or not yours to review
  *        500 the read or the write itself failed
  */
@@ -42,6 +42,7 @@ import configPromise from '@payload-config'
 import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
+import { API_BODY_MAX_BYTES, readCapped, tooLarge } from '@/lib/bodyCap'
 import {
   HoldNotVisibleError,
   HoldReviewInputError,
@@ -98,9 +99,13 @@ export async function POST(request: Request, ctx: Ctx): Promise<Response> {
 
   const { id } = await ctx.params
 
+  // 🔴 Counted: a multipart label skips the middleware, and `json()` has no cap.
+  const bytes = await readCapped(request, API_BODY_MAX_BYTES)
+  if (!bytes) return tooLarge(API_BODY_MAX_BYTES)
+
   let body: Record<string, unknown>
   try {
-    const parsed: unknown = await request.json()
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes))
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('shape')
     body = parsed as Record<string, unknown>
   } catch {

@@ -12,8 +12,14 @@
  *     `API_BODY_MAX_BYTES` on any non-multipart `/api/*` request.
  *   · `withCappedBody` wraps Payload's REST routes and COUNTS the bytes, so a
  *     chunked body with no `Content-Length` stops at the same cap.
- *   · The callback receiver reads with `readCapped` at its own, lower cap.
- * Multipart is bounded by busboy's `upload.limits` in `payload.config.ts`.
+ *   · Our own routes read with `readCapped`: the callback receiver and live
+ *     slices at their own, lower caps, holds and published at this one.
+ *
+ * 🔴 A MULTIPART LABEL BUYS NOTHING OFF AN UPLOAD ROUTE (re-audit 2026-11-10,
+ * N2). Only Payload's own endpoints hand multipart to busboy; a custom
+ * endpoint calls `req.json()` on the raw stream, and several do it before they
+ * check who is asking. So only `isUploadRoute` skips the count, and there
+ * busboy's `upload.limits` in `payload.config.ts` bound the file and fields.
  *
  * ⚠ Edge-safe on purpose: the middleware imports this file. Web APIs only.
  */
@@ -39,8 +45,25 @@ export const API_BODY_MAX_BYTES = 8 * MiB
  */
 export const CALLBACK_BODY_MAX_BYTES = 2 * MiB
 
+/** Case-insensitive, as MIME types are. */
 export const isMultipart = (contentType: string | null): boolean =>
   /^multipart\//i.test(contentType ?? '')
+
+/**
+ * A write that takes a file: create and update-by-id on an upload collection
+ * (`upload:` in `collections/*.ts`; `media` alone, checked in the tests).
+ * Payload's own handlers there parse multipart with busboy and nothing else
+ * reads the body: `Media` has no custom endpoints, and the method-override
+ * POST reads only JSON and form-urlencoded (`handleEndpoints`, Payload 3.88).
+ */
+export function isUploadRoute(request: Request): boolean {
+  const method = request.method.toUpperCase()
+  const { pathname } = new URL(request.url)
+  return (
+    (method === 'POST' && pathname === '/api/media') ||
+    (method === 'PATCH' && /^\/api\/media\/[^/]+$/.test(pathname))
+  )
+}
 
 /** A `Content-Length` over `max`. Absent or unparseable is not "over": the reader counts. */
 export function declaresOver(request: Request, max: number): boolean {
@@ -85,12 +108,14 @@ export async function readCapped(request: Request, max: number): Promise<Uint8Ar
 
 /**
  * The request with its body read under `max`, or null past it. A request with
- * no body, a GET/HEAD, or multipart (busboy bounds that one) is returned as is.
+ * no body, a GET/HEAD, or multipart to an upload route (busboy bounds that
+ * one) is returned as is. Multipart anywhere else is counted like JSON, and
+ * Payload parses the copy: the admin panel sends every form as multipart.
  */
 export async function withCappedBody(request: Request, max: number): Promise<Request | null> {
   const method = request.method.toUpperCase()
   if (method === 'GET' || method === 'HEAD' || !request.body) return request
-  if (isMultipart(request.headers.get('content-type'))) return request
+  if (isMultipart(request.headers.get('content-type')) && isUploadRoute(request)) return request
   const bytes = await readCapped(request, max)
   // ⚠ Not `new Request(request, …)`: Next hands route handlers its own Request
   // class, and undici's constructor throws on it ("private member #state").
