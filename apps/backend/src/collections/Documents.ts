@@ -13,7 +13,7 @@ import type {
 } from 'payload'
 import { APIError, Forbidden, ValidationError } from 'payload'
 
-import { isPlatformAdminUser } from '../access'
+import { isActiveUser, isPlatformAdminUser } from '../access'
 import {
   ANONYMISATION_STATES,
   GATE_UNAVAILABLE_INGEST_CODE,
@@ -122,7 +122,8 @@ import {
  */
 export const visibleToCaller: Access = async ({ req }) => {
   const user = req.user
-  if (!user) return false
+  // A deactivated account sees nothing, its own drafts included.
+  if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
 
   const organizationIds = await organizationIdsForUser(req.payload, user.id)
@@ -552,7 +553,7 @@ export function hideRevisions(inner: Access): Access {
 }
 
 const uploaderOnly: Access = ({ req: { user } }) => {
-  if (!user) return false
+  if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
   return { uploadedBy: { equals: user.id } } satisfies Where
 }
@@ -2540,6 +2541,12 @@ export async function enqueueIngestForDoc(args: {
 // Audio → transcript
 // ---------------------------------------------------------------------------
 
+/** `audio.<ext>` from an uploaded filename's extension, or `audio` without one. */
+export function neutralAudioFilename(filename: string | null | undefined): string {
+  const ext = /\.([A-Za-z0-9]{1,8})$/.exec(filename ?? '')?.[1]
+  return ext ? `audio.${ext.toLowerCase()}` : 'audio'
+}
+
 /**
  * Hand one audio document to `services/audio-service` and record the job id.
  *
@@ -2636,11 +2643,14 @@ export async function startTranscription(args: {
 
     result = await submitTranscription({
       body: media.body,
-      filename: media.filename,
+      // 🔴 NO NAME LEAVES FOR audio-service. It keeps both (24 h, quoted from
+      // its `config.py`) and echoes them in every callback; an upload's name is
+      // often the speaker's. It only reads the extension, so that is all it gets.
+      filename: neutralAudioFilename(media.filename),
       contentType: media.contentType,
       // The join key back to this row. The callback echoes it as `externalId`.
       externalId: String(docId),
-      title: fresh.name ?? null,
+      title: null,
       // ⚠ The attempt number is IN the key. audio-service dedupes on it within our
       // (org, project), which is what makes a double-fire of the hook free — but
       // it also means a retry reusing the key would silently re-adopt the failed
@@ -2883,7 +2893,7 @@ export const Documents: CollectionConfig = {
     read: hideRevisions(visibleToCaller),
     update: hideRevisions(uploaderOnly),
     delete: hideRevisions(uploaderOnly),
-    create: ({ req: { user } }) => Boolean(user),
+    create: ({ req: { user } }) => isActiveUser(user),
   },
   fields: [
     {
@@ -3843,6 +3853,30 @@ export const Documents: CollectionConfig = {
 // ---------------------------------------------------------------------------
 
 /**
+ * 🔴 PUBLISHING, RETRYING AND EDITING A NOTE NEED A SEAT IN THE DOCUMENT'S
+ * ECOSISTEMA NOW: an active membership, in an active ecosistema, whose role
+ * carries `documents:write`. Being the uploader is not enough. `visibleToCaller`
+ * keeps a person's own drafts readable after they leave, and that clause is
+ * right for reading; without this check it also let someone who was removed
+ * (or whose seat was switched off) push their drafts into the shared corpus.
+ *
+ * ⚠ Unpublish and delete do not ask: whether someone who left may take their
+ * own material back is an open owner question.
+ */
+async function hasWriteSeatInDocumentEcosystem(
+  req: PayloadRequest,
+  doc: { organization?: unknown },
+): Promise<boolean> {
+  if (isPlatformAdminUser(req.user)) return true
+  const organizationId = relationId(doc.organization)
+  if (!req.user || organizationId == null) return false
+  const allowed = await organizationIdsForUserWithPermission(req.payload, req.user.id, PERMISSIONS.documentsWrite)
+  return allowed.some((id) => String(id) === String(organizationId))
+}
+
+const NO_WRITE_SEAT = 'You are no longer a member of this ecosistema with permission to file documents.'
+
+/**
  * Sharing a draft with the ecosistema, and taking it back.
  *
  * ⚠ THESE ARE NOT PLAIN FIELD WRITES, which is why they are endpoints rather
@@ -3898,6 +3932,7 @@ function documentActionEndpoint(
         // No ecosistema = no shared corpus and no ai-service org to publish into.
         return fail(409, 'This document has no ecosistema, so it cannot be published.')
       }
+      if (action === 'publish' && !(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
 
       const state = doc.publicationStatus
       // 🔴 "Publicar cambios": a student's PUBLISHED note whose body changed
@@ -4043,6 +4078,7 @@ function noteEditEndpoint(): Endpoint {
       if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
         return fail(403, 'Only the person who uploaded a document can edit it.')
       }
+      if (!(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
 
       let body: Record<string, unknown> = {}
       try {
@@ -4251,12 +4287,13 @@ function retryIngestEndpoint(): Endpoint {
           user,
           req,
         })
-        .catch(() => null)) as unknown as (RetryableDocument & { uploadedBy?: unknown }) | null
+        .catch(() => null)) as unknown as (RetryableDocument & { uploadedBy?: unknown; organization?: unknown }) | null
 
       if (!doc) return fail(404, 'No such document.')
       if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
         return fail(403, 'Only the person who uploaded a document can retry it.')
       }
+      if (!(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
 
       const data = planIngestRetry(doc)
       if (!data) {
@@ -4434,6 +4471,7 @@ function retryGraphEndpoint(): Endpoint {
         // rather than guess: a guessed organization is a cross-tenant write.
         return fail(409, 'This document has no ecosistema, so it has no graph scope.')
       }
+      if (!(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
 
       await scheduleGraphExtractionForDoc({
         payload: req.payload,

@@ -6,7 +6,7 @@ import type {
 } from 'payload'
 import { ValidationError } from 'payload'
 
-import { isPlatformAdminUser } from '../access'
+import { isActiveUser, isPlatformAdminUser } from '../access'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
 import { isCfb, looksLikeText } from '../lib/extract/text'
 import { MATROSKA_HEAD_BYTES, isAudioOnlyMatroska, isMatroska } from '../lib/webmTracks'
@@ -79,7 +79,8 @@ import { MATROSKA_HEAD_BYTES, isAudioOnlyMatroska, isMatroska } from '../lib/web
  */
 export const mediaVisibleToCaller: Access = async ({ req }) => {
   const user = req.user
-  if (!user) return false
+  // A deactivated account reaches no file, its own included.
+  if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
 
   // ⚠ UNCONDITIONAL, AND FIRST. A file whose document is still a draft, is
@@ -156,7 +157,7 @@ export const mediaVisibleToCaller: Access = async ({ req }) => {
  * together.
  */
 export const mediaUploaderOnly: Access = ({ req: { user } }) => {
-  if (!user) return false
+  if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
   return { uploadedBy: { equals: user.id } } satisfies Where
 }
@@ -574,9 +575,9 @@ export const Media: CollectionConfig = {
   },
   access: {
     read: mediaVisibleToCaller,
-    // Any signed-in account may upload; who it belongs to is decided by
+    // Any active account may upload; who it belongs to is decided by
     // `bindMediaToEcosystem`, not by the request body.
-    create: ({ req: { user } }) => Boolean(user),
+    create: ({ req: { user } }) => isActiveUser(user),
     update: mediaUploaderOnly,
     delete: mediaUploaderOnly,
   },
