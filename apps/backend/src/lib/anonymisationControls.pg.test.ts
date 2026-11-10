@@ -275,8 +275,9 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
       expect(res.status).toBe(200)
       expect(res.body).toEqual({
         id: DOC,
-        // 🔴 P-13: a gated documento with no redacted title on its report.
-        name: 'Documento',
+        // 🔴 P-13 / R4-01: the uploader and a platform admin read the file name, as
+        // over REST; a reviewer who did not upload it gets the gated title.
+        name: as === INES ? 'Documento' : 'notas.pdf',
         contentKind: 'documento',
         gated: true,
         publicationStatus: publication,
