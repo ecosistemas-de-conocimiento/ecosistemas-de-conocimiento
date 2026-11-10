@@ -97,7 +97,7 @@ describe('corrected vs the earlier contract', () => {
     expect(sync?.required).toContain('systemPromptApplied');
   });
 
-  it('5. POST /v1/generate/sync declares 503 (with retry-after), 504 and 499', () => {
+  it('5. POST /v1/generate/sync declares 502, 503 (with retry-after), 504 and 499', () => {
     const responses = doc().paths['/v1/generate/sync']?.['post']?.responses ?? {};
     expect(Object.keys(responses).sort()).toEqual([
       '200',
@@ -106,6 +106,7 @@ describe('corrected vs the earlier contract', () => {
       '402',
       '429',
       '499',
+      '502',
       '503',
       '504',
     ]);

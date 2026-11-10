@@ -497,8 +497,9 @@ const envSchema = z.object({
   WORKER_LOCK_DURATION_MS: z.coerce.number().int().positive().optional(),
 
   /**
-   * Inactivity/stall backstop on a streaming provider call: if no delta (or any
-   * SSE frame) arrives for this many ms, abort the stream. A stalled stream is
+   * Inactivity/stall backstop on a streaming provider call: if no model output
+   * (a text or reasoning delta) arrives for this many ms, abort the stream.
+   * Keepalive comments and empty chunks do NOT reset it. A stalled stream is
    * the more realistic hang than a slow-but-progressing one, so this default
    * (45s) is much tighter than the total cap above. Only applies to the
    * streaming adapter's read loop. Set to 0 to disable.

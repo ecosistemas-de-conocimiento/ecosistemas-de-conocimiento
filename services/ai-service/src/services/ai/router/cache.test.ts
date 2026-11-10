@@ -227,3 +227,20 @@ describe('getSharedRouterCache', () => {
     expect(a).toBe(b);
   });
 });
+
+describe('RouterCache never stores an empty answer', () => {
+  // Measured on dev 2026-11-10: a cached empty completion was re-served to a
+  // later identical request in 0 ms.
+  it.each([[''], ['   '], ['\n\t ']])('refuses contentText %j', (contentText) => {
+    const cache = new RouterCache({ max: 10 });
+    cache.set('k', makeEntry({ contentText }));
+    expect(cache.has('k')).toBe(false);
+    expect(cache.get('k')).toBeUndefined();
+  });
+
+  it('still stores a real answer', () => {
+    const cache = new RouterCache({ max: 10 });
+    cache.set('k', makeEntry({ contentText: ' hola ' }));
+    expect(cache.get('k')?.contentText).toBe(' hola ');
+  });
+});
