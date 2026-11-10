@@ -846,6 +846,8 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
   } catch {
     /* reported by detect() */
   }
+  /** Set when `none` refused the hosted path: then no backend saw the text. */
+  let hostedRefused = false
   const backendName = () =>
     !selfHosted ? 'ai-service' : fallbackForName ? 'openai-compat+ai-service' : 'openai-compat'
 
@@ -865,7 +867,9 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
         opts.name ??
         (selfHosted
           ? `openai-compat:${(process.env[ANONYMISE_DETECT_MODEL_VAR] ?? '').trim() || 'unset'}${fallbackForName ? '+fallback' : ''}`
-          : 'ai-service:anonymise-detect')
+          : hostedRefused
+            ? 'none'
+            : 'ai-service:anonymise-detect')
       )
     },
     async detect({ text, contentKind, classifyPublic }) {
@@ -886,6 +890,17 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
         )
       }
       if (!client) {
+        // 🔴 `none` MEANS NO HOSTED DETECTOR, with or without a Spark (audit
+        // 2026-11-10, P-05): staging has no `ANONYMISE_DETECT_URL`, and `none`
+        // there used to send every text to ai-service anyway. Not
+        // `infrastructure`: config, not a blip, so the gate HOLDS the document.
+        if ((await detectorFallbackMode()) === 'none') {
+          hostedRefused = true
+          throw new DetectorFailure(
+            'sin-detector',
+            `${ANONYMISE_DETECT_URL_VAR} is unset and the detector fallback is "none": no hosted call`,
+          )
+        }
         client = await hostedClient()
         logBackendOnce('ai-service /v1/generate/sync')
       }

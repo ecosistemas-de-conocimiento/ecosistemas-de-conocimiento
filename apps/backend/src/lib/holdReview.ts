@@ -162,17 +162,30 @@ export class HoldSettingsChangedError extends HoldReviewInputError {
 }
 
 /**
- * True when the switches the hold was made under (its report's `settings`;
- * absent = both off) differ from what the row would run with now.
+ * 🔴 A `content` HOLD IS NEVER APPROVED AS-IS (audit 2026-11-10, P-01). The
+ * model did not finish stage 3 there, or reported a name it could not find in
+ * the text: nothing vouches for what `heldText` still carries. The reviewer
+ * must send a text that differs from it, or reject.
+ */
+export class HoldContentAsIsError extends HoldReviewInputError {
+  constructor() {
+    super('Esta retención no se puede aprobar tal cual. Corrige el texto antes de aprobarlo, o recházalo.')
+    this.name = 'HoldContentAsIsError'
+  }
+}
+
+/**
+ * True when the switches the hold was made under (its report's `settings`,
+ * read by `verdictSettings`) differ from what the row would run with now —
+ * every switch in `ANONYMISE_SWITCHES`, `keepPublicFigures` included
+ * (`verdictMismatch`, the same test the re-gate uses).
  */
 export async function holdSettingsChanged(payload: Payload, row: Record<string, unknown>): Promise<boolean> {
-  const { effectiveSwitches, switchesApply, verdictSettings } = await import('./publicFigures')
+  const { effectiveSwitches, switchesApply, verdictMismatch } = await import('./publicFigures')
   if (!switchesApply(row.contentKind)) return false
   const org = relationId(row.organization)
   if (org === null) return true
-  const made = verdictSettings(row)
-  const now = await effectiveSwitches(payload, org, row)
-  return now.keepDocumentAuthor.value !== made.keepDocumentAuthor || now.keepCitedAuthors.value !== made.keepCitedAuthors
+  return verdictMismatch(row, await effectiveSwitches(payload, org, row)).length > 0
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +362,18 @@ export async function listHeldDocuments(args: {
   }
 }
 
+/**
+ * 🔴 P-01 / 1129: a `content` hold whose model never ran (`gate.ts`, "La
+ * revisión automática no pudo terminar"). No model checked its text: a row
+ * from before P-01 still stores stage 2's near-raw output in `heldText`, with
+ * every third-party name in it. Its text is never shown and it is never
+ * approved, with or without an "edit": the only way out is to reject it.
+ */
+const MODEL_NEVER_RAN = 'La revisión automática no pudo terminar'
+function modelNeverRan(stage: string | null, reason: string | null): boolean {
+  return stage === 'content' && typeof reason === 'string' && reason.startsWith(MODEL_NEVER_RAN)
+}
+
 /** One held document, with the text and the flags a reviewer acts on. */
 export async function heldDocument(args: {
   payload: Payload
@@ -356,10 +381,12 @@ export async function heldDocument(args: {
   user: unknown
 }): Promise<HeldDetail> {
   const row = await loadHeldRow(args)
+  const { stage, reason } = splitError(row.anonymisationError)
+  const unchecked = modelNeverRan(stage, reason)
   return {
     ...summarize(row),
-    heldText: text(row.heldText),
-    survivors: survivorsOf(row.anonymisationSurvivors),
+    heldText: unchecked ? null : text(row.heldText),
+    survivors: unchecked ? [] : survivorsOf(row.anonymisationSurvivors),
     report: (row.anonymisationReport as GateReport | null) ?? null,
     publicFiguresKept: publicFiguresOf(row.publicFiguresKept),
   }
@@ -474,6 +501,7 @@ export async function decideOnHold(args: {
   let textEdited = false
 
   if (decision === 'approve') {
+    if (modelNeverRan(stage, reason)) throw new HoldContentAsIsError()
     if (await holdSettingsChanged(payload, row as unknown as Record<string, unknown>)) throw new HoldSettingsChangedError()
     const supplied = typeof args.text === 'string' ? args.text : null
     // The gate's own refused output is the default, so "approve as-is" needs no
@@ -491,8 +519,10 @@ export async function decideOnHold(args: {
         )
       }
       textEdited = supplied !== gateOutput
+      if (stage === 'content' && !textEdited) throw new HoldContentAsIsError()
       approvedText = supplied
     } else {
+      if (stage === 'content') throw new HoldContentAsIsError()
       if (gateOutput === null) {
         // A `structural` hold produced no output, so there is nothing to approve
         // as-is. Refusing is right: the alternative is silently reaching for

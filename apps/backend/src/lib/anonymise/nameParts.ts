@@ -178,7 +178,7 @@ export interface NamePartRegistry {
    * The span whose label a name (a part, or a one-word finding) should take:
    * its single owner, or null when it has none or several.
    */
-  ownerOf(name: string, labelOf: (span: string) => string): string | null
+  ownerOf(name: string, labelOf: (span: string) => string | undefined): string | null
   /** The folded name parts of every registered span that carries `label`. */
   partsWithLabel(label: string, labelOf: (span: string) => string | undefined): Array<ReadonlySet<string>>
 }
@@ -221,9 +221,11 @@ export function createNamePartRegistry(): NamePartRegistry {
       const set = owners.get(normaliseName(name))
       if (!set || set.size === 0) return null
       const spans = [...set]
-      // Owners are people already redacted, so `labelOf` returns their
-      // existing labels; "Don Fernando Vázquez" / "Fernando Vázquez" share one.
-      const labels = new Set(spans.map(labelOf))
+      // Owners already redacted have labels; "Don Fernando Vázquez" /
+      // "Fernando Vázquez" share one. 🔴 An owner WITHOUT one (a documento's
+      // roster member not in the text, Q13 A) counts as its own person: two
+      // absent "María"s still make a bare "María" ambiguous.
+      const labels = new Set(spans.map((span) => labelOf(span) ?? `\u0000${normaliseName(span)}`))
       return labels.size === 1 ? (spans[0] as string) : null
     },
   }

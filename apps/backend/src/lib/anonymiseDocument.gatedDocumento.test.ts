@@ -357,6 +357,7 @@ describe('anonymiseDocumentText — citedAuthorsKept and the settings snapshot',
     expect((fake.last('anonymisationReport') as { settings?: unknown }).settings).toEqual({
       keepDocumentAuthor: false,
       keepCitedAuthors: true,
+      keepPublicFigures: false,
     })
   })
 

@@ -542,6 +542,18 @@ export const NO_SURVIVORS =
 export const NO_TEXT_NOTICE =
   'Este documento no llegó a producir texto, así que no hay nada que leer ni que aprobar. Puedes rechazarlo.';
 
+/**
+ * 🔴 A `content` hold: the model did not finish (no text kept, P-01) or
+ * reported a name it could not place. Never approved as-is.
+ */
+export const NO_CHECKED_TEXT_NOTICE = 'No hay texto revisado que aprobar. Puedes rechazarlo.';
+export const EDIT_TO_APPROVE = 'Para aprobarlo, corrige el texto.';
+
+/** True when this hold may only be approved with an edited text. */
+export function mustEditToApprove(stage: string | null | undefined): boolean {
+  return stage === 'content';
+}
+
 // ── Approving ──────────────────────────────────────────────────────────────
 //
 // 🔴 APPROVING IS OVERRIDING A SAFETY GATE. The button may not say "Aprobar"

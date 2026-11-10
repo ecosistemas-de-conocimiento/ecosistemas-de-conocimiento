@@ -220,7 +220,7 @@ function addressSpans(text: string): Span[] {
  *     No placeholder is ever spliced into an address, and no letter of the name
  *     is ever left beside one;
  *   · a match inside a placeholder this pipeline emitted is skipped. 🔴 ONLY
- *     those: `[Dato omitido]` and the labels in `ownLabels`. "[Persona ANA]"
+ *     those: `[Dato omitido]` and the labels `ownLabel` accepts. "[Persona ANA]"
  *     typed into a document is ordinary text, and the "Ana" in it is a name
  *     (audit).
  *
@@ -235,7 +235,7 @@ function rosterAndAddresses(
   text: string,
   entries: readonly string[],
   labelOf: (entry: string) => string,
-  ownLabels: ReadonlySet<string>,
+  ownLabel: (placeholder: string) => boolean,
 ): { text: string; spans: Span[] } {
   const addresses = addressSpans(text)
   const rules = [...new Set(addresses.map((a) => a.rule))]
@@ -253,7 +253,7 @@ function rosterAndAddresses(
   /** Real placeholders and accepted names: no later match may touch them. */
   const blocked = new Uint8Array(text.length)
   for (const m of text.matchAll(PLACEHOLDER_PATTERN)) {
-    if (m[0] === OMITTED_PLACEHOLDER || ownLabels.has(m[0])) {
+    if (m[0] === OMITTED_PLACEHOLDER || ownLabel(m[0])) {
       blocked.fill(1, m.index, m.index + m[0].length)
     }
   }
@@ -303,7 +303,8 @@ function rosterAndAddresses(
           continue
         }
       }
-      people.push({ start, end, rule: labelOf(entry), person: true })
+      // The label is allocated below, in text order, never here.
+      people.push({ start, end, rule: entry, person: true })
       blocked.fill(1, start, end)
     }
   }
@@ -313,6 +314,9 @@ function rosterAndAddresses(
   let out = ''
   let copied = 0
   for (const s of spans) {
+    // 🔴 The entry is swapped for its label on the span too: a span never
+    // carries a name out of this function.
+    if (s.person) s.rule = labelOf(s.rule)
     out += text.slice(copied, s.start) + (s.person ? s.rule : OMITTED_PLACEHOLDER)
     copied = s.end
   }
@@ -453,6 +457,11 @@ export interface DeterministicArgs {
    * allocators would restart at `A` and turn one house into two.
    */
   allocateAddress?: (address: string) => string
+  /**
+   * True for a placeholder the document's allocator already emitted (stage 1's
+   * bylines): a roster match inside one is skipped. Absent: none is.
+   */
+  ownLabel?: (placeholder: string) => boolean
 }
 
 function pushCount(into: RedactionCount[], label: string, count: number): void {
@@ -507,9 +516,12 @@ export function deterministicPass(args: DeterministicArgs): {
     // 🔴 An entry of only accent marks has nothing to match; it looped forever.
     .filter((e) => /[\p{L}\p{N}]/u.test(e))
     .sort((a, b) => b.length - a.length)
-  // Labels in roster order, before any match: the letters do not depend on
-  // which entry happens to be found first.
-  const labels = new Map(entries.map((e) => [e, args.allocate(e)]))
+  // 🔴 A LABEL ONLY FOR A MEMBER WHO IS IN THE TEXT, allocated in TEXT ORDER
+  // (navegador 2026-11-10, D1, doc 1439 on dev): labels used to be allocated
+  // for every entry before any match, so a documento naming 2 people in an
+  // ecosystem of 27 members said "Nombres reemplazados: 29" and started at
+  // `[Persona AB]`. A label nobody wears is a person counted who is not there,
+  // and the letters leak the size of the roster.
 
   // 🔴 THE TEXT IS DECOMPOSED FOR THIS PASS AND RECOMPOSED AFTER.
   //
@@ -523,12 +535,7 @@ export function deterministicPass(args: DeterministicArgs): {
   //
   // NFD→NFC is canonical-equivalence-preserving: it can change the BYTES of
   // text this stage did not redact, never the characters.
-  const first = rosterAndAddresses(
-    out.normalize('NFD'),
-    entries,
-    (e) => labels.get(e) ?? '',
-    new Set(labels.values()),
-  )
+  const first = rosterAndAddresses(out.normalize('NFD'), entries, args.allocate, args.ownLabel ?? (() => false))
   out = first.text.normalize('NFC')
   const countOf = (rule: string) => first.spans.filter((s) => !s.person && s.rule === rule).length
   pushCount(removed, DETERMINISTIC_LABELS.rosterPerson, first.spans.filter((s) => s.person).length)
@@ -582,5 +589,6 @@ export function deterministicPassStandalone(
     roster,
     allocate: (n) => allocator.labelFor(n),
     allocateAddress: (a) => allocator.addressLabelFor(a),
+    ownLabel: (p) => allocator.emitted(p),
   })
 }
