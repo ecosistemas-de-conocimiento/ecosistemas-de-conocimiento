@@ -369,7 +369,8 @@ async function loadActiveUser(payload: Payload, email: string): Promise<UserRow 
 
   const rows = await findAll<UserRow>(payload, 'users', { email: { equals: normalized } })
   const user = rows[0]
-  if (!user || user.isActive === false) return null
+  // `= true`, like every filter here: a NULL flag is no access.
+  if (!user || user.isActive !== true) return null
   return user
 }
 

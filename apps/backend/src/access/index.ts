@@ -47,19 +47,21 @@ const asPrincipal = (user: unknown): PrincipalLike | null =>
   user && typeof user === 'object' ? (user as PrincipalLike) : null
 
 /**
- * Active unless explicitly switched off. A row whose column is null (or a
- * request carrying a user shape from before the field existed) stays usable;
- * only a deliberate `false` locks the account out.
+ * Active unless switched off. ⚠ A NULL counts as off: `users.is_active` is a
+ * nullable column, and a stored row that says neither yes nor no should fail
+ * CLOSED (see `lib/permissions.ts`). Only a shape with NO such key passes as
+ * active — an in-process caller that built a user by hand. Payload loads
+ * `req.user` from the row, so a request never arrives without the key.
  */
 export function isActiveUser(user: unknown): boolean {
   const principal = asPrincipal(user)
-  return principal !== null && principal.isActive !== false
+  if (principal === null) return false
+  return principal.isActive === true || !('isActive' in principal)
 }
 
 /** True only for an ACTIVE account carrying the platform-admin flag. */
 export function isPlatformAdminUser(user: unknown): boolean {
-  const principal = asPrincipal(user)
-  return principal !== null && principal.isActive !== false && principal.isPlatformAdmin === true
+  return isActiveUser(user) && asPrincipal(user)?.isPlatformAdmin === true
 }
 
 /** The id of whoever is making this request, or `null` when nobody is. */

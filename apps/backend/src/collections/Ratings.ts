@@ -7,7 +7,7 @@ import type {
 } from 'payload'
 import { ValidationError } from 'payload'
 
-import { isPlatformAdminUser, withinMyOrganizations } from '../access'
+import { isActiveUser, isPlatformAdminUser, withinMyOrganizations } from '../access'
 import {
   organizationIdsForUser,
   organizationIdsForUserWithPermission,
@@ -460,14 +460,14 @@ export const Ratings: CollectionConfig = {
     // needs to see their organization's ratings, and a rating carries no
     // conversation content of its own — only a star count and an optional note.
     read: withinMyOrganizations(),
-    // Anyone signed in may attempt a write; `stampAndValidate` is what decides
+    // Any active account may attempt a write; `stampAndValidate` is what decides
     // whether the specific message is rateable by this specific person. A
     // where-constraint here cannot express "and the message is an assistant
     // turn in your own session", so the rules live in the hook.
-    create: ({ req: { user } }) => Boolean(user),
+    create: ({ req: { user } }) => isActiveUser(user),
     // You edit your own rating and nobody else's.
-    update: ({ req: { user } }) => (user ? { user: { equals: user.id } } : false),
-    delete: ({ req: { user } }) => (user ? { user: { equals: user.id } } : false),
+    update: ({ req: { user } }) => (user && isActiveUser(user) ? { user: { equals: user.id } } : false),
+    delete: ({ req: { user } }) => (user && isActiveUser(user) ? { user: { equals: user.id } } : false),
   },
   hooks: {
     // ⚠ ORDER IS LOAD-BEARING — see `stampAndValidate`.

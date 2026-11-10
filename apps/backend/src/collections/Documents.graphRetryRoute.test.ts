@@ -41,7 +41,17 @@ function makeReq(id: string | undefined) {
     req: {
       user: { id: 3 },
       routeParams: { id },
-      payload: { findByID, update: async () => row },
+      payload: {
+        findByID,
+        update: async () => row,
+        // An active `member` seat in the document's ecosistema (A-02).
+        find: async ({ collection }: { collection: string }) => ({
+          docs:
+            collection === 'memberships'
+              ? [{ user: 3, organization: 1, role: 'member', isActive: true }]
+              : [{ id: 1, slug: 'uno', isActive: true }],
+        }),
+      },
     } as never,
   }
 }

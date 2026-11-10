@@ -15,9 +15,9 @@ Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planea
 
 | Estado | Controles | Cuántos |
 |---|---|---|
-| **Implementado** | Autenticación por cookie y JWT; Tokens entre servicios EdDSA; Registro cerrado; Bloqueo por intentos; Control de acceso en servidor; Aislamiento por ecosistema; Columnas protegidas; Archivos propios; Avisos firmados con HMAC; Llaves de API con SHA-256 en tiempo constante; Token de servicio; Límites de tasa existentes; Tiempos máximos existentes; Markdown seguro; Secretos fuera del repo; Cifrado en tránsito público; Versiones fijadas; Firewall de Hetzner; Herramientas de contención (retiro de documento, interruptor, desactivar cuenta) | 19 |
+| **Implementado** | Autenticación por cookie y JWT; Tokens entre servicios EdDSA; Registro cerrado; Bloqueo por intentos; Correo fijo para la cuenta; Control de acceso en servidor; Aislamiento por ecosistema; Columnas protegidas; Archivos propios; Avisos firmados con HMAC; Llaves de API con SHA-256 en tiempo constante; Token de servicio; Límites de tasa existentes; Tiempos máximos existentes; Markdown seguro; Secretos fuera del repo; Cifrado en tránsito público; Versiones fijadas; Firewall de Hetzner; Herramientas de contención (retiro de documento, interruptor, desactivar cuenta) | 20 |
 | **Planeado** | Respaldos cifrados; Copia del `APP_KEY` de Coolify fuera de la caja; Alertas de caída y de disco; Conserje de sesiones; Respaldo del detector en `none`; Retención cero e inferencia independiente | 6 |
-| **Pendiente** | Límite de tasa en login; Cambio de correo propio; Separación entre quien sube y quien revisa; Llaves sin valor por defecto; Límite de turnos de chat y contador por ecosistema; Tiempo máximo en `fetchMe`; CSP y cabeceras; Secretos por servicio; Mínimo privilegio en base de datos; Cifrado hacia el Spark y dentro del servidor; Cifrado en reposo de volúmenes; Escaneo de dependencias; Endurecimiento de ssh; Puertos del servidor; Puertos de desarrollo local; Depuración de trazas de ai-service; Rotación de secretos con bitácora; Procedimiento de actualización ante avisos; Respuesta a incidentes y bitácora; Notificación de vulneraciones | 20 |
+| **Pendiente** | Límite de tasa en login; Verificación del correo; Separación entre quien sube y quien revisa; Llaves sin valor por defecto; Límite de turnos de chat y contador por ecosistema; Tiempo máximo en `fetchMe`; CSP y cabeceras; Secretos por servicio; Mínimo privilegio en base de datos; Cifrado hacia el Spark y dentro del servidor; Cifrado en reposo de volúmenes; Escaneo de dependencias; Endurecimiento de ssh; Puertos del servidor; Puertos de desarrollo local; Depuración de trazas de ai-service; Rotación de secretos con bitácora; Procedimiento de actualización ante avisos; Respuesta a incidentes y bitácora; Notificación de vulneraciones | 20 |
 
 Las secciones 2 a 7 marcan cada control o procedimiento. Lo más urgente:
 
@@ -113,11 +113,12 @@ flowchart LR
 |---|---|---|---|---|
 | Identidad | **Autenticación por cookie y JWT** | La sesión web es la cookie `chat_auth` con `httpOnly`, `SameSite=Lax` y `secure`, que lleva el JWT de Payload (2 h, valor por defecto de Payload); la cookie vive 7 días | `apps/web/src/lib/server/auth.ts` | **Implementado** |
 | Identidad | **Tokens entre servicios EdDSA** | Firmados con llave privada Ed25519, vigencia máxima 15 min; solo se acepta `alg=EdDSA` | `apps/backend/src/lib/jwt/sign.ts`; `packages/identity-client/src/verify.ts` | **Implementado** |
-| Identidad | **Registro cerrado** | No hay registro público; crea cuentas la administración de plataforma, o un responsable de ecosistema al agregar miembros | `apps/backend/src/collections/Users.ts`; `apps/backend/src/endpoints/miembros.ts` | **Implementado** |
+| Identidad | **Registro cerrado** | No hay registro público; crea cuentas la administración de plataforma, o quien gestiona miembros, al agregarlos por `/miembros` | `apps/backend/src/collections/Users.ts`; `apps/backend/src/endpoints/miembros.ts` | **Implementado** |
 | Identidad | **Bloqueo por intentos** | Valor por defecto de Payload, 5 intentos, no configurado en `Users.ts` (citado de `requisitos-no-funcionales.md`); desbloquear es solo de administración | `Users.ts` | **Implementado** |
 | Identidad | **Límite de tasa en login** | No existe. Hay límites en token, perfil, resolución y grafo, pero ninguno en el inicio de sesión | `apps/backend/src/lib/rateLimit.ts` | **Pendiente** |
-| Identidad | **Cambio de correo propio** | Una cuenta puede editar su propio registro; falta limitar el cambio de correo o pedir verificación | `Users.ts`; auditoría de código del 2026-10-28 | **Pendiente** |
-| Autorización | **Control de acceso en servidor** | Un mapa único de rol a permisos; todo permiso se revisa en el servidor; la cuenta inactiva no pasa; revocar a alguien corta su chat y su micrófono | `lib/permissions.ts`; `access/index.ts` | **Implementado** |
+| Identidad | **Correo fijo para la cuenta** | Solo la administración de plataforma cambia un correo; la cuenta no cambia el suyo | `Users.ts` (campo `email`) | **Implementado** |
+| Identidad | **Verificación del correo** | No existe. Un correo nuevo no se confirma | `Users.ts` | **Pendiente** |
+| Autorización | **Control de acceso en servidor** | Un mapa único de rol a permisos; todo permiso se revisa en el servidor; la cuenta inactiva no inicia sesión, pierde sus sesiones abiertas y no lee, sube, publica ni reintenta; publicar, reintentar y editar una nota piden membresía activa con `documents:write`; revocar a alguien corta su chat y su micrófono | `lib/permissions.ts`; `access/index.ts`; `Users.ts`; `Documents.ts` | **Implementado** |
 | Autorización | **Aislamiento por ecosistema** | Un acervo por ecosistema en ai-service (`X-AI-Org`); el ecosistema sale de la sesión del servidor, nunca del cliente; borradores por usuario; equipos y proyectos no cruzan ecosistemas | `lib/aiClient.ts`; `collections/Teams.ts`; `collections/Projects.ts` | **Implementado** |
 | Autorización | **Columnas protegidas** | Las columnas de la compuerta y del pipeline no se escriben por API | `gateWritesOnly` en `Documents.ts` | **Implementado** |
 | Autorización | **Archivos propios** | Un archivo solo se adjunta o lee por su dueño | `collections/Media.ts` | **Implementado** |
@@ -279,7 +280,7 @@ Once revisiones, sobre el código del 2026-10-28. Totales: 1 crítico, 6 altos, 
 
 - Quitar el valor por defecto de la llave de administración de audio-service en `infra/docker-compose.yml` (hallazgo 11).
 - Publicar en `127.0.0.1` los puertos del archivo de desarrollo local `docker-compose.override.yml`.
-- Limitar el cambio de correo propio a la administración de plataforma, o pedir verificación.
+- Verificar el correo nuevo cuando se cambia.
 - Límite de tasa en turnos de chat; contador por ecosistema en ai-service en lugar de uno compartido entre todos los ecosistemas `edc-*`.
 - Revisión de `Origin` contra CSRF; cabeceras anti marco y `nosniff`.
 - Tiempo máximo en `fetchMe` y en el cliente de ai-service después de recibir cabeceras.
@@ -334,7 +335,7 @@ flowchart TD
 
 - Retirar y borrar un documento de ai-service: `retireDeletedDocumentHook` en `Documents.ts`.
 - Apagar el respaldo hospedado del detector sin desplegar: ajuste `platform-settings.detectorFallback`, que tarda como máximo 30 s en aplicarse (TTL en `lib/platformSettings.ts`). En staging no alcanza: allí el detector siempre usa el modelo hospedado.
-- Cortar el acceso de una persona: desactivar la cuenta (`isActive`) o revocar su membresía; corta el chat y el micrófono.
+- Cortar el acceso de una persona: desactivar la cuenta (`isActive`), que impide iniciar sesión, vacía sus sesiones y le quita documentos, archivos, valoraciones, chat y micrófono; o revocar su membresía, que corta el chat, el micrófono y publicar en ese ecosistema.
 - Restaurar: procedimiento en [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md).
 
 ## 7. Lista de verificación antes de recibir datos reales
@@ -398,6 +399,6 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 14. **Pendiente.** Decidir el cifrado en reposo de los volúmenes y verificar la red hacia el Spark.
 15. **Pendiente.** Configurar y correr el escaneo de dependencias; actualizar FastAPI, Starlette y python-multipart; usar `USER node` en la imagen de ai-service.
 16. **Pendiente.** Prefijar `127.0.0.1` en `docker-compose.override.yml`.
-17. **Pendiente.** Limitar el cambio de correo propio y crear la depuración de trazas de ai-service.
+17. **Pendiente.** Verificar el correo nuevo y crear la depuración de trazas de ai-service.
 18. **Pendiente.** Crear la bitácora de incidentes, la bitácora de operación y el procedimiento de notificación de vulneraciones.
 19. **Pendiente.** Aprobar las periodicidades de rotación de secretos.
