@@ -252,9 +252,12 @@ describe.skipIf(!dockerOk)('no filter or sort infers a gated documento name (rea
       expect((await ids(who, 'documents', 'where[uploadedBy.email][like]=ana@')).ids, who).toEqual(expect.arrayContaining([GATED, NULLED, PLAIN]))
       expect((await ids(who, 'documents', 'where[mediaFile.filename][like]=Zzzz')).ids, who).toEqual([])
     }
-    // The uploader's sort runs on her own rows.
-    const mine = await ids('ana', 'documents', 'where[uploadedBy][equals]=1&where[publicationStatus][equals]=published&sort=mediaFile.filename')
-    expect(mine.ids.slice(0, 3)).toEqual([GATED, PLAIN, NULLED])
+    // A sort through a relationship is stripped for anyone but a platform
+    // admin (wave 9, `resolveRelationCrossings`): her own rows keep their order.
+    const q = 'where[uploadedBy][equals]=1&where[publicationStatus][equals]=published&sort='
+    const mine = await ids('ana', 'documents', `${q}mediaFile.filename`)
+    expect(mine.ids.slice(0, 3).sort()).toEqual([GATED, NULLED, PLAIN])
+    expect((await ids('ana', 'documents', `${q}-mediaFile.filename`)).ids).toEqual(mine.ids)
   })
 
   it('the uploader (as a reviewer) and a platform admin still filter the review logs', async () => {
@@ -268,8 +271,10 @@ describe.skipIf(!dockerOk)('no filter or sort infers a gated documento name (rea
 
   it('a colleague still filters a readable row by these paths', async () => {
     expect((await ids('ben', 'documents', 'where[mediaFile.filename][like]=Guia')).ids).toEqual([PLAIN])
-    expect((await ids('ben', 'documents', 'where[mediaFile.filename][like]=sonda&sort=mediaFile.filename')).ids).toEqual([PROBE_A, PROBE_Z])
-    expect((await ids('ben', 'documents', 'where[mediaFile.filename][like]=sonda&sort=-mediaFile.filename')).ids).toEqual([PROBE_Z, PROBE_A])
+    // The filter still finds them; the sort through `mediaFile` is stripped.
+    const up = (await ids('ben', 'documents', 'where[mediaFile.filename][like]=sonda&sort=mediaFile.filename')).ids
+    expect([...up].sort()).toEqual([PROBE_A, PROBE_Z])
+    expect((await ids('ben', 'documents', 'where[mediaFile.filename][like]=sonda&sort=-mediaFile.filename')).ids).toEqual(up)
     expect((await ids('rita', 'anonymisation-reviews', 'where[document.mediaFile.filename][like]=Guia')).ids).toEqual([PLAIN])
   })
 

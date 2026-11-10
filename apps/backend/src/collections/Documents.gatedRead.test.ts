@@ -17,6 +17,7 @@ import {
   constrainGatedQueries,
   constrainGatedQueriesAt,
   contributorReadable,
+  narrowGatedQueriesAt,
   Documents,
   storageErrorReason,
   gatedQueryableReadable,
@@ -33,6 +34,15 @@ const BEN = 2 // a colleague in the same ecosistema
 const ana = { id: ANA, isActive: true }
 const ben = { id: BEN, isActive: true }
 const admin = { id: 99, isActive: true, isPlatformAdmin: true }
+
+// The async hook walks the sanitized fields of the collection it runs on; the
+// least of them a review log needs here.
+const reviewsCollection = { flattenedFields: [{ name: 'document', type: 'relationship', relationTo: 'documents' }] }
+const fakePayload = {
+  collections: {
+    documents: { config: { flattenedFields: [{ name: 'name', type: 'text' }, { name: 'uploadedBy', type: 'relationship', relationTo: 'users' }] } },
+  },
+}
 
 const testimonio = { contentKind: 'testimonio', uploadedBy: ANA }
 const documento = { contentKind: 'documento', anonymise: false, uploadedBy: ANA }
@@ -187,7 +197,7 @@ describe('🔴 neutralNameForCaller — a gated row\'s file name stays with its 
 
 describe('🔴 constrainGatedQueries — no title oracle', () => {
   const run = (user: unknown, where: unknown, extra: Record<string, unknown> = {}) =>
-    constrainGatedQueries({
+    narrowGatedQueriesAt('')({
       args: { where, ...extra },
       operation: 'read',
       req: { user } as unknown as PayloadRequest,
@@ -238,7 +248,7 @@ describe('🔴 constrainGatedQueries — no title oracle', () => {
 
   it('🔴 narrows a COUNT too — `/api/documents/count` is the cheapest oracle', () => {
     const where = { OR: [{ name: { like: 'Mar' } }] }
-    const out = constrainGatedQueries({
+    const out = narrowGatedQueriesAt('')({
       args: { where },
       operation: 'count',
       req: { user: ben } as unknown as PayloadRequest,
@@ -249,7 +259,7 @@ describe('🔴 constrainGatedQueries — no title oracle', () => {
 
 describe('🔴 constrainGatedQueries — no sort oracle (L2)', () => {
   const run = (user: unknown, args: Record<string, unknown>) =>
-    constrainGatedQueries({
+    narrowGatedQueriesAt('')({
       args,
       operation: 'read',
       req: { user } as unknown as PayloadRequest,
@@ -286,7 +296,7 @@ describe('🔴 constrainGatedQueries — no sort oracle (L2)', () => {
 
 describe('🔴 the same rule on a relationship path from another collection (L3)', () => {
   const run = (where: unknown, sort?: unknown) =>
-    constrainGatedQueriesAt('document.')({
+    narrowGatedQueriesAt('document.')({
       args: { where, sort },
       operation: 'read',
       req: { user: ben } as unknown as PayloadRequest,
@@ -311,12 +321,23 @@ describe('🔴 the same rule on a relationship path from another collection (L3)
     expect(run({ decision: { equals: 'release' } }, '-document.name').sort).toBeUndefined()
   })
 
+  it('🔴 refuses a query when the hook gets no collection config to judge its paths by', async () => {
+    await expect(
+      constrainGatedQueriesAt('document.')({
+        args: { where: { 'document.name': { like: 'Mar' } } },
+        operation: 'read',
+        req: { user: ben, t: (k: string) => k } as unknown as PayloadRequest,
+      } as never),
+    ).rejects.toThrow()
+  })
+
   it('is wired on anonymisation-reviews', async () => {
     expect(AnonymisationReviews.hooks?.beforeOperation?.length ?? 0).toBeGreaterThan(0)
     const out = (await AnonymisationReviews.hooks!.beforeOperation![0]!({
       args: { where: { 'document.name': { like: 'Mar' } } },
       operation: 'read',
-      req: { user: ben } as unknown as PayloadRequest,
+      collection: reviewsCollection,
+      req: { user: ben, payload: fakePayload } as unknown as PayloadRequest,
     } as never)) as { where?: unknown }
     expect(JSON.stringify(out.where)).toContain('document.uploadedBy')
   })
@@ -327,7 +348,7 @@ describe('🔴 who recorded a testimonio stays with the uploader', () => {
   // their conversation. The biblioteca hides the contributor on gated rows; the
   // raw API has to as well, by row AND by query.
   const run = (user: unknown, args: Record<string, unknown>, operation = 'read') =>
-    constrainGatedQueries({
+    narrowGatedQueriesAt('')({
       args,
       operation,
       req: { user } as unknown as PayloadRequest,
@@ -377,7 +398,8 @@ describe('🔴 who recorded a testimonio stays with the uploader', () => {
     const out = (await AnonymisationReviews.hooks!.beforeOperation![0]!({
       args: { where },
       operation: 'read',
-      req: { user: ben } as unknown as PayloadRequest,
+      collection: reviewsCollection,
+      req: { user: ben, payload: fakePayload } as unknown as PayloadRequest,
     } as never)) as { where?: unknown }
     expect(out.where).toEqual({
       and: [
@@ -395,7 +417,7 @@ describe('🔴 who recorded a testimonio stays with the uploader', () => {
 
 describe('🔴 an allowlist, not a block list (wave 8: D1 mediaFile, D2 revisionOf)', () => {
   const run = (prefix: string, args: Record<string, unknown>, operation = 'read') =>
-    constrainGatedQueriesAt(prefix)({
+    narrowGatedQueriesAt(prefix)({
       args,
       operation,
       req: { user: ben } as unknown as PayloadRequest,

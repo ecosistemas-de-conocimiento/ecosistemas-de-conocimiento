@@ -509,8 +509,12 @@ function sortParts(sort: unknown): string[] {
  *   · `publicationStatus`, `ingestStatus`, `anonymisationStatus`, `graphStatus`
  *     — state, not content; the biblioteca pins `published` and the cleared
  *     statuses;
- *   · `redactedText` — the gate's output, readable on every row it is on; the
- *     biblioteca asks `exists`.
+ *
+ * and with `exists` alone ({@link GATED_EXISTS_ONLY_PATHS}):
+ *
+ *   · `redactedText` — the biblioteca's "cleared" clause asks whether the
+ *     gate's output is there. Any other operator, and a sort, reads the text
+ *     itself and is narrowed like any other path.
  *
  * Exact paths only: `organization.name` is a different path and is not here.
  *
@@ -534,8 +538,13 @@ export const GATED_FILTERABLE_PATHS: ReadonlySet<string> = new Set([
   'ingestStatus',
   'anonymisationStatus',
   'graphStatus',
-  'redactedText',
 ])
+
+/** Paths a `where` may ask `exists` of on any row, and nothing more. */
+export const GATED_EXISTS_ONLY_PATHS: ReadonlySet<string> = new Set(['redactedText'])
+
+/** Marks a path {@link wherePaths} saw under `exists` alone. */
+const EXISTS_MARK = '#exists'
 
 /**
  * Payload's `where` operators (`payload@3.88.0` `types/constants`, not exported
@@ -554,11 +563,13 @@ const WHERE_OPERATORS: ReadonlySet<string> = new Set([
  * `prefix` is that collection's own column and is not ours to judge; the bare
  * relation (`document`) is the documento's id.
  */
-function filterablePath(path: string, prefix: string): boolean {
-  if (prefix === '') return GATED_FILTERABLE_PATHS.has(path)
-  if (path === prefix.slice(0, -1)) return true
+function filterablePath(marked: string, prefix: string): boolean {
+  const exists = marked.endsWith(EXISTS_MARK)
+  const path = exists ? marked.slice(0, -EXISTS_MARK.length) : marked
+  if (prefix !== '' && path === prefix.slice(0, -1)) return true
   if (!path.startsWith(prefix)) return true
-  return GATED_FILTERABLE_PATHS.has(path.slice(prefix.length))
+  const own = path.slice(prefix.length)
+  return GATED_FILTERABLE_PATHS.has(own) || (exists && GATED_EXISTS_ONLY_PATHS.has(own))
 }
 
 /**
@@ -584,8 +595,9 @@ function documentHops(path: string, prefix: string): string[] {
  * case-insensitively (`OR`, `And`), so they are compared lowercased. A key
  * under a path that is not an operator is a deeper path
  * (`where[mediaFile][filename][like]`); a value that is not an operator object
- * gets a trailing dot, which never matches the allowlist. Over-matching only
- * narrows a query; under-matching leaks.
+ * gets a trailing dot, which never matches the allowlist. A path under
+ * `exists` carries {@link EXISTS_MARK}. Over-matching only narrows a query;
+ * under-matching leaks.
  */
 function wherePaths(where: unknown, into: string[] = []): string[] {
   if (!where || typeof where !== 'object') return into
@@ -610,7 +622,7 @@ function pathsUnder(path: string, value: unknown, into: string[]): void {
     return
   }
   for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-    if (WHERE_OPERATORS.has(key)) into.push(path)
+    if (WHERE_OPERATORS.has(key)) into.push(key === 'exists' ? `${path}${EXISTS_MARK}` : path)
     else pathsUnder(`${path}.${key}`, inner, into)
   }
 }
@@ -656,6 +668,208 @@ function readableAt(prefix: string, userId: unknown): Where {
   }
 }
 
+/** The parts of a sanitized field this walk needs. */
+type QueryField = {
+  name?: string
+  type: string
+  relationTo?: string | string[]
+  flattenedFields?: QueryField[]
+  blocks?: { flattenedFields?: QueryField[] }[]
+}
+
+/** A `where` that matches no row. */
+const NO_ROWS: Where = { id: { in: [] } }
+
+/**
+ * Where `path` first leaves for another collection's rows: the relationship
+ * (`at`), its target (`slug`) and the rest of the path under it. `null` when it
+ * never does, or only names the relation's id (`session`, `session.id`,
+ * `uploadedBy`), which says nothing the row does not already show.
+ *
+ * `follow` relations into `documents` are walked through rather than stopped
+ * at: the gated-row allowlist judges those columns. A polymorphic relationship
+ * is left to Payload, which refuses a path through it (measured in
+ * `AnonymisationSettingChanges.gatedQuery.pg.test.ts`). A segment the config
+ * does not know is left to Payload's own path check.
+ */
+function relationCrossing(
+  path: string,
+  fields: QueryField[],
+  req: PayloadRequest,
+  follow: boolean,
+): { at: string; slug: string; rest: string } | null {
+  const segments = path.split('.')
+  let current = fields
+  for (let i = 0; i < segments.length; i++) {
+    const field = current.find((f) => f.name === segments[i])
+    if (!field) return null
+    if (field.type === 'relationship' || field.type === 'upload') {
+      if (typeof field.relationTo !== 'string') return null
+      const rest = segments.slice(i + 1).join('.')
+      if (follow && field.relationTo === 'documents') {
+        current = fieldsOf(req, 'documents')
+        continue
+      }
+      if (rest === '' || rest === 'id') return null
+      return { at: segments.slice(0, i + 1).join('.'), slug: field.relationTo, rest }
+    }
+    if (field.flattenedFields) current = field.flattenedFields
+    else if (field.blocks) current = field.blocks.flatMap((b) => b.flattenedFields ?? [])
+    else return null
+  }
+  return null
+}
+
+function fieldsOf(req: PayloadRequest, slug: string): QueryField[] {
+  const collection = (req.payload?.collections as Record<string, { config?: { flattenedFields?: unknown } }> | undefined)?.[slug]
+  return (collection?.config?.flattenedFields as QueryField[] | undefined) ?? []
+}
+
+/** `[path, operators]` for every leaf under a where key, nested-object paths flattened to dots. */
+function leavesUnder(path: string, value: unknown, into: [string, unknown][]): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    into.push([path, value])
+    return
+  }
+  const ops = Object.entries(value as Record<string, unknown>).filter(([k]) => WHERE_OPERATORS.has(k))
+  if (ops.length > 0) into.push([path, Object.fromEntries(ops)])
+  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+    if (!WHERE_OPERATORS.has(key)) leavesUnder(`${path}.${key}`, inner, into)
+  }
+}
+
+/**
+ * 🔴 A PATH THROUGH A RELATIONSHIP ONLY MATCHES ROWS OF THE TARGET THE CALLER
+ * MAY READ THERE (wave 9, R1, audit 2026-11-10). Payload does not apply the
+ * target's read access when a `where` crosses a relationship, so on a
+ * documento every member reads, `where[session.title][like]=Juana` matched the
+ * uploader's private conversation title (a session is titled from its first
+ * message) and `where[uploadedBy.email][like]=…` confirmed a colleague's
+ * email; on the review logs `reviewer.email` / `actor.email` did the same.
+ *
+ * Each leaf that crosses into another collection — `session.*`,
+ * `uploadedInSession.*`, `uploadedBy.*`, `mediaFile.*`, `organization.*`,
+ * `reviewer.*`, `actor.*`, at any depth through `document.` / `revisionOf.` —
+ * becomes `<relation> in <ids>`, the ids found by running the rest of the
+ * path on the target as the caller (`overrideAccess: false`). The target's
+ * own read access decides, so the list is the config's, not ours: a new
+ * relationship is covered the day it is added. `sessions` and `users` are own
+ * rows only; `media` and `organizations` follow their own rules. The rest of
+ * the path is resolved the same way before it runs (`follow` off), so a
+ * deeper hop (`session.user.email`) cannot cross unchecked either.
+ *
+ * A target the caller may not read at all matches nothing. A value that is
+ * not an operator object matches nothing.
+ */
+async function resolveRelationCrossings(
+  where: unknown,
+  fields: QueryField[],
+  req: PayloadRequest,
+  follow: boolean,
+): Promise<unknown> {
+  if (!where || typeof where !== 'object') return where
+  if (Array.isArray(where)) {
+    const out = await Promise.all(where.map((w) => resolveRelationCrossings(w, fields, req, follow)))
+    return out.some((w, i) => w !== where[i]) ? out : where
+  }
+  const parts: Where[] = []
+  let changed = false
+  for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
+    const lower = key.toLowerCase()
+    if (lower === 'and' || lower === 'or') {
+      const inner = value && typeof value === 'object' && !Array.isArray(value) ? Object.values(value) : value
+      const next = await resolveRelationCrossings(inner, fields, req, follow)
+      if (next !== inner) changed = true
+      parts.push({ [key]: next } as Where)
+      continue
+    }
+    const leaves: [string, unknown][] = []
+    leavesUnder(key, value, leaves)
+    const resolved = await Promise.all(
+      leaves.map(async ([path, op]): Promise<Where | null> => {
+        const crossing = relationCrossing(path, fields, req, follow)
+        if (!crossing) return null
+        if (!op || typeof op !== 'object' || Array.isArray(op)) return NO_ROWS
+        const inner = await resolveRelationCrossings({ [crossing.rest]: op }, fieldsOf(req, crossing.slug), req, false)
+        const ids = await readableIds(req, crossing.slug, inner as Where)
+        return ids.length === 0 ? NO_ROWS : { [crossing.at]: { in: ids } }
+      }),
+    )
+    if (resolved.every((r) => r === null)) {
+      parts.push({ [key]: value } as Where)
+      continue
+    }
+    changed = true
+    parts.push({ and: resolved.map((r, i) => r ?? ({ [leaves[i]![0]]: leaves[i]![1] } as Where)) })
+  }
+  if (!changed) return where
+  return parts.length === 1 ? parts[0] : { and: parts }
+}
+
+/** Ids of the `slug` rows matching `where` that the caller may read. */
+async function readableIds(req: PayloadRequest, slug: string, where: Where): Promise<(string | number)[]> {
+  try {
+    const { docs } = await req.payload.find({
+      collection: slug as never,
+      where,
+      depth: 0,
+      pagination: false,
+      overrideAccess: false,
+      user: req.user,
+      req,
+    })
+    return docs.map((d) => (d as { id: string | number }).id)
+  } catch (err) {
+    if (err instanceof Forbidden) return []
+    throw err
+  }
+}
+
+/**
+ * 🔴 THE CALLER'S QUERY ON `documents`, OR THROUGH `document.` FROM ANOTHER
+ * COLLECTION, READS NOTHING THE CALLER COULD NOT READ ROW BY ROW. Two rules,
+ * in order:
+ *
+ *   1. {@link resolveRelationCrossings}: a path into another collection
+ *      (`session.title`, `uploadedBy.email`, `reviewer.email`,
+ *      `document.revisionOf.uploadedBy.email`…) only matches that
+ *      collection's rows the caller may read; a sort through one is stripped,
+ *      and a `readDistinct` on one is refused;
+ *   2. {@link narrowGatedQueriesAt}: a path off the gated allowlist only
+ *      matches documents rows the caller may read in full.
+ *
+ * Rule 1 walks the collection the hook runs on, so the review logs' own
+ * `reviewer` / `actor` are covered without a `document.` prefix. A platform
+ * admin and a server read (`overrideAccess`) are not touched.
+ */
+export function constrainGatedQueriesAt(prefix: string): CollectionBeforeOperationHook {
+  const narrow = narrowGatedQueriesAt(prefix)
+  return async (hookArgs) => {
+    const { args, collection, operation, req } = hookArgs
+    if (operation !== 'read' && operation !== 'count' && operation !== 'readDistinct') return args
+    const a = args as { overrideAccess?: boolean; where?: Where; sort?: unknown; field?: unknown }
+    if (a.overrideAccess === true) return args
+    const user = req.user
+    if (!user || isPlatformAdminUser(user)) return args
+
+    const fields = (collection as { flattenedFields?: QueryField[] } | undefined)?.flattenedFields
+    // Fail closed: without the config no path can be judged.
+    if (!fields) throw new Forbidden(req.t)
+    const crosses = (path: string) => relationCrossing(path, fields, req, true) !== null
+    if (typeof a.field === 'string' && crosses(a.field)) throw new Forbidden(req.t)
+
+    let next = args as typeof args & { where?: Where; sort?: unknown }
+    const where = await resolveRelationCrossings(a.where, fields, req, true)
+    if (where !== a.where) next = { ...next, where: where as Where }
+    const parts = sortParts(a.sort)
+    const kept = parts.filter((p) => !crosses(p.replace(/^[-+]/, '')))
+    if (kept.length !== parts.length) {
+      next = { ...next, sort: kept.length === 0 ? undefined : Array.isArray(a.sort) ? kept : kept.join(',') }
+    }
+    return narrow({ ...hookArgs, args: next } as never) as typeof args
+  }
+}
+
 /**
  * 🔴 A QUERY OFF THE ALLOWLIST ONLY MATCHES ROWS THE CALLER MAY READ IN FULL.
  * The other half of {@link gatedQueryableReadable}; the allowlist is
@@ -683,7 +897,7 @@ function readableAt(prefix: string, userId: unknown): Where {
  * sort reach the same columns. Their own columns pass; every path under
  * `document.` follows the same allowlist.
  */
-export function constrainGatedQueriesAt(prefix: string): CollectionBeforeOperationHook {
+export function narrowGatedQueriesAt(prefix: string): (hookArgs: Parameters<CollectionBeforeOperationHook>[0]) => unknown {
   return ({ args, operation, req }) => {
     if (operation !== 'read' && operation !== 'count' && operation !== 'readDistinct') return args
     const a = args as { overrideAccess?: boolean; where?: Where; sort?: unknown; field?: unknown }
