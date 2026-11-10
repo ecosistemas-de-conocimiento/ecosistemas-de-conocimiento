@@ -189,27 +189,46 @@ function naturalKeyFor(envelope: CallbackEnvelope): NaturalKey | null {
  * `transcribe.completed` body carries the raw, pre-anonymisation text. Keeping
  * it here outlived the document, its redaction and its deletion. The text is
  * replaced by its length and SHA-256: enough to tell two deliveries apart while
- * debugging, nothing to read. Every other field is kept as received.
+ * debugging, nothing to read.
+ *
+ * 🔴 Nor a name (audit 2026-11-10, C-11). audio-service echoes the `title` and
+ * `audio.filename` it was sent in `transcribe.completed` and `transcribe.failed`,
+ * and for a testimonio those are the very name the rest of the system hides.
+ * Both become `null`. Jobs submitted before the backend stopped sending them
+ * keep echoing them, so this holds whatever the submit side does.
+ *
+ * A body with none of the three is kept as received.
  *
  * ⚠ The HMAC was verified on the RAW bytes before this runs; the stored body is
  * a re-serialisation and can no longer be re-verified. Nothing replays from it.
  */
 function ledgerBody(rawBody: string, envelope: CallbackEnvelope): string {
-  const text = envelope.event === 'transcribe.completed' ? envelope.transcript?.text : undefined
-  const kept =
-    typeof text === 'string'
-      ? JSON.stringify({
-          ...envelope,
-          transcript: {
-            ...(envelope as Extract<CallbackEnvelope, { event: 'transcribe.completed' }>).transcript,
-            text: null,
-            textOmitted: {
-              characters: text.length,
-              sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
-            },
-          },
-        })
-      : rawBody
+  const body = envelope as Record<string, unknown>
+  const scrubbed: Record<string, unknown> = { ...body }
+  let changed = false
+  if (typeof body.title === 'string') {
+    scrubbed.title = null
+    changed = true
+  }
+  const audio = body.audio as Record<string, unknown> | null | undefined
+  if (audio && typeof audio === 'object' && typeof audio.filename === 'string') {
+    scrubbed.audio = { ...audio, filename: null }
+    changed = true
+  }
+  const transcript = body.transcript as Record<string, unknown> | null | undefined
+  const text = transcript && typeof transcript === 'object' ? transcript.text : undefined
+  if (typeof text === 'string') {
+    scrubbed.transcript = {
+      ...transcript,
+      text: null,
+      textOmitted: {
+        characters: text.length,
+        sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+      },
+    }
+    changed = true
+  }
+  const kept = changed ? JSON.stringify(scrubbed) : rawBody
   return kept.length > 100_000 ? kept.slice(0, 100_000) : kept
 }
 
@@ -766,10 +785,11 @@ async function dispatchTranscribeCompleted(
     return
   }
 
-  // ⚠ Idempotency guard, because the `aiServiceCallbacks` composite UNIQUE index
-  // DOES NOT EXIST yet (no migration baseline), so the dedupe insert upstream is
-  // currently inert. Text on the row plus an ingestId means this already ran;
-  // running it again would enqueue a second ingest for the same document.
+  // ⚠ Idempotency guard, a second line behind the dedupe insert upstream
+  // (`ai_service_callbacks_natural_key_unq`, in the migration baseline): a
+  // dedupe row deleted after a failed dispatch lets a redelivery through. Text
+  // on the row plus an ingestId means this already ran; running it again would
+  // enqueue a second ingest for the same document.
   //
   // ⚠ And a row that has left `transcribing` with its text on it: the
   // transcript is already persisted, and `transcribed` is now a resting state
@@ -788,6 +808,8 @@ async function dispatchTranscribeCompleted(
   if (!text.trim()) {
     // Either the transcript was truncated out of the webhook body (over
     // CALLBACK_MAX_TRANSCRIPT_CHARS) or nothing was said. Ask before deciding.
+    // ⚠ A transient failure THROWS out of here on purpose: `POST` forgets the
+    // dedupe row and answers 500, and audio-service delivers again.
     const { fetchTranscriptText } = await import('@/lib/audioClient')
     text = (await fetchTranscriptText(envelope.transcribeId)) ?? ''
   }
@@ -807,14 +829,18 @@ async function dispatchTranscribeCompleted(
     // audio-service's Redis before we could fetch it. Either way there is
     // nothing to embed, and an empty ingest would produce a `ready` document
     // that matches nothing — a silent, permanent "why does search never find
-    // it". Fail it visibly instead.
-    console.warn('[callback] empty transcript for doc', docId, envelope.transcribeId)
+    // it". Fail it visibly instead, and say which: "no speech" tells the user to
+    // bring another file, while an expired transcript only needs a retry.
+    const expired = envelope.transcript?.truncated === true
+    console.warn('[callback] empty transcript for doc', docId, envelope.transcribeId, { expired })
     await payload.update({
       collection: 'documents',
       id: docId as never,
       data: {
         ingestStatus: 'failed',
-        ingestError: 'empty_transcript: no speech was detected in the recording',
+        ingestError: expired
+          ? 'transcript_expired: the full transcript expired from audio-service before it was fetched'
+          : 'empty_transcript: no speech was detected in the recording',
         audioMeta,
       },
       overrideAccess: true,
