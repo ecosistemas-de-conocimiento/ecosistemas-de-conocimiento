@@ -91,31 +91,38 @@ async function waitForQueries(candidate: Db): Promise<void> {
 }
 
 const VICTIM = 'victim@example.invalid'
+const COLLEAGUE = 'colleague@example.invalid'
 const ATTACKER_IP = '203.0.113.7'
 const VICTIM_IP = '198.51.100.20'
 
-async function login(xff: string, password: string): Promise<Response> {
+async function login(xff: string, password: string, email = VICTIM): Promise<Response> {
   const { handleEndpoints } = await import('payload')
   return handleEndpoints({
     config,
     request: new Request('http://localhost/api/users/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': xff },
-      body: JSON.stringify({ email: VICTIM, password }),
+      body: JSON.stringify({ email, password }),
     }),
   })
 }
 
 const run = (statement: string) => db.execute(sql.raw(statement))
 
-const loginAttempts = async (): Promise<number> =>
+const loginAttempts = async (email = VICTIM): Promise<number> =>
   Number(
-    ((await run(`SELECT login_attempts AS n FROM users WHERE email = '${VICTIM}'`)) as unknown as {
+    ((await run(`SELECT login_attempts AS n FROM users WHERE email = '${email}'`)) as unknown as {
       rows: Array<{ n: number }>
     }).rows[0]?.n ?? 0,
   )
 
-describe.skipIf(!dockerOk)('login rate limit per IP, on a real Postgres', () => {
+const statuses = (responses: Response[]) => {
+  const out: Record<number, number> = {}
+  for (const r of responses) out[r.status] = (out[r.status] ?? 0) + 1
+  return out
+}
+
+describe.skipIf(!dockerOk)('login rate limits, on a real Postgres', () => {
   beforeAll(async () => {
     const url = await startPostgres()
     db = drizzle(url)
@@ -147,17 +154,22 @@ describe.skipIf(!dockerOk)('login rate limit per IP, on a real Postgres', () => 
   beforeEach(async () => {
     useDefaultRateLimitStore()
     resetRateLimits()
-    process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX = '3'
+    // The shipped defaults: 4 per (IP, email) per 10 minutes, 100 per IP an hour.
+    delete process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX
+    delete process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX
     await run(`
       TRUNCATE memberships, organizations, users RESTART IDENTITY CASCADE;
-      INSERT INTO users (id, email) VALUES (1, '${VICTIM}');
+      INSERT INTO users (id, email) VALUES (1, '${VICTIM}'), (2, '${COLLEAGUE}');
     `)
     await run(`SELECT setval(pg_get_serial_sequence('users', 'id'), 100)`)
-    await payload.update({ collection: 'users', id: 1, overrideAccess: true, data: { password: PASSWORD } as never })
+    for (const id of [1, 2]) {
+      await payload.update({ collection: 'users', id, overrideAccess: true, data: { password: PASSWORD } as never })
+    }
   }, 30_000)
 
   afterAll(async () => {
     delete process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX
+    delete process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX
     // ⚠ Payload's pool cannot be ended (see Sessions.ownerGuard.pg.test.ts).
     const pool = (payload?.db as unknown as {
       pool?: { on(e: 'error', f: () => void): void; _clients?: Array<{ on(e: 'error', f: () => void): void }> }
@@ -169,24 +181,48 @@ describe.skipIf(!dockerOk)('login rate limit per IP, on a real Postgres', () => 
   })
 
   it('stops an IP before it can lock the account, and the owner still signs in', async () => {
-    for (let i = 0; i < 3; i += 1) expect((await login(ATTACKER_IP, 'wrong')).status).toBe(401)
-    expect(await loginAttempts()).toBe(3)
+    for (let i = 0; i < 4; i += 1) expect((await login(ATTACKER_IP, 'wrong')).status).toBe(401)
+    expect(await loginAttempts()).toBe(4)
 
     const refused = await login(ATTACKER_IP, 'wrong')
     expect(refused.status).toBe(429)
     expect(Number(refused.headers.get('Retry-After'))).toBeGreaterThan(0)
     // Refused before the password check: Payload's counter did not move.
-    expect(await loginAttempts()).toBe(3)
+    expect(await loginAttempts()).toBe(4)
 
     expect((await login(VICTIM_IP, PASSWORD)).status).toBe(200)
   })
 
+  it('a concurrent burst of 50 reaches the password check at most 4 times, and never locks', async () => {
+    // The bug this guards: the guard only looked and the count came after the
+    // check, so 200 concurrent wrong passwords all reached it (review repro).
+    const burst = await Promise.all(Array.from({ length: 50 }, () => login(ATTACKER_IP, 'wrong')))
+    // Every 401 is one password check; a 429 never reached it.
+    expect(statuses(burst)).toEqual({ 401: 4, 429: 46 })
+    expect(await loginAttempts()).toBe(4)
+    expect(await loginAttempts()).toBeLessThan(5) // Payload's lock is at 5
+
+    // Same IP, another account: a shared NAT is not shut out.
+    expect((await login(ATTACKER_IP, PASSWORD, COLLEAGUE)).status).toBe(200)
+    // And the owner, from elsewhere, is not locked out.
+    expect((await login(VICTIM_IP, PASSWORD)).status).toBe(200)
+  })
+
+  it('the per-IP ceiling holds under a concurrent burst across many emails', async () => {
+    process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX = '10'
+    const burst = await Promise.all(
+      Array.from({ length: 30 }, (_, i) => login(ATTACKER_IP, 'wrong', `nobody${i}@example.invalid`)),
+    )
+    expect(statuses(burst)).toEqual({ 401: 10, 429: 20 })
+  })
+
   it('a forged left X-Forwarded-For entry does not buy a fresh budget', async () => {
-    for (let i = 0; i < 3; i += 1) await login(`10.0.0.${i}, ${ATTACKER_IP}`, 'wrong')
+    for (let i = 0; i < 4; i += 1) await login(`10.0.0.${i}, ${ATTACKER_IP}`, 'wrong')
     expect((await login(`192.0.2.1, ${ATTACKER_IP}`, 'wrong')).status).toBe(429)
   })
 
   it('does not count successful sign-ins', async () => {
-    for (let i = 0; i < 5; i += 1) expect((await login(VICTIM_IP, PASSWORD)).status).toBe(200)
-  })
+    for (let i = 0; i < 10; i += 1) expect((await login(VICTIM_IP, PASSWORD)).status).toBe(200)
+    for (let i = 0; i < 4; i += 1) expect((await login(VICTIM_IP, 'wrong')).status).toBe(401)
+  }, 30_000) // 14 sequential password hashes
 })
