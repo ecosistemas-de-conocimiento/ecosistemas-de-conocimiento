@@ -104,7 +104,7 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `S3_BUCKET` | `edc` | `edc` | ⚙ separate stores per env, so the same name is fine |
 | `S3_ACCESS_KEY_ID` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ⚠ also the RustFS **root** key (§3) |
 | `S3_SECRET_ACCESS_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 `openssl rand -hex 32` |
-| `IDENTITY_TRUSTED_PROXY_HOPS` | `1` | `1` | ⚙ 🔴 exactly one proxy (Traefik). Higher = silent bypass of per-IP rate limits; compose default `0` makes every request share Traefik's bucket |
+| `IDENTITY_TRUSTED_PROXY_HOPS` | `1` | `1` | ⚙ 🔴 exactly one proxy (Traefik). Higher = silent bypass of per-IP rate limits. Unset, `0` or junk ⇒ the code treats it as `1` (`endpoints/http.ts`) |
 | `AI_CAPABILITY_MODE` | `strict` | `strict` | ⚙ a version skew between backend and ai-service should be loud |
 | `LLM_REQUEST_TIMEOUT_MS` | `600000` | `600000` | ⚙ ai-service, whole generation. 🔴 Code default `120000` is too short: a `deep`-tier graph extraction window failed at 120,008 ms and passed in 72–96 s after the raise to 600000 (quoted, `plan/adr-corpus-graph.md` §13–§14, local stack 2026-08-28). Must stay **below** the backend's `GRAPH_EXTRACT_TIMEOUT_MS` (§2f) |
 
@@ -138,6 +138,7 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `SHUTDOWN_GRACE_MS` | `30000` | 💤 🔴 must stay below ai-service's `stop_grace_period` (45s in the compose file) |
 | `SEED_CORPUS_SKIP_ABOVE` | the manifest size | 💤 backend corpus seed's double-seed guard: refuses an ecosistema already holding this many docs. Not a positive integer ⇒ ignored with a warning (`seed/corpus.ts`) |
 | `AI_ECOSYSTEM_BUDGET_USD` | `5` | 💤 backend: starting monthly ai-service cap for each **new** ecosistema (`lib/provisionEcosystem.ts`). `5` is an owner decision quoted from `edc-1.md` §6, not a measured need. Junk or negative ⇒ `5`. Existing orgs: ai-service `set-budget` |
+| `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX` | `15` | 💤 backend **and** web (one value reaches both through `env_file`). Failed sign-ins per client IP per **hour**; successes do not count. Payload's per-account lockout (5 tries, 10 min; quoted from Payload 3.88 `defaults.js`) is unchanged. 15 caps one IP at 3 lockouts an hour (inferred: holding one account locked takes 30 failures an hour). ⚠ A workshop behind one NAT shares the 15; raise it for a big room. Junk or `< 1` ⇒ `15` (`apps/backend/src/lib/rateLimit.ts`, `apps/web/src/lib/server/loginRateLimit.ts`) |
 | `IDENTITY_ALLOWED_EMAIL_DOMAIN`, `AUTH_TOKEN_TTL`, `SESSION_JANITOR_*`, `CONDENSE_TIMEOUT_MS`, `LLM_STREAM_STALL_TIMEOUT_MS` | code defaults | 💤 see `infra/.env.example` |
 
 ### 2f. Corpus graph and chat retrieval — optional
@@ -389,7 +390,7 @@ does **not** need to be in `backups.md`'s scope — unlike the Payload media vol
 
 | var | value | why |
 |---|---|---|
-| `IDENTITY_TRUSTED_PROXY_HOPS` | `1` | 🔴 exactly the number of proxies in front of the container. Behind Coolify's Traefik that is **1**. Setting it HIGHER than reality is a **silent, total bypass** of every per-IP rate limit — a caller then picks its own bucket key and can also poison someone else's. Setting it to `0` behind a proxy is the opposite failure: every request appears to come from Traefik and shares one bucket. |
+| `IDENTITY_TRUSTED_PROXY_HOPS` | `1` | 🔴 exactly the number of proxies in front of the container. Behind Coolify's Traefik that is **1**. Setting it HIGHER than reality is a **silent, total bypass** of every per-IP rate limit — a caller then picks its own bucket key and can also poison someone else's. `0`, unset or junk are read as `1` by the backend (`endpoints/http.ts`). The web BFF reaches the backend on the compose network and forwards the browser's IP as a single `X-Forwarded-For` entry (`apps/web/src/lib/server/clientIp.ts`), so its calls land one bucket per browser. 🔴 Keep the web's `BACKEND_URL` on the compose network (`http://backend:3002`): pointed at the public `api.*` host, Traefik would append the web's own address and every browser would share that one bucket again. |
 | `SENTRY_DSN` | 🔑 per env | ⚠ configure `beforeSend` to strip request bodies and auth headers, and turn **off** default PII capture, before this goes near prod. This stack is an identity provider. |
 | `TZ` | `UTC` | 🔧 log correlation across boxes. Render in local time in the UI, store UTC. |
 

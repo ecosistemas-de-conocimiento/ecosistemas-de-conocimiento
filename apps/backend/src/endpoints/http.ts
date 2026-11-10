@@ -167,6 +167,11 @@ function trustedProxyHops(): number {
  * `IDENTITY_TRUSTED_PROXY_HOPS` (default 1) says how deep to count. Raise it
  * only if a CDN is added in front of the reverse proxy.
  *
+ * The web BFF reaches this app on the compose network, not through the proxy,
+ * and sends ONE entry: the browser's IP as the web read it from its own proxy
+ * (`apps/web/src/lib/server/clientIp.ts`). With one entry, the rightmost is
+ * that one, so BFF calls are bucketed per browser and need no second rule.
+ *
  * ⚠ IF THE APP IS DIRECTLY REACHABLE, THE PER-IP BUCKETS ARE WORTHLESS. This
  * function trusts whatever header it is given; there is no socket address to
  * fall back on. Any caller that can open a connection without going through
