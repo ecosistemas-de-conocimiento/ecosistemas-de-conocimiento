@@ -26,6 +26,7 @@ import {
   runSessionJanitor,
 } from './sessionJanitor'
 import { safeErrMessage } from './errorSummary'
+import { janitorsDisabledForTests } from './janitorScheduler'
 
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -38,6 +39,8 @@ let timer: ReturnType<typeof setInterval> | null = null
  * the process alive on its own.
  */
 export function startSessionJanitor(payload: Payload): boolean {
+  // 🔴 Off in every test run unless the test asks (`lib/janitorScheduler.ts`).
+  if (janitorsDisabledForTests()) return false
   if (!janitorEnabled()) {
     payload.logger.info(
       '[session-janitor] disabled (set SESSION_JANITOR_ENABLED=true to arm the daily sweep)',

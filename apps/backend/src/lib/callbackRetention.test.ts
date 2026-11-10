@@ -2,6 +2,7 @@
  * Owner decision 2026-11-10: callback bodies are purged after 30 days, daily.
  * The real-Postgres half is `callbackRetention.pg.test.ts`.
  */
+import { allowJanitors } from '@/lib/testing/janitors'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -13,6 +14,9 @@ import {
   stopCallbackRetentionJanitor,
 } from './callbackRetention'
 import { JANITOR_FIRST_SWEEP_DEFAULT_MIN } from './janitorScheduler'
+
+// Its own janitor arms here (`vitest.setup.ts` turns them all off).
+allowJanitors()
 
 function fake() {
   const queries: unknown[] = []

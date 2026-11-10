@@ -48,6 +48,18 @@ export function janitorIntervalMsFromEnv(varName: string, defaultMin: number): n
   return Math.max(1, minutes) * 60_000
 }
 
+/**
+ * 🔴 SET ONLY BY THE BACKEND'S TEST SETUP (`vitest.setup.ts`), never in a
+ * deployment. While it is `1`, no janitor arms: a test file that boots Payload
+ * would otherwise run real sweeps against its database, 2 min in. A test of a
+ * janitor clears it first (`lib/testing/janitors.ts`, `allowJanitors`).
+ */
+export const JANITORS_DISABLED_VAR = 'EDC_JANITORS_DISABLED'
+
+export function janitorsDisabledForTests(): boolean {
+  return process.env[JANITORS_DISABLED_VAR] === '1'
+}
+
 /** Shared by every janitor here: minutes from boot to the first sweep. */
 export const JANITOR_FIRST_SWEEP_MIN_VAR = 'JANITOR_FIRST_SWEEP_MIN'
 /**
@@ -103,6 +115,7 @@ const timers = new Map<string, { first?: ReturnType<typeof setTimeout>; every?: 
  * janitor for the life of the process and nothing says so.
  */
 export function startJanitor(payload: Payload, schedule: JanitorSchedule): boolean {
+  if (janitorsDisabledForTests()) return false
   if (!schedule.enabled()) {
     payload.logger.info(
       `[${schedule.prefix}] disabled by ${schedule.enabledVar}. ${schedule.disabledDetail}`,
@@ -141,6 +154,11 @@ export function startJanitor(payload: Payload, schedule: JanitorSchedule): boole
   timers.set(schedule.prefix, slot)
 
   return true
+}
+
+/** The prefixes armed in this process. For the test that no janitor arms in a test run. */
+export function armedJanitors(): string[] {
+  return [...timers.keys()]
 }
 
 /** Stop a janitor's interval (used by tests / graceful shutdown). */

@@ -3,16 +3,22 @@
  * janitor on a backend restarted more than once a day never ran (audit 2026-11-10).
  */
 
+import { allowJanitors } from '@/lib/testing/janitors'
 import type { Payload } from 'payload'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  armedJanitors,
   JANITOR_FIRST_SWEEP_DEFAULT_MIN,
+  JANITORS_DISABLED_VAR,
   JANITOR_FIRST_SWEEP_MIN_VAR,
   janitorFirstSweepMs,
   startJanitor,
   stopJanitor,
 } from './janitorScheduler'
+
+// Its own janitor arms here (`vitest.setup.ts` turns them all off).
+allowJanitors()
 
 const MIN = 60_000
 const DAY = 1440 * MIN
@@ -64,6 +70,18 @@ describe('startJanitor: the first sweep', () => {
     stopJanitor('test-janitor')
     await vi.advanceTimersByTimeAsync(2 * DAY)
     expect(sweep).not.toHaveBeenCalled()
+  })
+
+  it('🔴 EDC_JANITORS_DISABLED=1 (the test setup) arms nothing and sweeps nothing', async () => {
+    process.env[JANITORS_DISABLED_VAR] = '1'
+    try {
+      const sweep = arm(MIN)
+      expect(armedJanitors()).toEqual([])
+      await vi.advanceTimersByTimeAsync(2 * DAY)
+      expect(sweep).not.toHaveBeenCalled()
+    } finally {
+      delete process.env[JANITORS_DISABLED_VAR]
+    }
   })
 
   it('the delay: env-tunable, never longer than the interval, junk falls back', () => {
