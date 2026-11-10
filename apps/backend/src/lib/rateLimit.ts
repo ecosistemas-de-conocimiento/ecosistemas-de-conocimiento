@@ -36,8 +36,16 @@
  * this catch be the last resort it is.
  */
 
-/** Every limit in this app uses a one-minute window. One window, one thing to reason about. */
+/** Every limit in this app uses a one-minute window, except failed logins (below). */
 export const RATE_LIMIT_WINDOW_MS = 60_000
+
+/**
+ * Failed logins are counted over an hour, because the thing they guard runs on
+ * Payload's lockout clock: 5 failures lock an account for 10 minutes (quoted,
+ * `payload/dist/collections/config/defaults.js`, Payload 3.88). A one-minute
+ * window cannot see an attacker who needs only 5 tries every 10 minutes.
+ */
+export const LOGIN_FAIL_WINDOW_MS = 60 * 60_000
 
 /** Answer for one bucket. `resetAt` is epoch ms. */
 export interface RateLimitDecision {
@@ -60,13 +68,22 @@ export interface RateLimitDecision {
  */
 export interface RateLimitStore {
   hit(key: string, limit: number, windowMs: number): RateLimitDecision | Promise<RateLimitDecision>
+  /**
+   * The same answer `hit` would give, WITHOUT counting this request. For a
+   * bucket that counts only outcomes (failed logins): ask first, count after.
+   */
+  peek(key: string, limit: number, windowMs: number): RateLimitDecision | Promise<RateLimitDecision>
   /** Drop all counters. Tests, and nothing else. */
   reset(): void
 }
 
 // --- the default, in-process store -------------------------------------------
 
-/** Keys are dropped once untouched for this long. Must exceed every window in use. */
+/**
+ * Keys are dropped once untouched for this long, or for their own window if
+ * that is longer (the login-failure bucket keeps an hour). Evicting a bucket
+ * before its window ends hands its owner a fresh budget.
+ */
 const IDLE_KEY_TTL_MS = 10 * 60_000
 /** How often the sweep runs in the normal case, at most. */
 const SWEEP_INTERVAL_MS = 30_000
@@ -99,6 +116,8 @@ type Bucket = {
   hits: number[]
   /** Last time this key was touched AT ALL, allowed or denied. Eviction order. */
   lastSeen: number
+  /** The window this key is counted over; it is never evicted sooner. */
+  windowMs: number
 }
 
 /**
@@ -133,20 +152,33 @@ class InProcessSlidingWindowStore implements RateLimitStore {
       //     would look idle, be evicted first, and come back empty — handing
       //     them a fresh budget for spraying keys. Tracking "touched" apart
       //     from "counted" is what makes the eviction comment true.
-      this.buckets.set(key, { hits: recent, lastSeen: now })
-      const oldest = recent[0] ?? now
-      const resetAt = oldest + windowMs
-      return {
-        allowed: false,
-        limit,
-        remaining: 0,
-        resetAt,
-        retryAfterSeconds: Math.max(1, Math.ceil((resetAt - now) / 1000)),
-      }
+      this.buckets.set(key, { hits: recent, lastSeen: now, windowMs })
+      return denied(recent, limit, windowMs, now)
     }
 
     recent.push(now)
-    this.buckets.set(key, { hits: recent, lastSeen: now })
+    this.buckets.set(key, { hits: recent, lastSeen: now, windowMs })
+    return {
+      allowed: true,
+      limit,
+      remaining: limit - recent.length,
+      resetAt: (recent[0] ?? now) + windowMs,
+      retryAfterSeconds: 0,
+    }
+  }
+
+  peek(key: string, limit: number, windowMs: number): RateLimitDecision {
+    const now = Date.now()
+    this.sweep(now)
+
+    const previous = this.buckets.get(key)
+    if (previous === undefined) {
+      return { allowed: true, limit, remaining: limit, resetAt: now + windowMs, retryAfterSeconds: 0 }
+    }
+    const recent = previous.hits.filter((at) => at > now - windowMs)
+    // Touched, not counted — the same split as a denied `hit`, for the same reason.
+    this.buckets.set(key, { hits: recent, lastSeen: now, windowMs: previous.windowMs })
+    if (recent.length >= limit) return denied(recent, limit, windowMs, now)
     return {
       allowed: true,
       limit,
@@ -171,9 +203,8 @@ class InProcessSlidingWindowStore implements RateLimitStore {
     if (now - this.lastSweepAt < minInterval) return
     this.lastSweepAt = now
 
-    const idleCutoff = now - IDLE_KEY_TTL_MS
     for (const [key, bucket] of this.buckets) {
-      if (bucket.lastSeen <= idleCutoff) this.buckets.delete(key)
+      if (bucket.lastSeen <= now - Math.max(IDLE_KEY_TTL_MS, bucket.windowMs)) this.buckets.delete(key)
     }
 
     if (this.buckets.size <= MAX_TRACKED_KEYS) return
@@ -188,6 +219,17 @@ class InProcessSlidingWindowStore implements RateLimitStore {
       const entry = byRecency[i]
       if (entry) this.buckets.delete(entry[0])
     }
+  }
+}
+
+function denied(recent: number[], limit: number, windowMs: number, now: number): RateLimitDecision {
+  const resetAt = (recent[0] ?? now) + windowMs
+  return {
+    allowed: false,
+    limit,
+    remaining: 0,
+    resetAt,
+    retryAfterSeconds: Math.max(1, Math.ceil((resetAt - now) / 1000)),
   }
 }
 
@@ -270,8 +312,9 @@ function envInt(name: string, fallback: number): number {
 }
 
 /**
- * Every limit is per 60 seconds, and every one is env-tunable so ops can raise
- * a ceiling without a deploy of new code. Read at call time, never memoised.
+ * Every limit is per 60 seconds (failed logins: per hour), and every one is
+ * env-tunable so ops can raise a ceiling without a deploy of new code. Read at
+ * call time, never memoised.
  *
  * The numbers, and why they are these numbers:
  *
@@ -315,28 +358,34 @@ export const rateLimits = {
   serviceAuthFailurePerIp: (): number =>
     envInt('IDENTITY_RATELIMIT_SERVICE_AUTH_FAIL_IP_MAX', 20),
 
+  /**
+   * Failed `POST /api/users/login` per client IP, per HOUR
+   * ({@link LOGIN_FAIL_WINDOW_MS}). Only failures count, so a room signing in
+   * at once is not throttled by its own successes.
+   *
+   * 15, because holding one account locked takes 5 failures every 10 minutes,
+   * 30 an hour (inferred from the quoted lockout above). At 15 one IP gets at
+   * most 3 lockouts an hour, so a target is free at least half of it.
+   * ⚠ A shared egress IP (a workshop behind one NAT) shares these 15 wrong
+   * passwords; raise it for a big room. The per-account lockout is unchanged.
+   */
+  loginFailPerIp: (): number => envInt('IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX', 15),
+
   // --- corpus graph ----------------------------------------------------------
   //
   // 🔴 PER-USER AND PER-ORGANIZATION ONLY. THERE IS DELIBERATELY NO PER-IP
   // BUCKET, and adding one "for consistency with the identity routes" would be
   // a self-inflicted outage.
   //
-  // Every graph request arrives from the WEB BFF, not from a browser:
-  // `apps/web/src/lib/server/auth.ts` → `backendFetch` sets `Authorization` and
-  // `Content-Type` and nothing else. It forwards no `X-Forwarded-For` and no
-  // `X-Real-IP`, so `clientIp(req)` (endpoints/http.ts) falls through to the
-  // literal string `'unknown'` for EVERY caller. A per-IP bucket would
-  // therefore be ONE GLOBAL BUCKET shared by every user of every ecosistema —
-  // the first busy tenant would 429 everybody else.
+  // Every graph request arrives from the WEB BFF, not from a browser. Until
+  // 2026-11-10 the BFF forwarded no client IP, so `clientIp(req)` was the
+  // literal `'unknown'` for EVERY caller and a per-IP bucket would have been
+  // ONE GLOBAL BUCKET shared by every user of every ecosistema.
   //
-  // The identity routes are different, and that is why they can have one: they
-  // are hit by browsers and by service clients directly, so their `clientIp`
-  // resolves to something real.
-  //
-  // ⚠ If the BFF ever starts forwarding the client IP, a per-IP bucket becomes
-  // correct here and should be added. Until then the user bucket is the one
-  // that identifies a caller, and the org bucket is what bounds the aggregate
-  // SQL cost for one tenant.
+  // `backendFetch` now forwards the browser's IP as `X-Forwarded-For` (see
+  // `apps/web/src/lib/server/clientIp.ts`), so a per-IP bucket here would be
+  // keyed correctly. It is still not added: the user bucket identifies the
+  // caller, and the org bucket bounds the aggregate SQL cost for one tenant.
 
   /** Browsing the graph: lists, then a node, then another node. */
   graphViewPerUser: (): number => envInt('GRAPH_RATELIMIT_VIEW_USER_MAX', 120),
@@ -386,6 +435,36 @@ export interface RateLimitVerdict {
 }
 
 const ALLOWED: RateLimitVerdict = { allowed: true, rule: null, decision: null }
+
+/**
+ * Would this rule deny the next request? Counts nothing. Pair it with
+ * {@link checkRateLimits} on the outcome you want to count.
+ *
+ * ⚠ FAILS CLOSED, like `checkRateLimits`.
+ */
+export async function peekRateLimit(rule: RateLimitRule): Promise<RateLimitVerdict> {
+  const windowMs = rule.windowMs ?? RATE_LIMIT_WINDOW_MS
+  try {
+    const decision = await currentStore().peek(rule.key, rule.limit, windowMs)
+    return decision.allowed ? ALLOWED : { allowed: false, rule, decision }
+  } catch (err) {
+    console.error(
+      `[identity/rateLimit] store failed on scope "${rule.scope}" — DENYING the request (fail closed):`,
+      err,
+    )
+    return {
+      allowed: false,
+      rule,
+      decision: {
+        allowed: false,
+        limit: rule.limit,
+        remaining: 0,
+        resetAt: Date.now() + windowMs,
+        retryAfterSeconds: Math.ceil(windowMs / 1000),
+      },
+    }
+  }
+}
 
 /**
  * Apply rules in order, counting each. The first denial wins and short-circuits.

@@ -8,6 +8,8 @@
 // proxied calls.
 
 import { env } from '$env/dynamic/private';
+import { currentClientIp, forwardClientIp } from './clientIp';
+import { loginBlocked, recordLoginFailure } from './loginRateLimit';
 
 export const SESSION_COOKIE = 'chat_auth';
 // Match Payload's default 2h JWT lifetime. The the backend response carries
@@ -45,7 +47,7 @@ export async function fetchMe(token: string | undefined): Promise<BackendUser | 
   if (!token) return null;
   try {
     const res = await fetch(`${backendUrl()}/api/users/me`, {
-      headers: { Authorization: `JWT ${token}` },
+      headers: forwardClientIp(new Headers({ Authorization: `JWT ${token}` })),
     });
     if (!res.ok) return null;
     const body = (await res.json()) as { user?: BackendUser | null };
@@ -73,6 +75,8 @@ export type AuthFailure =
   | 'invalid-credentials'
   /** Payload locked the account after too many failed attempts. */
   | 'account-locked'
+  /** Too many failed sign-ins from this IP, here or at the backend. */
+  | 'rate-limited'
   /** The backend never answered — down, restarting, or no network. */
   | 'unreachable'
   /** The backend answered 5xx. */
@@ -94,6 +98,8 @@ export const AUTH_ERROR_COPY: Record<AuthFailure, string> = {
     'El correo o la contraseña no coinciden. Revísalos e inténtalo de nuevo.',
   'account-locked':
     'Bloqueamos la cuenta un rato por varios intentos fallidos. Espera unos minutos y vuelve a intentarlo.',
+  'rate-limited':
+    'Hubo demasiados intentos fallidos desde esta conexión. Espera un rato y vuelve a intentarlo.',
   unreachable:
     'No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo en un momento.',
   server:
@@ -149,7 +155,7 @@ export async function loginWithBackend(
   try {
     const res = await fetch(`${backendUrl()}/api/users/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: forwardClientIp(new Headers({ 'Content-Type': 'application/json' })),
       body: JSON.stringify({ email, password }),
     });
     const body = (await res.json().catch(() => ({}))) as PayloadErrorBody & {
@@ -164,7 +170,9 @@ export async function loginWithBackend(
       const failure: AuthFailure =
         res.status >= 500
           ? 'server'
-          : /locked/i.test(detail)
+          : res.status === 429
+            ? 'rate-limited'
+            : /locked/i.test(detail)
             ? 'account-locked'
             : res.status === 401 || res.status === 400
               ? 'invalid-credentials'
@@ -185,7 +193,7 @@ interface CookieSetter {
 
 export type SignInResult =
   | { ok: true; user: BackendUser }
-  | { ok: false; status: 400 | 401 | 503; error: string };
+  | { ok: false; status: 400 | 401 | 429 | 503; error: string };
 
 /**
  * The ONE sign-in path: validate, log in against the backend, set the session
@@ -206,16 +214,26 @@ export async function signIn(
     return { ok: false, status: 400, error: authErrorMessage('missing-fields') };
   }
 
+  // 🔴 Per IP, failures only (A-11): `loginRateLimit.ts` has the numbers. A
+  // spent IP never reaches the backend, so it cannot move anyone's lockout.
+  const ip = currentClientIp() ?? 'unknown';
+  if (loginBlocked(ip)) {
+    console.warn('[auth] login refused: too many failed sign-ins from this IP');
+    return { ok: false, status: 429, error: authErrorMessage('rate-limited') };
+  }
+
   const result = await loginWithBackend(email, password);
   if (!result.ok || !result.token || !result.user) {
     const failure = result.failure ?? 'login-failed';
+    if (failure === 'invalid-credentials' || failure === 'account-locked') recordLoginFailure(ip);
     // 🔴 The split: the technical detail goes to the LOG, the Spanish sentence
     // goes to the screen. `detail` holds Payload's English or a raw
     // `fetch failed`; neither is ever put in the response body.
     console.warn(`[auth] login failed (${failure}): ${result.detail ?? 'sin detalle'}`);
     // An unreachable or broken backend is not the user's fault, so it must not
     // answer 401 — that reads as "wrong password" to every caller.
-    const status = failure === 'unreachable' || failure === 'server' ? 503 : 401;
+    const status =
+      failure === 'unreachable' || failure === 'server' ? 503 : failure === 'rate-limited' ? 429 : 401;
     return { ok: false, status, error: authErrorMessage(failure) };
   }
 
@@ -238,7 +256,9 @@ export async function backendFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const headers = new Headers(init.headers ?? {});
+  // The browser's IP rides along, so the backend's per-IP limits see one
+  // bucket per browser, not one for the whole web (A-08). See `clientIp.ts`.
+  const headers = forwardClientIp(new Headers(init.headers ?? {}));
   if (token) headers.set('Authorization', `JWT ${token}`);
   if (init.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');

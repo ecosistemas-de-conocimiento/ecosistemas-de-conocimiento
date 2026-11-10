@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   RATE_LIMIT_WINDOW_MS,
   checkRateLimits,
+  peekRateLimit,
   rateLimits,
   resetRateLimits,
   setRateLimitStore,
@@ -163,6 +164,52 @@ describe('key-flood resistance', () => {
   }, 60_000)
 })
 
+describe('peek', () => {
+  beforeEach(() => {
+    useDefaultRateLimitStore()
+    resetRateLimits()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('answers without counting', async () => {
+    for (let i = 0; i < 5; i += 1) expect((await peekRateLimit(rule('p', 2))).allowed).toBe(true)
+    await hitTimes('p', 2, 2)
+    expect((await peekRateLimit(rule('p', 2))).allowed).toBe(false)
+  })
+
+  it('keeps a long-window key past the 10-minute idle sweep', async () => {
+    // The bug this guards: idle keys were dropped after 10 minutes whatever
+    // their window, so an hour-long failure bucket forgot an attacker who
+    // simply paused for the lockout.
+    vi.useFakeTimers()
+    const hour = { scope: 'test', key: 'slow', limit: 2, windowMs: 60 * 60_000 }
+    await checkRateLimits([hour])
+    await checkRateLimits([hour])
+    vi.advanceTimersByTime(20 * 60_000)
+    await checkRateLimits([rule('other', 1)]) // runs the sweep
+    expect((await peekRateLimit(hour)).allowed).toBe(false)
+    vi.advanceTimersByTime(41 * 60_000)
+    expect((await peekRateLimit(hour)).allowed).toBe(true)
+  })
+
+  it('FAILS CLOSED when the store throws', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    setRateLimitStore({
+      hit: () => ({ allowed: true, limit: 1, remaining: 1, resetAt: 0, retryAfterSeconds: 0 }),
+      peek: () => {
+        throw new Error('store is down')
+      },
+      reset: () => {},
+    })
+    expect((await peekRateLimit(rule('k', 100))).allowed).toBe(false)
+    useDefaultRateLimitStore()
+    vi.restoreAllMocks()
+  })
+})
+
 describe('multiple rules', () => {
   beforeEach(() => {
     useDefaultRateLimitStore()
@@ -216,6 +263,7 @@ describe('the shared-store seam', () => {
           retryAfterSeconds: 1,
         }
       },
+      peek: (_key, limit) => ({ allowed: true, limit, remaining: limit, resetAt: 0, retryAfterSeconds: 0 }),
       reset: () => {
         seen.length = 0
       },
@@ -233,6 +281,9 @@ describe('the shared-store seam', () => {
       hit: () => {
         throw new Error('store is down')
       },
+      peek: () => {
+        throw new Error('store is down')
+      },
       reset: () => {},
     })
 
@@ -245,6 +296,7 @@ describe('the shared-store seam', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     setRateLimitStore({
       hit: () => Promise.reject(new Error('timeout')),
+      peek: () => Promise.reject(new Error('timeout')),
       reset: () => {},
     })
     expect((await checkRateLimits([rule('k', 100)])).allowed).toBe(false)
@@ -275,6 +327,7 @@ describe('the shared-store seam', () => {
         seen.push(key)
         return { allowed: true, limit, remaining: 0, resetAt: 0, retryAfterSeconds: 0 }
       },
+      peek: (_key, limit) => ({ allowed: true, limit, remaining: 0, resetAt: 0, retryAfterSeconds: 0 }),
       reset: () => {
         seen.length = 0
       },
@@ -300,6 +353,7 @@ describe('the shared-store seam', () => {
         resetAt: 0,
         retryAfterSeconds: 0,
       }),
+      peek: () => ({ allowed: true, limit: 0, remaining: 0, resetAt: 0, retryAfterSeconds: 0 }),
       reset: () => {},
     })
     const verdict = await checkRateLimits([rule('k', 10)])
@@ -315,6 +369,7 @@ describe('configured limits', () => {
     'IDENTITY_RATELIMIT_ME_IP_MAX',
     'IDENTITY_RATELIMIT_RESOLVE_CONSUMER_MAX',
     'IDENTITY_RATELIMIT_SERVICE_AUTH_FAIL_IP_MAX',
+    'IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX',
   ] as const
 
   afterEach(() => {
@@ -328,6 +383,7 @@ describe('configured limits', () => {
     expect(rateLimits.mePerIp()).toBe(240)
     expect(rateLimits.resolvePerConsumer()).toBe(600)
     expect(rateLimits.serviceAuthFailurePerIp()).toBe(20)
+    expect(rateLimits.loginFailPerIp()).toBe(15)
   })
 
   it('is env-tunable, so ops can raise a ceiling without a code deploy', () => {

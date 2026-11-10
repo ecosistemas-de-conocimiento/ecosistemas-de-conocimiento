@@ -27,6 +27,8 @@
  * request in the app. Limiting `/token` and leaving its sibling wide open would
  * be a hole, so it is limited too, generously enough for a front-end that polls.
  * ⚠ In-process limiter: does not hold across replicas.
+ * ⚠ Most calls come from the web BFF, which forwards the browser's IP; without
+ * that, every browser shared one `me:ip:unknown` bucket (audit 2026-11-10, A-08).
  *
  * Mounted at `/api/v1/identity/me` (Payload prefixes `routes.api`).
  */
