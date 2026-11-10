@@ -32,6 +32,7 @@ import { DEFAULT_MERGED_CAP, fuseMatches, retrieveWithPolicy } from './retrieve.
 import { buildChatTurn } from './turn.js';
 import { maxDenseScore } from './relevance.js';
 import { warnEngine, warnEngineCapped } from './warn.js';
+import { assertAnswer } from './generation.js';
 
 /**
  * What an optional second retrieval path contributes to a turn. Both fields
@@ -333,6 +334,9 @@ export async function prepareTurn(args: RespondArgs): Promise<PreparedTurn> {
  * Full synchronous turn: prepare context + generate. Returns the generation
  * result alongside the prepared-turn artefacts (provenance/matches) so the
  * caller can persist the assistant turn + render citations.
+ *
+ * An answer with no visible text throws `EmptyAnswerError` (0.9.0): it is a
+ * failed turn, never a successful empty message to persist.
  */
 export async function respond(args: RespondArgs): Promise<RespondResult> {
   const prepared = await prepareTurn(args);
@@ -345,5 +349,5 @@ export async function respond(args: RespondArgs): Promise<RespondResult> {
     effort: args.config.chatEffort,
     maxTokens: args.config.chatMaxTokens,
   });
-  return { ...prepared, generation };
+  return { ...prepared, generation: assertAnswer(generation) };
 }

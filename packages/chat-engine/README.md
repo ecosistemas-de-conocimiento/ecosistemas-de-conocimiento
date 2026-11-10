@@ -88,6 +88,16 @@ supplies a thin adapter that maps `scopeId → projectId` (and forwards the
 optional `/v1/retrieve` `filter` field). The engine has no notion of "project"
 on purpose — see `apps/web/src/lib/server/engine/aiClient.ts`.
 
+## 0.9.0 — an empty answer is an error, not a message
+
+⚠ **Behaviour change in `respond()`.** An answer with no visible text (empty or whitespace
+only) now throws `EmptyAnswerError` (`code: 'empty_answer'`) instead of returning a
+successful generation with `text: ''`. A caller that persisted whatever came back no longer
+can persist an empty turn. Also exported: `assertAnswer` (the same check on any generation),
+`isEmptyAnswerCode` (ai-service's empty-completion code in any spelling) and
+`streamOutcome` (a stream's terminal `done`/`error` frame read into an answer or a typed
+failure, keeping any unknown code as it is).
+
 ## 0.4.3 — `prepublishOnly` stopped calling a script this repo deleted
 
 No code moved; the diff against 0.4.2 is one line of `scripts.prepublishOnly` plus the CI

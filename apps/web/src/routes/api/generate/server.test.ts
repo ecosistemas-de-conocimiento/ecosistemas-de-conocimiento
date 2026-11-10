@@ -71,6 +71,10 @@ interface World {
   /** The chat answer `/v1/generate/sync` and `/v1/generate/stream` give. */
   answerText: string;
   streamText: string;
+  /** The chat answer's own frames on `/v1/generate/stream`, in place of the delta + done above. */
+  streamFrames?: Array<Record<string, unknown>>;
+  /** The chat answer on `/v1/generate/sync` (or, before its headers, `/stream`) fails: this status and JSON body. */
+  syncError?: { status: number; body: unknown };
   /** What the published-titles read (`$lib/server/titleMatch`) answers. */
   publishedDocs: Array<Record<string, unknown>>;
   /**
@@ -258,6 +262,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     }
     if (url.pathname === '/v1/generate/sync') {
       const isExpansion = (raw ?? '').includes('Escribe exactamente tres');
+      if (!isExpansion && world.syncError) return json(world.syncError.body, world.syncError.status);
       return json(
         isExpansion
           ? {
@@ -279,6 +284,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       );
     }
     if (url.pathname === '/v1/generate/stream') {
+      if (world.syncError) return json(world.syncError.body, world.syncError.status);
       const done = {
         type: 'done',
         text: world.model ? world.model(userPromptOf(body)) : world.streamText,
@@ -288,9 +294,10 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
         traceId: 't2',
         systemPromptApplied: true,
       };
-      const sse =
-        `data: ${JSON.stringify({ type: 'delta', text: 'Respuesta ' })}\n\n` +
-        `data: ${JSON.stringify(done)}\n\n`;
+      const sse = world.streamFrames
+        ? world.streamFrames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join('')
+        : `data: ${JSON.stringify({ type: 'delta', text: 'Respuesta ' })}\n\n` +
+          `data: ${JSON.stringify(done)}\n\n`;
       return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }
   }
@@ -506,6 +513,95 @@ describe('POST /api/generate — sync', () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('could not save the answer for session 5 (backend 500)'),
     );
+  });
+});
+
+describe('🔴 POST /api/generate — an empty answer is a failed turn, never saved (dev 2026-11-10)', () => {
+  const EMPTY_DONE = {
+    type: 'done',
+    text: '',
+    costUsd: 0,
+    modelUsed: 'unknown',
+    provider: 'fake',
+    traceId: 't3',
+    systemPromptApplied: true,
+  };
+  /** The thrown SvelteKit error, or null when the route answered. */
+  const failure = (p: unknown) =>
+    Promise.resolve(p).then(
+      () => null,
+      (e: unknown) => e as { status?: number; body?: { code?: string } },
+    );
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it.each(['', '  \n\t '])('sync: a 200 with text %j is not saved and fails with empty_answer', async (text) => {
+    world.answerText = text;
+    const err = await failure(POST(event(turn())));
+    expect(err?.status).toBe(502);
+    expect(err?.body?.code).toBe('empty_answer');
+    expect(saves()).toHaveLength(0);
+  });
+
+  it.each([
+    ['the taxonomy code', { error: 'EmptyCompletion', code: 'ERR_EMPTY_COMPLETION', message: 'empty' }],
+    ['the nested envelope', { error: { code: 'EMPTY_COMPLETION', message: 'empty' } }],
+  ])('sync: ai-service\'s empty-completion error (%s) fails with empty_answer', async (_label, body) => {
+    world.syncError = { status: 502, body };
+    const err = await failure(POST(event(turn())));
+    expect(err?.status).toBe(502);
+    expect(err?.body?.code).toBe('empty_answer');
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('sync: an unknown upstream error keeps its ordinary failure, not empty_answer', async () => {
+    world.syncError = { status: 502, body: { error: 'SomethingNew', message: 'nuevo' } };
+    const err = await failure(POST(event(turn())));
+    expect(err?.status).toBe(503);
+    expect(err?.body?.code).toBeUndefined();
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('stream: `done` with no content emits an empty_answer error frame and saves nothing', async () => {
+    world.streamFrames = [EMPTY_DONE];
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.find((f) => f.type === 'done')).toBeUndefined();
+    expect(frames.at(-1)).toMatchObject({ type: 'error', code: 'empty_answer' });
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('stream: `done` with no text after deltas saves the streamed text', async () => {
+    world.streamFrames = [{ type: 'delta', text: 'Lo que llegó.' }, EMPTY_DONE];
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.at(-1)).toMatchObject({ type: 'done', text: 'Lo que llegó.', messageId: '99' });
+    expect((saves()[0]!.body as { content: string }).content).toBe('Lo que llegó.');
+  });
+
+  it.each([
+    ['before', []],
+    ['after', [{ type: 'delta', text: 'Medio ' }]],
+  ])('stream: an empty-completion error frame %s partial content becomes empty_answer', async (_when, deltas) => {
+    world.streamFrames = [...deltas, { type: 'error', code: 'EmptyCompletion', message: 'empty' }];
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.at(-1)).toMatchObject({ type: 'error', code: 'empty_answer' });
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('stream: an empty-completion refusal before the headers fails with empty_answer', async () => {
+    world.syncError = { status: 502, body: { error: 'EmptyCompletion', code: 'ERR_EMPTY_COMPLETION', message: 'empty' } };
+    const err = await failure(POST(event(turn(), true)));
+    expect(err?.status).toBe(502);
+    expect(err?.body?.code).toBe('empty_answer');
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('stream: an unknown error code passes through as is', async () => {
+    world.streamFrames = [{ type: 'error', code: 'SOMETHING_NEW', message: 'nuevo' }];
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.at(-1)).toEqual({ type: 'error', code: 'SOMETHING_NEW', message: 'nuevo' });
+    expect(saves()).toHaveLength(0);
   });
 });
 

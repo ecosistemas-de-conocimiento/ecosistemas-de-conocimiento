@@ -1,5 +1,5 @@
 /**
- * Empty-generation predicates. ADDITIVE (0.6.0). Pure.
+ * Empty-generation predicates (0.6.0) and the typed empty-answer error (0.9.0).
  *
  * ai-service can answer 200 with `text: ''`. That never throws, so a caller's
  * error path never sees it, and a blank bubble ships. These two predicates are
@@ -23,4 +23,77 @@ export function isEmptyGeneration(text: string | null | undefined): boolean {
  */
 export function shouldRetryEmpty(finishReason: string | null | undefined): boolean {
   return finishReason !== 'length';
+}
+
+/**
+ * The typed code for "the model answered, but with no visible text". ADDITIVE
+ * (0.9.0). One code for every way that arrives: a 200 with empty text, a
+ * stream whose `done` carries none, or ai-service's own empty-completion error.
+ */
+export const EMPTY_ANSWER_CODE = 'empty_answer';
+
+/** Thrown by `respond()` (and `assertAnswer`) for an empty final answer. */
+export class EmptyAnswerError extends Error {
+  readonly code = EMPTY_ANSWER_CODE;
+  /** The provider's stop reason, when it gave one. */
+  readonly finishReason: string | undefined;
+  constructor(finishReason?: string | null) {
+    super('The model returned an empty answer.');
+    this.name = 'EmptyAnswerError';
+    this.finishReason = finishReason ?? undefined;
+  }
+}
+
+/**
+ * Whether an upstream error code means an empty completion. Matched by shape,
+ * not one exact string: ai-service names a class in up to three spellings
+ * (`EmptyCompletion` on a stream frame, `ERR_EMPTY_COMPLETION` as the taxonomy
+ * code, `EMPTY_COMPLETION` nested), and this must work before it sends any.
+ */
+export function isEmptyAnswerCode(code: unknown): boolean {
+  if (typeof code !== 'string') return false;
+  const key = code.replace(/^ERR_/i, '').replace(/[^a-z]/gi, '').toLowerCase();
+  return key === 'emptycompletion' || key === 'emptyanswer' || key === 'emptyresponse';
+}
+
+/** The generation unchanged, or `EmptyAnswerError` when it has no visible text. */
+export function assertAnswer<T extends { text?: string | null; finishReason?: string | null }>(generation: T): T {
+  if (isEmptyGeneration(generation.text)) throw new EmptyAnswerError(generation.finishReason);
+  return generation;
+}
+
+/** What a stream's terminal frame comes to. */
+export type StreamOutcome =
+  | { ok: true; text: string }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Read a stream's terminal frame (`done` or `error`) into an answer or a
+ * typed failure. `streamed` is the text the `delta` frames carried.
+ *
+ *   · `done` with text → that text (authoritative, the same payload as sync).
+ *   · `done` with none → the streamed text, if any; else `empty_answer`.
+ *   · `error` meaning an empty completion → `empty_answer`, before or after
+ *     partial text.
+ *   · any other `error` → its own code, or `stream_failed` when it has none.
+ *     An unknown code is kept, never guessed at.
+ */
+export function streamOutcome(
+  frame: { type?: unknown; text?: unknown; code?: unknown; message?: unknown },
+  streamed = '',
+): StreamOutcome {
+  if (frame.type === 'done') {
+    const text = typeof frame.text === 'string' ? frame.text : '';
+    if (!isEmptyGeneration(text)) return { ok: true, text };
+    if (!isEmptyGeneration(streamed)) return { ok: true, text: streamed };
+    return { ok: false, code: EMPTY_ANSWER_CODE, message: 'The model returned an empty answer.' };
+  }
+  if (isEmptyAnswerCode(frame.code)) {
+    return { ok: false, code: EMPTY_ANSWER_CODE, message: 'The model returned an empty answer.' };
+  }
+  return {
+    ok: false,
+    code: typeof frame.code === 'string' && frame.code ? frame.code : 'stream_failed',
+    message: typeof frame.message === 'string' ? frame.message : 'Streaming generation failed.',
+  };
 }
