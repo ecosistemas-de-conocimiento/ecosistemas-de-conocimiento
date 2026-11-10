@@ -273,3 +273,22 @@ describe('GRAPH_EXTRACT=off — an install that does not want the graph', () => 
     expect(scheduleGraphExtraction).toHaveBeenCalledTimes(1)
   })
 })
+
+/** 🔴 P-13 (owner decision 2026-11-10): the graph surfaces titles, so a gated documento's is redacted. */
+describe('🔴 the title the graph is scheduled with', () => {
+  const titleFrom = async (row: Record<string, unknown>, name: string) => {
+    const { payload } = fakePayload({ contentKind: 'documento', anonymisationStatus: 'ready', redactedText: GATED, extractedText: RAW, ...row })
+    await scheduleGraphExtractionForDoc({ payload, docId: 9, organizationId: 1, fresh: { name, contentKind: 'documento' } })
+    return (scheduleGraphExtraction.mock.calls.at(-1)![0] as { title: string }).title
+  }
+
+  it('a gated documento: the redacted title from the re-read report, else "Documento"', async () => {
+    expect(await titleFrom({ anonymise: true, anonymisationReport: { redactedTitle: 'Acta [Persona A].pdf' } }, 'Acta María López.pdf')).toBe('Acta [Persona A].pdf')
+    expect(await titleFrom({ anonymise: true, anonymisationReport: { redactedTitle: null } }, 'Acta María López.pdf')).toBe('Documento')
+    expect(await titleFrom({ anonymise: true }, 'Acta María López.pdf')).toBe('Documento')
+  })
+
+  it('an ungated documento keeps its own name', async () => {
+    expect(await titleFrom({ anonymise: false, anonymisationReport: { redactedTitle: 'Acta [Persona A].pdf' } }, 'Informe de agua.pdf')).toBe('Informe de agua.pdf')
+  })
+})

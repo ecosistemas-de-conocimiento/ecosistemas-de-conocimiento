@@ -780,10 +780,8 @@ export async function driveTranscribedDocument(
         lengua: str(doc.lengua),
         anonymisationStatus: str(doc.anonymisationStatus),
         redactedText: str(doc.redactedText),
-        // 🔴 P-13: an approved gated documento keeps its redacted title. ⚠ Spread,
-        // not a property: `enqueueIngestForDoc`'s `fresh` type gains the field
-        // with edc-1's Documents.ts part; until then it is carried and unread.
-        ...{ anonymisationReport: doc.anonymisationReport },
+        // 🔴 P-13: an approved gated documento keeps its redacted title.
+        anonymisationReport: doc.anonymisationReport,
       },
       extractedText: text,
     })

@@ -345,19 +345,68 @@ describe('🔴 a gated documento reaches the draft corpus redacted', () => {
       detector: staticDetector([{ text: 'María López', type: 'persona' }]),
     })
 
-  it('🔴 anonymise → the gate runs; the wire carries the redaction, its own title', async () => {
+  // 🔴 P-13 (owner decision 2026-11-10): the title goes through the gate too.
+  // This fake detector reports the body's span, which is not in "Acta.pdf", so
+  // the title fails closed to the neutral one — never the filename.
+  it('🔴 anonymise → the gate runs; the wire carries the redaction and a gated title', async () => {
     scheduleTitle.mockClear()
     await gatedRun(true)
     const wire = JSON.stringify(wireArgs())
     expect(wire).not.toContain('María López')
     expect(wire).toContain('[Persona A]')
-    expect(wire).toContain('Acta.pdf')
+    expect(wire).not.toContain('Acta.pdf')
+    expect(wire).toContain('"title":"Documento"')
     expect(scheduleTitle).not.toHaveBeenCalled()
   })
 
-  it('no anonymise → the original, as before', async () => {
+  const wireTitles = () => {
+    const doc = (wireArgs().documents as Array<{ title: string; metadata: Record<string, unknown> }>)[0]!
+    return [doc.title, doc.metadata.title]
+  }
+
+  it('🔴 a title that names the person reaches the wire redacted, top-level and in metadata', async () => {
+    await enqueueIngestForDoc({
+      payload: fakePayload as unknown as Parameters<typeof enqueueIngestForDoc>[0]['payload'],
+      docId: 42,
+      organizationId: 10,
+      uploadedById: 3,
+      fresh: { name: 'Acta María López.pdf', kind: 'pdf', contentKind: 'documento', anonymise: true, anonymisationStatus: null },
+      extractedText: RAW,
+      detector: staticDetector([{ text: 'María López', type: 'persona' }]),
+    })
+    expect(JSON.stringify(wireArgs())).not.toContain('María López')
+    expect(wireTitles()).toEqual(['Acta [Persona A].pdf', 'Acta [Persona A].pdf'])
+  })
+
+  it.each([
+    [{ redactedTitle: 'Acta [Persona A].pdf' }, 'Acta [Persona A].pdf'],
+    [{ redactedTitle: null }, 'Documento'],
+    [undefined, 'Documento'],
+  ])('🔴 an APPROVED gated documento keeps the title its gate run made (report %o)', async (anonymisationReport, title) => {
+    await enqueueIngestForDoc({
+      payload: fakePayload as unknown as Parameters<typeof enqueueIngestForDoc>[0]['payload'],
+      docId: 42,
+      organizationId: 10,
+      uploadedById: 3,
+      fresh: {
+        name: 'Acta María López.pdf',
+        kind: 'pdf',
+        contentKind: 'documento',
+        anonymise: true,
+        anonymisationStatus: 'approved',
+        redactedText: 'Acta: asistió [Persona A], del comité.',
+        anonymisationReport,
+      },
+      extractedText: RAW,
+    })
+    expect(JSON.stringify(wireArgs())).not.toContain('María López')
+    expect(wireTitles()).toEqual([title, title])
+  })
+
+  it('no anonymise → the original and its own name, as before', async () => {
     await gatedRun(false)
     expect(JSON.stringify(wireArgs())).toContain('María López')
+    expect(wireTitles()).toEqual(['Acta.pdf', 'Acta.pdf'])
   })
 })
 

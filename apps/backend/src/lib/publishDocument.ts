@@ -58,7 +58,7 @@ import { isRateLimited, withRateLimitRetry, type RetryOptions } from './aiRetry'
 import { corpusTextFor, rowMustPassGate } from './anonymiseDocument'
 import { CONSENT_HELD_MESSAGE, isConsentHeld, readConsentHeld } from './consentHold'
 import { updateDocumentColumns } from './documentColumns'
-import { chunkMetadata, contentKindOf, knownContentKind, titleFor } from './contentKind'
+import { chunkMetadata, contentKindOf, documentTitleFor } from './contentKind'
 import { draftCorpus, publishedCorpus } from './corpus'
 import { safeErrMessage } from './errorSummary'
 
@@ -128,6 +128,8 @@ export interface PublishableDocument {
    * the row cleared the gate — it can be left over from an earlier run that did.
    */
   anonymisationStatus?: string | null
+  /** 🔴 Carries a gated documento's redacted title (P-13, `titleFor`). */
+  anonymisationReport?: unknown
   /** Rides into chunk metadata for the retrieval filter; `chunkMetadata` keeps it on a documento only. */
   lengua?: string | null
   organization?: unknown
@@ -620,7 +622,7 @@ export async function beginPublish(
           text,
           // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
           // is free text and never went through the gate.
-          title: titleFor(knownContentKind(doc), doc.name),
+          title: documentTitleFor(doc),
           /**
            * 🔴 THE SAME BUILDER THE DRAFT INGEST USES, AND THAT IS THE WHOLE
            * POINT. Publishing RE-EMBEDS the document into a different corpus, so
@@ -637,6 +639,7 @@ export async function beginPublish(
             format: doc.kind,
             publication: 'published',
             title: doc.name,
+            gate: doc,
             lengua: doc.lengua,
           }),
         },
@@ -882,7 +885,7 @@ export async function unpublish(
           text,
           // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
           // is free text and never went through the gate.
-          title: titleFor(knownContentKind(doc), doc.name),
+          title: documentTitleFor(doc),
           // Same shared builder as every other ingest — see `beginPublish`.
           metadata: chunkMetadata({
             docId: String(doc.id),
@@ -891,6 +894,7 @@ export async function unpublish(
             format: doc.kind,
             publication: 'draft',
             title: doc.name,
+            gate: doc,
             lengua: doc.lengua,
           }),
         },
