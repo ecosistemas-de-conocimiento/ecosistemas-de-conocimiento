@@ -426,7 +426,8 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
   /**
    * Conversation 14 holds one row per new rule:
    *   55 held testimonio draft, uploaded here, file E, a review row (95) left
-   *      by an earlier decision → goes, with the review row and the file;
+   *      by an earlier decision → goes, with the file; the review row stays
+   *      with `document` null and its snapshot (it is not the deleter's);
    *   56 published testimonio → kept;
    *   57 documento draft uploaded in conversation 11 (`uploadedInSession`)
    *      and shared here → kept;
@@ -446,12 +447,16 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
         (58, 1, 1, 'legacy', 'markdown', 'documento', 'n/a', 'draft', NULL, NULL, '${LATER}');
       INSERT INTO documents_rels (parent_id, path, sessions_id, "order") VALUES
         (55, 'session', 14, 1), (56, 'session', 14, 1), (57, 'session', 14, 1), (58, 'session', 14, 1);
-      INSERT INTO anonymisation_reviews (id, document_id, organization_id, reviewer_id, decision)
-        VALUES (95, 55, 1, 2, 'approved');
+      -- The snapshot as Payload writes it (collections/AnonymisationReviews.ts).
+      INSERT INTO anonymisation_reviews (id, document_id, document_id_snapshot, organization_id, reviewer_id, decision)
+        VALUES (95, 55, 55, 1, 2, 'approved');
     `))
   }
 
-  it('🔴 a held testimonio draft goes with its review row and its file; published and foreign-origin rows stay', async () => {
+  const reviews = () =>
+    rows(sql`SELECT id, document_id, document_id_snapshot::int AS snapshot, reviewer_id FROM anonymisation_reviews ORDER BY id`)
+
+  it('🔴 a held testimonio draft goes with its file, its review row stays; published and foreign-origin rows stay', async () => {
     await seedConversation14()
 
     await payload.delete({ collection: 'sessions', id: 14, overrideAccess: true })
@@ -459,10 +464,25 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
     // 55 (held, here) and 58 (no origin, legacy guess) go; 56 published and
     // 57 uploaded in conversation 11 stay.
     expect((await ids('documents')).filter((id) => id >= 55)).toEqual([56, 57])
-    expect(await ids('anonymisation_reviews')).toEqual([])
+    // No user (a script): every review row stays, as on a document delete.
+    expect(await reviews()).toEqual([{ id: 95, document_id: null, snapshot: 55, reviewer_id: 2 }])
     expect(await eventually(async () => !(await ids('media')).includes(74))).toBe(true)
     expect(existsSync(fileE)).toBe(false)
     expect(deleteDocument.mock.calls.map((c) => c[1]).sort()).toEqual(['55', '55', '58', '58'])
+  }, 30_000)
+
+  it('🔴 the uploader deleting the conversation takes their own review rows of a held upload; another reviewer’s stay', async () => {
+    await seedConversation14()
+    await db.execute(sql.raw(`
+      INSERT INTO anonymisation_reviews (id, document_id, document_id_snapshot, organization_id, reviewer_id, decision)
+        VALUES (97, 55, 55, 1, 1, 'approved');
+    `))
+    const uploader = await payload.findByID({ collection: 'users', id: 1, overrideAccess: true })
+
+    await payload.delete({ collection: 'sessions', id: 14, overrideAccess: true, user: { ...uploader, collection: 'users' } as never })
+
+    expect(await ids('documents')).not.toContain(55)
+    expect(await reviews()).toEqual([{ id: 95, document_id: null, snapshot: 55, reviewer_id: 2 }])
   }, 30_000)
 
   it('🔴 no recorded origin on a row born AFTER the column’s migration ran → kept', async () => {
@@ -798,7 +818,8 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
 
     // 23503: foreign_key_violation. The document is gone by the time it runs.
     expect(await review).toBe('failed: 23503')
-    expect(await ids('anonymisation_reviews')).toEqual([])
+    // 95 was there before the delete (and stays, with no user); 97 never landed.
+    expect(await ids('anonymisation_reviews')).toEqual([95])
     expect(await ids('documents')).not.toContain(55)
   }, 30_000)
 

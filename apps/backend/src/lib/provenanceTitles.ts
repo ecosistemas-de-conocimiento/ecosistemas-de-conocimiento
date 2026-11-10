@@ -38,7 +38,7 @@
 import type { sql } from '@payloadcms/db-postgres'
 
 import { documentTitleFor, titleFor, titleIsGated } from './contentKind'
-import { isConsentHeld, type ConsentDb } from './consentHold'
+import { isConsentHeld, notConsentHeldSql, type ConsentDb } from './consentHold'
 
 type Sql = ReturnType<typeof sql>
 const drizzleSql = async () => (await import('@payloadcms/db-postgres')).sql
@@ -138,7 +138,9 @@ async function readDocs(db: ConsentDb, ids: number[]): Promise<Map<string, DocRo
   const sql = await drizzleSql()
   const found = rowsOf(
     await db.execute(
-      sql`SELECT id, content_kind, name, anonymise, anonymisation_report, consent_held
+      // `consent_held` here is the inherited hold: a revision of a held row is held (`notConsentHeldSql`).
+      sql`SELECT id, content_kind, name, anonymise, anonymisation_report,
+                 NOT ${sql.raw(notConsentHeldSql())} AS consent_held
             FROM documents WHERE id IN (${sql.join(
               ids.map((id) => sql`${id}`),
               sql`, `,

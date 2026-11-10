@@ -162,7 +162,7 @@ Dos detalles del diagrama. Primero, ai-service devuelve los callbacks al backend
 
 ### 4.2 Tareas que arrancan con el backend
 
-`onInit` en `apps/backend/src/payload.config.ts` arranca, en este orden, estas tareas. Cada una es un temporizador dentro del proceso del backend; con más de una réplica correrían una vez por réplica. Los intervalos son los valores por omisión del código; cada uno se cambia con su variable.
+`onInit` en `apps/backend/src/payload.config.ts` arranca, en este orden, estas tareas. Cada una es un temporizador dentro del proceso del backend; con más de una réplica correrían una vez por réplica. Los intervalos son los valores por omisión del código; cada uno se cambia con su variable. Salvo la de sesiones viejas, cada tarea con intervalo hace su primera pasada 2 min después del arranque (`JANITOR_FIRST_SWEEP_MIN`, `lib/janitorScheduler.ts`; inferido, no medido), o antes si su intervalo es menor.
 
 | Tarea | Archivo | Por omisión | Intervalo | Qué hace |
 |---|---|---|---|---|

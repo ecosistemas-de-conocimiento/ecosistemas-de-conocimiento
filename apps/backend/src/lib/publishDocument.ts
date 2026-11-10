@@ -56,7 +56,7 @@ import type { Payload } from 'payload'
 
 import { isRateLimited, withRateLimitRetry, type RetryOptions } from './aiRetry'
 import { corpusTextFor, rowMustPassGate } from './anonymiseDocument'
-import { CONSENT_HELD_MESSAGE, isConsentHeld, readConsentHeld } from './consentHold'
+import { CONSENT_HELD_MESSAGE, isConsentHeld, isConsentHeldNow, readConsentHeld } from './consentHold'
 import { updateDocumentColumns } from './documentColumns'
 import { chunkMetadata, contentKindOf, documentTitleFor } from './contentKind'
 import { draftCorpus, publishedCorpus } from './corpus'
@@ -194,7 +194,8 @@ export async function publishBlocker(doc: PublishableDocument, payload: Payload)
         .catch(() => null)) as unknown as Record<string, unknown> | null)
     : null
   const row = (stored ?? doc) as Record<string, unknown>
-  if (isConsentHeld(row) || isConsentHeld(doc as { consentHeld?: unknown })) return 'consent-held'
+  // A revision answers for its original too (`isConsentHeldNow`).
+  if ((await isConsentHeldNow(payload, row)) || isConsentHeld(doc as { consentHeld?: unknown })) return 'consent-held'
   if (!rowMustPassGate(row)) return null
   const report = row.anonymisationReport as { regate?: { failedAt?: unknown } } | null | undefined
   if (typeof report?.regate?.failedAt === 'string') return 'regate-failed'

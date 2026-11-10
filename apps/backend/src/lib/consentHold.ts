@@ -10,6 +10,14 @@
  * There is no release path in code: lifting a hold is an owner decision and a
  * hand-written `UPDATE`.
  *
+ * 🔴 A REVISION INHERITS ITS ORIGINAL'S HOLD (audit 2026-11-10, A1). A
+ * "Publicar cambios" row (`revisionOf`, `lib/studentNotes.ts`) is hidden
+ * staging that `promoteRevision` later swaps over the note, so a revision of a
+ * held note is held too: every helper here answers for the original as well.
+ * The hold is written on the original only ({@link holdForConsent}), so lifting
+ * it stays one `UPDATE`. An original that cannot be read holds its revision
+ * (the FK cascades, so that is a partial row, never a real orphan).
+ *
  * ⚠ The single source. `lib/graph/consentHold.ts` re-exports from here.
  *
  * Guarded in `collections/Documents.ts` (the ingest hook, `runExtractAndIngest`,
@@ -35,22 +43,81 @@ export interface ConsentDb {
   execute(query: Sql): Promise<unknown>
 }
 
-/** 🔴 Only `true` holds. Missing or null (a row read before the migration, a partial row) is false. */
-export function isConsentHeld(row: { consentHeld?: unknown } | null | undefined): boolean {
-  return row?.consentHeld === true
+/** The loose row the sync check reads: a Payload row at any depth, or a hand-built slice. */
+export interface ConsentRow {
+  consentHeld?: unknown
+  /** The original's id (depth 0) or the original itself (depth ≥ 1). Absent: not known to be a revision. */
+  revisionOf?: unknown
+  /** The original's hold, when the caller read it apart (`readConsentHeld` does it in SQL). */
+  revisionOfConsentHeld?: unknown
 }
 
-/** Payload `where`: the rows a sweep may touch. AND it into the sweep's own query. */
-export const NOT_CONSENT_HELD: Where = { consentHeld: { not_equals: true } }
+/**
+ * 🔴 Only `true` holds. Missing or null (a row read before the migration, a partial row) is false.
+ * A revision is held when its original is: from `revisionOfConsentHeld`, or a
+ * populated `revisionOf`. A revision whose original is only an id answers TRUE
+ * (fail closed): a caller that must let a revision of a free note through
+ * resolves it with {@link isConsentHeldNow}.
+ *
+ * ⚠ A slice without `revisionOf` cannot be told from a plain row: pair it with
+ * {@link readConsentHeld}, as `enqueueIngestForDoc` does.
+ */
+export function isConsentHeld(row: ConsentRow | null | undefined): boolean {
+  if (row?.consentHeld === true) return true
+  const original = row?.revisionOf
+  if (original === null || original === undefined) return false
+  if (typeof row?.revisionOfConsentHeld === 'boolean') return row.revisionOfConsentHeld
+  if (typeof original === 'object') return (original as { consentHeld?: unknown }).consentHeld !== false
+  return true
+}
+
+/**
+ * {@link isConsentHeld}, with a revision's original read now when the row
+ * carries only its id. A handle with no `db.drizzle` (a unit-test fake) cannot
+ * read it: the revision stays held.
+ */
+export async function isConsentHeldNow(payload: unknown, row: ConsentRow | null | undefined): Promise<boolean> {
+  const original = row?.revisionOf
+  if (row?.consentHeld === true || (typeof original !== 'number' && typeof original !== 'string')) return isConsentHeld(row)
+  if (typeof row?.revisionOfConsentHeld === 'boolean') return isConsentHeld(row)
+  const db = drizzleOf(payload)
+  if (!db) return true
+  const sql = await drizzleSql()
+  const rows = rowsOf(await db.execute(sql`SELECT consent_held FROM documents WHERE id = ${asId(original)}`))
+  return rows[0]?.consent_held !== false
+}
+
+/**
+ * Payload `where`: the rows a sweep may touch. AND it into the sweep's own query.
+ * Not held, and not a revision of a held row: `{ or: [held, revisionOf.held] }`
+ * negated, since a `where` has no NOT. A revision whose original does not join
+ * fails `revisionOf.consentHeld` and is left out.
+ *
+ * ⚠ For server reads (`overrideAccess: true`), which the relation-filter hooks
+ * leave as they are (`constrainGatedQueriesAt`). A user's query would have its
+ * `revisionOf.` crossing narrowed to rows that user may read.
+ */
+export const NOT_CONSENT_HELD: Where = {
+  and: [
+    { consentHeld: { not_equals: true } },
+    { or: [{ revisionOf: { exists: false } }, { 'revisionOf.consentHeld': { equals: false } }] },
+  ],
+}
 
 /**
  * The same predicate as SQL text on `documents`, for raw queries: splice it
  * with `sql.raw(...)`. `alias` is the table alias the query uses (`d` in
- * `SELECT … FROM documents d`); a constant, never user input.
+ * `SELECT … FROM documents d`); a constant, never user input. Without one the
+ * columns are qualified `documents.`, so the query must not alias the table.
  */
 export function notConsentHeldSql(alias?: string): string {
   if (alias !== undefined && !/^[a-z_][a-z0-9_]*$/i.test(alias)) throw new Error(`not a table alias: ${alias}`)
-  return alias ? `${alias}.consent_held IS NOT TRUE` : 'consent_held IS NOT TRUE'
+  const t = alias ?? 'documents'
+  return (
+    `(${t}.consent_held IS NOT TRUE AND (${t}.revision_of_id IS NULL OR EXISTS (` +
+    `SELECT 1 FROM documents consent_original WHERE consent_original.id = ${t}.revision_of_id ` +
+    `AND consent_original.consent_held IS NOT TRUE)))`
+  )
 }
 
 /** Spanish, because the endpoints return it and the UI shows it verbatim. */
@@ -62,21 +129,28 @@ const rowsOf = (result: unknown): Record<string, unknown>[] =>
 
 const asId = (id: Id): Id => (typeof id === 'string' && /^\d+$/.test(id) ? Number(id) : id)
 
+const drizzleOf = (payload: unknown): ConsentDb | null => {
+  const db = (payload as { db?: { drizzle?: ConsentDb } } | null)?.db?.drizzle
+  return db && typeof db.execute === 'function' ? db : null
+}
+
 /**
- * The stored flag, read now. For a caller holding a row that may predate the
- * hold, or a hand-built slice without the column (`ingestRecovery`'s audio
- * drive).
+ * The stored flag, read now, the original's included ({@link notConsentHeldSql}).
+ * For a caller holding a row that may predate the hold, or a hand-built slice
+ * without the column (`ingestRecovery`'s audio drive).
  *
  * ⚠ A handle with no `db.drizzle` is a unit-test fake (a real Payload always
  * has one): it answers false, and the caller's own `isConsentHeld(row)` is the
  * check left. A row that does not exist answers false: there is nothing to send.
  */
 export async function readConsentHeld(payload: unknown, id: Id): Promise<boolean> {
-  const db = (payload as { db?: { drizzle?: ConsentDb } } | null)?.db?.drizzle
-  if (!db || typeof db.execute !== 'function') return false
+  const db = drizzleOf(payload)
+  if (!db) return false
   const sql = await drizzleSql()
-  const rows = rowsOf(await db.execute(sql`SELECT consent_held FROM documents WHERE id = ${asId(id)}`))
-  return rows[0]?.consent_held === true
+  const rows = rowsOf(
+    await db.execute(sql`SELECT ${sql.raw(notConsentHeldSql('d'))} AS free FROM documents d WHERE d.id = ${asId(id)}`),
+  )
+  return rows[0] !== undefined && rows[0].free !== true
 }
 
 // ── The hold itself: `scripts/hold-for-consent.ts` ──────────────────────────
@@ -111,6 +185,12 @@ export interface ConsentHoldReport {
   held: number
   /** Selected rows that are not drafts: still in the shared corpus until unpublished. */
   notDraft: number[]
+  /**
+   * "Publicar cambios" revisions of the selected rows. Never written: each is
+   * held through its original ({@link isConsentHeld}), so lifting the hold
+   * stays one `UPDATE` on the original.
+   */
+  revisions: number[]
 }
 
 /** Why this selection may not run, or null. */
@@ -175,6 +255,15 @@ export async function holdForConsent(
   const foundIds = new Set(found.map((r) => String(r.id)))
   const refused = (sel.ids ?? []).map(String).filter((id) => !foundIds.has(id))
   const notDraft = found.filter((r) => r.publicationStatus !== 'draft').map((r) => r.id)
+  const revisions =
+    found.length === 0
+      ? []
+      : rowsOf(
+          await db.execute(
+            sql`SELECT id FROM documents
+                WHERE revision_of_id IN (${sql.join(found.map((r) => sql`${r.id}`), sql`, `)}) ORDER BY id`,
+          ),
+        ).map((r) => Number(r.id))
 
   let held = 0
   if (opts.apply && found.length > 0) {
@@ -189,7 +278,7 @@ export async function holdForConsent(
       ).length
     }
   }
-  return { apply: opts.apply, rows: found, refused, held, notDraft }
+  return { apply: opts.apply, rows: found, refused, held, notDraft, revisions }
 }
 
 /** A line of an ids file that names a row NOT to hold. */

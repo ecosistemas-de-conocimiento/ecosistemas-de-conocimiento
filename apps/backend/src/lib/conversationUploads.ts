@@ -42,12 +42,14 @@
  *   6. Nothing else references it: no other conversation's `contextScope`, no
  *      surviving message's `contextRefs`, no `anonymisation-reviews` row (an
  *      append-only audit log of somebody else's decision).
- *      ⚠ EXCEPT a HELD document: its review rows (left by an earlier decision
- *      before it was held again) are deleted with it, so no reviewer item
- *      dangles. The review QUEUE is not a table: it is `documents` filtered on
- *      `anonymisationStatus = 'held'` (`lib/holdReview.ts`), so the row going
- *      is the queue entry going. A `rejected` or `approved` document is
- *      kept by rule 2 already.
+ *      ⚠ EXCEPT a HELD document: it goes, and its review rows (left by an
+ *      earlier decision before it was held again) are treated as a document
+ *      delete treats them (owner decision 2026-11-10): the deleting user's
+ *      own rows go, everyone else's stay with `document` null and
+ *      `documentIdSnapshot` (the FK is `ON DELETE set null`). The review QUEUE
+ *      is not a table: it is `documents` filtered on `anonymisationStatus =
+ *      'held'` (`lib/holdReview.ts`), so the row going is the queue entry
+ *      going. A `rejected` or `approved` document is kept by rule 2 already.
  *
  * ⚠ ONE CASE THE MODEL STILL CANNOT TELL APART, and only on rows older than
  * `uploadedInSession`. A document uploaded into a LATER conversation B,
@@ -209,7 +211,7 @@ export interface UploadCleanupPlan {
   documents: Array<{ id: Id; organization: unknown; uploadedBy: unknown }>
   /** Candidate files: the owner's. Whether nothing else uses one is checked after commit. */
   mediaIds: Id[]
-  /** `anonymisation-reviews` rows deleted in the transaction with a held document. For the logs. */
+  /** The deleting user's own `anonymisation-reviews` rows deleted with a held document. For the logs. */
   reviewIds?: Id[]
 }
 
@@ -326,7 +328,7 @@ async function isReferencedElsewhere(
     // any message still citing the document lives in another conversation.
     { collection: 'messages', where: { contextRefs: asRef } },
   ]
-  // A held document's review rows go with it (rule 6's exception).
+  // A held document goes even with review rows (rule 6's exception): the deleting user's own go, the rest stay.
   if (!isHeld(doc)) {
     checks.push({ collection: 'anonymisation-reviews', where: { document: { equals: doc.id } } })
   }
@@ -561,16 +563,20 @@ export async function deleteConversationUploadRows(
 }
 
 /**
- * A held document's `anonymisation-reviews` rows, in the transaction. They
- * are append-only to every API caller (`collections/AnonymisationReviews.ts`);
- * this is the one server-side exception, ruled by Rodrigo on 2026-10-17.
- * (The foreign key is `ON DELETE cascade` too, baseline migration; deleting
- * them here does not depend on it and puts their ids in the logs.)
+ * 🔴 THE DELETING USER'S OWN review rows of a held document, in the
+ * transaction; EVERYONE ELSE'S STAY. The same rule as a document delete
+ * (`deleteOwnReviewRowsHook` in `collections/Documents.ts`, owner decision
+ * 2026-11-10): the FK is `ON DELETE set null` (migration
+ * `20261110_181621_consent_held_reviews_keep`), so the others outlive the
+ * document with `documentIdSnapshot`. No user (a script, the janitor) deletes
+ * none. Done here, before the document's own hook, to put the ids in the logs.
  */
 async function deleteReviewRows(documentId: Id, plan: UploadCleanupPlan, deps: ConversationUploadDeps): Promise<void> {
+  const user = deps.req?.user
+  if (!user) return
   const result = (await deps.payload.delete({
     collection: 'anonymisation-reviews',
-    where: { document: { equals: documentId } },
+    where: { and: [{ document: { equals: documentId } }, { reviewer: { equals: user.id } }] },
     depth: 0,
     overrideAccess: true,
     req: deps.req,

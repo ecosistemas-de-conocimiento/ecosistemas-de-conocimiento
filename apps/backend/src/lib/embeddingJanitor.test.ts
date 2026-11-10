@@ -23,6 +23,7 @@
  * condition is enforced.
  */
 
+import { allowJanitors } from '@/lib/testing/janitors'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
@@ -60,6 +61,9 @@ import {
   stopEmbeddingJanitor,
   sweepStalledEmbeddings,
 } from './embeddingJanitor'
+
+// Its own janitor arms here (`vitest.setup.ts` turns them all off).
+allowJanitors()
 
 const NOW = new Date('2026-09-04T12:00:00Z')
 const DEADLINE_MS = 30 * 60_000
