@@ -22,6 +22,12 @@
  *     rewritten (free text).
  *
  * One `jsonb_set` per citation, by path: the rest of the JSON is untouched.
+ * 🔴 A PROVENANCE STORED AS A JSON STRING (a jsonb string whose text is the
+ * JSON) cannot take a `jsonb_set`, and used to be counted stale and silently
+ * never written. It is parsed, its titles set, and stored back AS A STRING:
+ * neither reader (web `toBrowserProvenance`, `conversationIngest`) reads a
+ * string as citations, so turning it into an object would change what they
+ * show. Its ids are listed apart ({@link ProvenanceTitlesReport.stringProvenance}).
  * Raw SQL, so no Payload hook runs (the conversation ingest hook) and
  * `updatedAt` stays. Batched by message id, one transaction per batch, rows
  * locked `FOR UPDATE` while the batch decides. A citation already right is
@@ -60,6 +66,8 @@ export interface ProvenanceTitlesReport {
   missingDocument: number
   /** Messages where an old title also appears outside the citation's `title`. Not written. */
   titleElsewhere: number[]
+  /** Stale messages whose provenance is a JSON string (rewritten as a string on apply). */
+  stringProvenance: number[]
 }
 
 export interface ProvenanceTitlesOpts {
@@ -180,13 +188,15 @@ export async function backfillProvenanceTitles(
     openStale: { documento: 0, testimonio: 0, conversacion: 0, other: 0 },
     missingDocument: 0,
     titleElsewhere: [],
+    stringProvenance: [],
   }
 
   const batch = async (tx: ConsentDb, after: number): Promise<number | null> => {
     const org = opts.organizationId
     const messages = rowsOf(
       await tx.execute(
-        sql`SELECT m.id, m.provenance, m.content, m.generation_meta FROM messages m
+        sql`SELECT m.id, m.provenance, jsonb_typeof(m.provenance) AS provenance_type,
+                   m.provenance #>> '{}' AS provenance_text, m.content, m.generation_meta FROM messages m
               ${org === undefined ? sql`` : sql`JOIN sessions s ON s.id = m.session_id AND s.organization_id = ${org}`}
              WHERE m.id > ${after} AND m.provenance IS NOT NULL
              ORDER BY m.id LIMIT ${batchSize}
@@ -197,6 +207,8 @@ export async function backfillProvenanceTitles(
     const parsed = messages.map((m) => ({
       id: Number(m.id),
       provenance: asJson(m.provenance),
+      /** The stored JSON text when the column holds a jsonb STRING, else null. */
+      asString: m.provenance_type === 'string' ? String(m.provenance_text) : null,
       content: typeof m.content === 'string' ? m.content : '',
       meta: JSON.stringify(asJson(m.generation_meta) ?? null),
     }))
@@ -237,6 +249,7 @@ export async function backfillProvenanceTitles(
       if (fix.length === 0) return
       fixes.set(m.id, fix)
       report.stale.push(m.id)
+      if (m.asString !== null) report.stringProvenance.push(m.id)
       report.staleCitations += fix.length
       const elsewhere = (old: string): boolean =>
         old.trim() !== '' &&
@@ -251,7 +264,28 @@ export async function backfillProvenanceTitles(
     })
 
     if (opts.apply) {
+      const byId = new Map(parsed.map((m) => [m.id, m]))
       for (const [id, fix] of fixes) {
+        const stored = byId.get(id)!.asString
+        if (stored !== null) {
+          // A jsonb string: set the titles on the parsed copy and store it back
+          // as a string, only if the text is still what this batch read.
+          const copy = JSON.parse(stored) as unknown
+          for (const f of fix) {
+            let node = copy as Record<string, unknown>
+            for (const key of f.path.slice(0, -1)) node = node[key] as Record<string, unknown>
+            node[f.path[f.path.length - 1]!] = f.title
+          }
+          const res = rowsOf(
+            await tx.execute(
+              sql`UPDATE messages SET provenance = to_jsonb(${JSON.stringify(copy)}::text)
+                   WHERE id = ${id} AND jsonb_typeof(provenance) = 'string' AND provenance #>> '{}' = ${stored}
+                   RETURNING id`,
+            ),
+          )
+          if (res.length > 0) report.written.push(id)
+          continue
+        }
         let expr: Sql = sql`provenance`
         let guard: Sql = sql`TRUE`
         for (const f of fix) {

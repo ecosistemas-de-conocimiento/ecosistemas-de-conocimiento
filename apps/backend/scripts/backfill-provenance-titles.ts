@@ -51,6 +51,7 @@ async function main(): Promise<void> {
   ids('written', report.written)
   ids('consentHeld', report.consentHeld)
   ids('titleElsewhere', report.titleElsewhere)
+  ids('stringProvenance', report.stringProvenance)
   console.log(
     `[backfill-provenance-titles] ${JSON.stringify({
       scanned: report.scanned,

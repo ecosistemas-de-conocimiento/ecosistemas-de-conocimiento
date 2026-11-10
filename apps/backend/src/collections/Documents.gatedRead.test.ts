@@ -393,6 +393,73 @@ describe('🔴 who recorded a testimonio stays with the uploader', () => {
   })
 })
 
+describe('🔴 an allowlist, not a block list (wave 8: D1 mediaFile, D2 revisionOf)', () => {
+  const run = (prefix: string, args: Record<string, unknown>, operation = 'read') =>
+    constrainGatedQueriesAt(prefix)({
+      args,
+      operation,
+      req: { user: ben } as unknown as PayloadRequest,
+    } as never) as { where?: unknown; sort?: unknown }
+  const readableAt = (p: string) => ({
+    or: [
+      { and: [{ [`${p}contentKind`]: { equals: 'documento' } }, { [`${p}anonymise`]: { equals: false } }] },
+      { [`${p}uploadedBy`]: { equals: BEN } },
+    ],
+  })
+
+  it.each([
+    ['mediaFile.filename', { 'mediaFile.filename': { like: 'Juana' } }],
+    ['nested-object path', { mediaFile: { filename: { like: 'Juana' } } }],
+    ['exists', { 'mediaFile.filename': { exists: true } }],
+    ['upper-case OR', { OR: [{ 'mediaFile.filename': { like: 'Juana' } }] }],
+    ['a non-operator value', { mediaFile: 'Juana' }],
+    ['tema', { tema: { equals: 'x' } }],
+  ])('🔴 narrows a where on %s', (_label, where) => {
+    expect(run('', { where }).where).toEqual({ and: [where, readableAt('')] })
+  })
+
+  it('leaves a where on allowlisted paths alone', () => {
+    const where = {
+      and: [{ organization: { equals: 3 } }, { publicationStatus: { equals: 'published' } }],
+      or: [{ anonymisationStatus: { in: ['ready'] } }, { redactedText: { exists: true } }, { id: { in: [1] } }],
+    }
+    expect(run('', { where }).where).toBe(where)
+  })
+
+  it('🔴 narrows every documents row a revisionOf path crosses', () => {
+    const where = { 'document.revisionOf.name': { like: 'Rosa' } }
+    expect(run('document.', { where }).where).toEqual({ and: [where, readableAt('document.'), readableAt('document.revisionOf.')] })
+    const twice = { 'revisionOf.revisionOf.name': { like: 'Rosa' } }
+    expect(run('', { where: twice }).where).toEqual({ and: [twice, readableAt(''), readableAt('revisionOf.'), readableAt('revisionOf.revisionOf.')] })
+  })
+
+  it('on a review log: its own columns and the bare relation pass, any other document.* path narrows', () => {
+    const own = { decision: { equals: 'approved' }, documentIdSnapshot: { equals: 3 }, document: { equals: 3 }, 'document.contentKind': { equals: 'documento' } }
+    expect(run('document.', { where: own }).where).toBe(own)
+    const media = { 'document.mediaFile.filename': { like: 'Juana' } }
+    expect(run('document.', { where: media }).where).toEqual({ and: [media, readableAt('document.')] })
+  })
+
+  it.each([
+    ['mediaFile.filename', undefined],
+    ['-createdAt,mediaFile.filename', '-createdAt'],
+    [['revisionOf.name', 'id'], ['id']],
+  ])('🔴 strips a sort on %j', (sort, expected) => {
+    expect(run('', { sort, where: { organization: { equals: 3 } } }).sort).toEqual(expected)
+  })
+
+  it('keeps a revisionOf sort only once every hop is narrowed', () => {
+    expect(run('document.', { sort: 'document.revisionOf.name', where: { 'document.name': { like: 'a' } } }).sort).toBeUndefined()
+    expect(run('document.', { sort: 'document.revisionOf.name', where: { 'document.revisionOf.name': { like: 'a' } } }).sort).toBe('document.revisionOf.name')
+    expect(run('document.', { sort: 'decision' }).sort).toBe('decision')
+  })
+
+  it("narrows readDistinct's field, also without a where", () => {
+    expect(run('', { field: 'name' }, 'readDistinct').where).toEqual({ and: [readableAt('')] })
+    expect(run('', { field: 'kind' }, 'readDistinct').where).toBeUndefined()
+  })
+})
+
 describe('🔴 the collection config actually wires the gate', () => {
   // Measured: deleting every `access.read: gated*` line and the hook
   // registration used to keep this file green. These fail if that happens.

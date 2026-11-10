@@ -149,6 +149,33 @@ describe.skipIf(!dockerOk)('backfill provenance titles', () => {
     expect(await changedIds()).not.toContain(M.open)
   })
 
+  it('🔴 a provenance stored as a JSON STRING is rewritten, and stays a string', async () => {
+    const STR = 9
+    const provenance = { chunks: [chunk(0, '101', RAW), chunk(1, '103', 'Libro abierto.pdf')] }
+    await run(`INSERT INTO messages (id, session_id, role, content, provenance, updated_at)
+                 VALUES (${STR}, 60, 'assistant', 'Respuesta [1].', ${lit(JSON.stringify(provenance))}::jsonb, '2026-11-01T10:00:00Z')`)
+    expect((await q(`SELECT jsonb_typeof(provenance) AS t FROM messages WHERE id = ${STR}`))[0]?.t).toBe('string')
+
+    const dry = await backfillProvenanceTitles(pg.db, { apply: false })
+    expect(dry.stale).toContain(STR)
+
+    const report = await backfillProvenanceTitles(pg.db, { apply: true })
+    expect(report.written).toContain(STR)
+    expect(dry.stringProvenance).toEqual([STR])
+    const row = (await q(`SELECT jsonb_typeof(provenance) AS t, provenance #>> '{}' AS text, updated_at FROM messages WHERE id = ${STR}`))[0]!
+    expect(row.t).toBe('string')
+    const stored = JSON.parse(String(row.text)) as typeof provenance
+    expect(stored.chunks[0]!.metadata.title).toBe('Documento')
+    expect(String(row.text)).not.toContain('Juana')
+    // Only the gated title moved.
+    expect({ ...stored, chunks: stored.chunks.map((c, i) => (i === 0 ? { ...c, metadata: { ...c.metadata, title: RAW } } : c)) }).toEqual(provenance)
+    expect(new Date(String(row.updated_at)).toISOString()).toBe('2026-11-01T10:00:00.000Z')
+
+    const again = await backfillProvenanceTitles(pg.db, { apply: true })
+    expect(again.stale).not.toContain(STR)
+    expect(again.written).not.toContain(STR)
+  })
+
   it('PROVENANCE_ORG keeps to that ecosistema', async () => {
     const report = await backfillProvenanceTitles(pg.db, { apply: true, organizationId: 8 })
     expect(report.scanned).toBe(1)

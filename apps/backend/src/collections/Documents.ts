@@ -413,8 +413,9 @@ const testimonioTitleReadable: FieldAccess = ({ req, doc }) =>
  * ⚠ LETTING THE QUERY THROUGH WOULD BE AN ORACLE ON ITS OWN: search
  * `where[name][like]=María` — or `where[uploadedBy][equals]=<colleague>` — and
  * see whether a testimonio row comes back. {@link constrainGatedQueries} closes
- * that by narrowing any query that names one of these fields to rows on which
- * the caller may read it.
+ * that by narrowing any query that names one of these fields, or any other
+ * path off {@link GATED_FILTERABLE_PATHS}, to rows on which the caller may
+ * read it.
  *
  * `name` is not stripped like the others but replaced: see {@link gatedNameFor}.
  */
@@ -493,16 +494,125 @@ function sortParts(sort: unknown): string[] {
   return []
 }
 
-const sortsOn = (part: string, field: string): boolean => {
-  const path = part.replace(/^[-+]/, '')
-  return path === field || path.startsWith(`${field}.`)
+/**
+ * 🔴 THE ONLY PATHS A `where` / `sort` MAY USE ON ROWS THE CALLER CANNOT READ
+ * IN FULL (R4-01 bypasses D1/D2, audit 2026-11-10). Each says nothing about who
+ * a gated documento names or who recorded it, and each is on every row a
+ * member already lists:
+ *
+ *   · `id` — the row's own handle; `where[id][in]` is how the web batches reads;
+ *   · `createdAt` / `updatedAt` — every list sorts by `-createdAt`;
+ *   · `organization` — the tenant filter on every list read (`scopeQuery`,
+ *     `scopedQuery` in the web app);
+ *   · `contentKind`, `kind`, `anonymise` — the biblioteca's kind filter and its
+ *     "cleared" clause, and the narrowing below is made of them;
+ *   · `publicationStatus`, `ingestStatus`, `anonymisationStatus`, `graphStatus`
+ *     — state, not content; the biblioteca pins `published` and the cleared
+ *     statuses;
+ *   · `redactedText` — the gate's output, readable on every row it is on; the
+ *     biblioteca asks `exists`.
+ *
+ * Exact paths only: `organization.name` is a different path and is not here.
+ *
+ * ⚠ ANY OTHER PATH IS NARROWED, ITS WHOLE SUBTREE TOO. A block list of gated
+ * fields leaked through every path it did not name: `mediaFile.filename` is
+ * the uploader's file name again, and Payload does not apply `media`'s read
+ * access when a filter crosses a relation (D1); `document.revisionOf.name`
+ * reached a gated name past a check that only looked for `document.name`
+ * (D2). `name`, `uploadedBy` and `session` (the product's real filters) are
+ * not here on purpose: they are narrowed, as before.
+ */
+export const GATED_FILTERABLE_PATHS: ReadonlySet<string> = new Set([
+  'id',
+  'createdAt',
+  'updatedAt',
+  'organization',
+  'contentKind',
+  'kind',
+  'anonymise',
+  'publicationStatus',
+  'ingestStatus',
+  'anonymisationStatus',
+  'graphStatus',
+  'redactedText',
+])
+
+/**
+ * Payload's `where` operators (`payload@3.88.0` `types/constants`, not exported
+ * from the package root). A key outside it under a path is a nested path
+ * (`where[mediaFile][filename][like]`), which narrows.
+ */
+const WHERE_OPERATORS: ReadonlySet<string> = new Set([
+  'equals', 'contains', 'not_equals', 'in', 'all', 'not_in', 'exists', 'greater_than',
+  'greater_than_equal', 'less_than', 'less_than_equal', 'like', 'not_like', 'within',
+  'intersects', 'near',
+])
+
+/**
+ * Is `path` (as written in a `where` or a `sort`, from the collection the hook
+ * runs on) one of {@link GATED_FILTERABLE_PATHS} under `prefix`? A path outside
+ * `prefix` is that collection's own column and is not ours to judge; the bare
+ * relation (`document`) is the documento's id.
+ */
+function filterablePath(path: string, prefix: string): boolean {
+  if (prefix === '') return GATED_FILTERABLE_PATHS.has(path)
+  if (path === prefix.slice(0, -1)) return true
+  if (!path.startsWith(prefix)) return true
+  return GATED_FILTERABLE_PATHS.has(path.slice(prefix.length))
 }
 
-/** The same sort with every part on `field` removed; `undefined` when nothing is left. */
-function stripSort(sort: unknown, field: string): unknown {
-  const kept = sortParts(sort).filter((p) => !sortsOn(p, field))
-  if (kept.length === 0) return undefined
-  return Array.isArray(sort) ? kept : kept.join(',')
+/**
+ * The documents a path off the allowlist reads, as prefixes: the row's own
+ * (`prefix`), and one more per `revisionOf.` it crosses. `revisionOf` points at
+ * another documents row, with its own uploader and its own gate, so narrowing
+ * the row alone would leave `revisionOf.name` an oracle on a gated original.
+ */
+function documentHops(path: string, prefix: string): string[] {
+  const hops = [prefix]
+  let at = prefix
+  while (path.startsWith(`${at}revisionOf.`)) {
+    at = `${at}revisionOf.`
+    hops.push(at)
+  }
+  return hops
+}
+
+/**
+ * Every path a `where` uses, at any depth, flattened to dots.
+ *
+ * 🔴 EVERY KEY THAT IS NOT A COMBINATOR IS A PATH. Payload matches `and` / `or`
+ * case-insensitively (`OR`, `And`), so they are compared lowercased. A key
+ * under a path that is not an operator is a deeper path
+ * (`where[mediaFile][filename][like]`); a value that is not an operator object
+ * gets a trailing dot, which never matches the allowlist. Over-matching only
+ * narrows a query; under-matching leaks.
+ */
+function wherePaths(where: unknown, into: string[] = []): string[] {
+  if (!where || typeof where !== 'object') return into
+  if (Array.isArray(where)) {
+    for (const w of where) wherePaths(w, into)
+    return into
+  }
+  for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
+    const lower = key.toLowerCase()
+    if (lower === 'and' || lower === 'or') {
+      if (value && typeof value === 'object') wherePaths(Object.values(value), into)
+      continue
+    }
+    pathsUnder(key, value, into)
+  }
+  return into
+}
+
+function pathsUnder(path: string, value: unknown, into: string[]): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    into.push(`${path}.`)
+    return
+  }
+  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+    if (WHERE_OPERATORS.has(key)) into.push(path)
+    else pathsUnder(`${path}.${key}`, inner, into)
+  }
 }
 
 /**
@@ -531,60 +641,77 @@ function narrowedToReadable(where: unknown, prefix: string, userId: unknown): bo
   return pinned.mine || (pinned.documento && pinned.notAnonymised)
 }
 
+/** Rows at `prefix` whose gated fields the caller may read: {@link mayReadGatedOriginal} as a `where`. */
+function readableAt(prefix: string, userId: unknown): Where {
+  return {
+    or: [
+      {
+        and: [
+          { [`${prefix}contentKind`]: { equals: 'documento' } },
+          { [`${prefix}anonymise`]: { equals: false } },
+        ],
+      },
+      { [`${prefix}uploadedBy`]: { equals: userId } },
+    ],
+  }
+}
+
 /**
- * 🔴 A QUERY ON A GATED FIELD ONLY MATCHES ROWS ON WHICH THE CALLER MAY READ
- * IT. The other half of {@link gatedQueryableReadable}; the fields are
- * {@link GATED_QUERYABLE_FIELDS}.
+ * 🔴 A QUERY OFF THE ALLOWLIST ONLY MATCHES ROWS THE CALLER MAY READ IN FULL.
+ * The other half of {@link gatedQueryableReadable}; the allowlist is
+ * {@link GATED_FILTERABLE_PATHS}.
  *
- *   · a `where` naming one is narrowed to readable rows;
- *   · a `sort` on one is STRIPPED unless the query is already narrowed. Sorting
- *     is a full oracle, not a small leak: a colleague who controls a few probe
- *     rows named "M", "Ma", "Mb"… reads where the hidden title falls between
- *     them and binary-searches it out letter by letter. The same works on
- *     `uploadedBy` with probe rows of known uploaders. Nothing in the product
- *     sorts documents by any of these.
+ *   · a `where` on any other path — `name`, `uploadedBy`, `session`,
+ *     `mediaFile.*`, `revisionOf.*`, anything nested — is narrowed to readable
+ *     rows: `documento` AND `anonymise = false`, or the caller's own uploads;
+ *   · a `sort` on any other path is STRIPPED unless the query is already
+ *     narrowed, so the list keeps its rows. Sorting is a full oracle, not a
+ *     small leak: a colleague who controls a few probe rows named "M", "Ma",
+ *     "Mb"… reads where the hidden title falls between them and binary-searches
+ *     it out letter by letter. Nothing in the product sorts documents by
+ *     anything but `createdAt`.
  *
  * ⚠ `where[uploadedBy][equals]=<me>` IS ALREADY NARROWED, so "Mis documentos"
  * passes through untouched. A `session` filter on the caller's own
  * conversation is narrowed but loses nothing: only the uploader can attach a
  * document to a session (`uploaderWithWriteSeat`, `bindDocumentToEcosystem`).
+ * The uploader keeps every filter on their own rows; a platform admin and a
+ * server read (`overrideAccess`) are not touched.
  *
  * `prefix` is the relationship path from another collection (`'document.'` on
- * `anonymisation-reviews`), whose where/sort reach the same column.
+ * `anonymisation-reviews` and `anonymisation-setting-changes`), whose where /
+ * sort reach the same columns. Their own columns pass; every path under
+ * `document.` follows the same allowlist.
  */
 export function constrainGatedQueriesAt(prefix: string): CollectionBeforeOperationHook {
-  const fields = GATED_QUERYABLE_FIELDS.map((f) => `${prefix}${f}`)
   return ({ args, operation, req }) => {
     if (operation !== 'read' && operation !== 'count' && operation !== 'readDistinct') return args
-    const a = args as { overrideAccess?: boolean; where?: Where; sort?: unknown }
+    const a = args as { overrideAccess?: boolean; where?: Where; sort?: unknown; field?: unknown }
     // REST leaves it undefined (= access applies); the local API defaults it to true.
     if (a.overrideAccess === true) return args
     const user = req.user
     if (!user || isPlatformAdminUser(user)) return args
 
-    let next = args as typeof args & { where?: Where; sort?: unknown }
-    let narrowed = narrowedToReadable(a.where, prefix, user.id)
-    if (!narrowed && fields.some((field) => whereMentions(a.where, field))) {
-      const readable: Where = {
-        or: [
-          {
-            and: [
-              { [`${prefix}contentKind`]: { equals: 'documento' } },
-              { [`${prefix}anonymise`]: { equals: false } },
-            ],
-          },
-          { [`${prefix}uploadedBy`]: { equals: user.id } },
-        ],
-      }
-      next = { ...next, where: { and: [a.where as Where, readable] } }
-      narrowed = true
+    // `readDistinct`'s `field` returns that path's values: a path like any other.
+    const paths = wherePaths(a.where)
+    if (typeof a.field === 'string') paths.push(a.field)
+    // The documents each off-allowlist path reads, as prefixes. One the query
+    // already pins to readable rows needs nothing more.
+    const hopsOf = (path: string) => (filterablePath(path, prefix) ? [] : documentHops(path, prefix))
+    const pinned = (hop: string) => narrowedToReadable(a.where, hop, user.id)
+    const narrowed = new Set<string>()
+    const clauses: Where[] = []
+    for (const hop of new Set(paths.flatMap(hopsOf))) {
+      if (!pinned(hop)) clauses.push(readableAt(hop, user.id))
+      narrowed.add(hop)
     }
-    if (!narrowed) {
-      let sort = a.sort
-      for (const field of fields) {
-        if (sortParts(sort).some((p) => sortsOn(p, field))) sort = stripSort(sort, field)
-      }
-      if (sort !== a.sort) next = { ...next, sort }
+
+    let next = args as typeof args & { where?: Where; sort?: unknown }
+    if (clauses.length > 0) next = { ...next, where: { and: a.where ? [a.where, ...clauses] : clauses } }
+    const parts = sortParts(a.sort)
+    const kept = parts.filter((p) => hopsOf(p.replace(/^[-+]/, '')).every((hop) => narrowed.has(hop) || pinned(hop)))
+    if (kept.length !== parts.length) {
+      next = { ...next, sort: kept.length === 0 ? undefined : Array.isArray(a.sort) ? kept : kept.join(',') }
     }
     return next as typeof args
   }
