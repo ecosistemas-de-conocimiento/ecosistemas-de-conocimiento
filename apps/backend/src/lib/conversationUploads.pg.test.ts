@@ -570,21 +570,132 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
     expect(existsSync(fileB)).toBe(true)
   }, 30_000)
 
-  it('a bulk delete of 2 documents sharing one file deletes it once, with no orphan warning', async () => {
+  // ── The media row lock: the count and the delete of a file, after commit ──
+
+  /** How many backends of this database are waiting on a lock right now. */
+  const lockWaiters = async (): Promise<number> =>
+    Number(
+      (
+        await rows(sql`SELECT count(*)::int AS n FROM pg_stat_activity
+                       WHERE wait_event_type = 'Lock' AND datname = current_database()`)
+      )[0]?.n ?? 0,
+    )
+
+  /**
+   * Stop the FIRST `media` row delete inside its transaction and run `whileHeld`
+   * there: `before` the row goes (after the count, and after Payload unlinked
+   * the local file), or `after` it went but before the commit. Counts every
+   * `media` row delete the adapter is asked for.
+   */
+  function holdFirstMediaDelete(when: 'before' | 'after', whileHeld: () => Promise<void>) {
+    const real = payload.db.deleteOne.bind(payload.db)
+    const calls = { media: 0 }
+    const spy = vi.spyOn(payload.db, 'deleteOne').mockImplementation(async (args) => {
+      if (args.collection !== 'media') return real(args)
+      calls.media += 1
+      if (calls.media !== 1) return real(args)
+      if (when === 'before') await whileHeld()
+      const out = await real(args)
+      if (when === 'after') await whileHeld()
+      return out
+    })
+    return { calls, restore: () => spy.mockRestore() }
+  }
+
+  it('🔴 a bulk delete of 2 documents sharing one file deletes it once, with no orphan warning', async () => {
+    // The interleaving that made this flaky (1 in 15 runs with 16 cores busy,
+    // 0 in 25 idle; measured by the 2026-11-10 audit), forced on every run:
+    // the first plan holds its transaction open after deleting the row, until
+    // the second plan is seen waiting on a lock. Before the media row lock the
+    // second plan also counted 0 and called delete; now it waits, then finds
+    // no row.
     await db.execute(sql.raw(`
       INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, media_file_id, created_at)
         VALUES (59, 1, 1, 'same file', 'pdf', 70, '${LATER}');
     `))
+    let secondPlanWaited = false
+    const hold = holdFirstMediaDelete('after', async () => {
+      secondPlanWaited = await eventually(async () => (await lockWaiters()) > 0)
+    })
     const warn = vi.spyOn(payload.logger, 'warn')
+    const info = vi.spyOn(payload.logger, 'info')
     try {
       await payload.delete({ collection: 'documents', where: { id: { in: [50, 59] } }, overrideAccess: true })
-      expect(await eventually(async () => !(await ids('media')).includes(70))).toBe(true)
-      await delay(1_000)
+      const finished = () => info.mock.calls.filter((c) => String(c[1]).includes('cleanup finished'))
+      expect(await eventually(async () => finished().length === 2)).toBe(true)
+
+      expect(secondPlanWaited).toBe(true)
+      expect(hold.calls.media).toBe(1)
+      expect(await ids('media')).not.toContain(70)
       expect(existsSync(fileA)).toBe(false)
+      expect(finished().flatMap((c) => (c[0] as { deletedMediaIds: string[] }).deletedMediaIds)).toEqual(['70'])
       expect(warn.mock.calls.filter((c) => String(c[1]).includes('orphan'))).toEqual([])
     } finally {
+      hold.restore()
       warn.mockRestore()
+      info.mockRestore()
     }
+  }, 30_000)
+
+  /** The after-commit half for document 50 alone, with its row already gone. */
+  async function cleanUpFileOfDocument50() {
+    await db.execute(sql`DELETE FROM documents WHERE id = 50`)
+    const { finishUploadCleanupAfterCommit } = await import('./conversationUploads')
+    return finishUploadCleanupAfterCommit(
+      { sessionId: null, documentId: 50, xid: null, documents: [], mediaIds: [70] },
+      { payload },
+    )
+  }
+
+  it('🔴 a document created between the count and the delete WAITS, then fails: no document loses its file', async () => {
+    let create: Promise<string> | undefined
+    let createWaited = false
+    const hold = holdFirstMediaDelete('before', async () => {
+      create = payload
+        .create({
+          collection: 'documents',
+          data: { name: 'late', kind: 'pdf', organization: 1, uploadedBy: 1, mediaFile: 70 } as never,
+          overrideAccess: true,
+        })
+        .then(
+          () => 'created',
+          (err: unknown) =>
+            `failed: ${String((err as { cause?: { code?: string } })?.cause?.code ?? (err as { code?: string })?.code)}`,
+        )
+      createWaited = await eventually(async () => (await lockWaiters()) > 0)
+    })
+    try {
+      await cleanUpFileOfDocument50()
+    } finally {
+      hold.restore()
+    }
+
+    // Had it not waited, it would have committed pointing at a file that then
+    // went, and the foreign key would have set its `mediaFile` to NULL.
+    expect(createWaited).toBe(true)
+    // 23503: foreign_key_violation. The media row is gone by the time it runs.
+    expect(await create).toBe('failed: 23503')
+    expect(await rows(sql`SELECT id FROM documents WHERE name = 'late'`)).toEqual([])
+    expect(await ids('media')).not.toContain(70)
+  }, 30_000)
+
+  it('🔴 a document still being written when the cleanup locks the file is waited for, counted, and keeps it', async () => {
+    let cleanup: Promise<unknown> | undefined
+    let cleanupWaited = false
+    await db.transaction(async (tx) => {
+      await tx.execute(sql.raw(`
+        INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, media_file_id, created_at)
+          VALUES (60, 1, 1, 'in flight', 'pdf', 70, '${LATER}');
+      `))
+      cleanup = cleanUpFileOfDocument50()
+      cleanupWaited = await eventually(async () => (await lockWaiters()) > 0)
+    })
+    await cleanup
+
+    expect(cleanupWaited).toBe(true)
+    expect(await rows(sql`SELECT media_file_id AS m FROM documents WHERE id = 60`)).toEqual([{ m: 70 }])
+    expect(await ids('media')).toContain(70)
+    expect(existsSync(fileA)).toBe(true)
   }, 30_000)
 
   it('🔴 a conversation delete plans each file ONCE: its documents plan none of their own', async () => {
