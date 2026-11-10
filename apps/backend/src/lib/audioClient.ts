@@ -335,9 +335,16 @@ export async function submitTranscription(
  * that may well cap it.
  *
  * ⚠ Time-limited. audio-service is Redis-only and the transcript has a TTL
- * (`TRANSCRIPT_TTL_SECONDS`, 24h by default). After that this returns null and
- * the audio has to be re-uploaded — which is why the receiver persists the text
- * onto the row the moment it has it.
+ * (`TRANSCRIPT_TTL_SECONDS`, 24h by default). After that it answers 404, this
+ * returns null and the audio has to be re-uploaded — which is why the receiver
+ * persists the text onto the row the moment it has it.
+ *
+ * 🔴 THROWS on anything that might work on a second try: no config, a network
+ * error, a 5xx, a 429, a body that is not JSON. Returning null there failed the
+ * row as "no speech" and answered 200, and a delivered callback makes
+ * audio-service cut the transcript's TTL to 1 h and never retry, so the text was
+ * lost (audit 2026-11-10, C-04). Thrown, it reaches the receiver as a 500 and
+ * audio-service delivers again. Null means only "gone" (404) or "nothing said".
  *
  * `includeSegments=false`: a 2-hour recording is thousands of segments and
  * nothing downstream reads word timings.
@@ -345,7 +352,7 @@ export async function submitTranscription(
 export async function fetchTranscriptText(transcribeId: string): Promise<string | null> {
   const base = audioServiceBaseUrl()
   const key = audioServiceApiKey()
-  if (!base || !key) return null
+  if (!base || !key) throw new Error('audio-service is not configured; cannot fetch the transcript')
 
   let res: Response
   try {
@@ -353,14 +360,24 @@ export async function fetchTranscriptText(transcribeId: string): Promise<string 
       `${base}/v1/transcribe/${encodeURIComponent(transcribeId)}?includeSegments=false`,
       { headers: { Authorization: `Bearer ${key}` } },
     )
-  } catch {
+  } catch (err) {
+    throw new Error(`audio-service transcript fetch failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (res.status === 404) {
+    await res.body?.cancel().catch(() => {})
     return null
   }
-  if (!res.ok) return null
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {})
+    throw new Error(`audio-service transcript fetch responded ${res.status}`)
+  }
 
-  const body = (await res.json().catch(() => null)) as {
-    transcript?: { text?: unknown } | null
-  } | null
+  let body: { transcript?: { text?: unknown } | null } | null
+  try {
+    body = (await res.json()) as typeof body
+  } catch {
+    throw new Error('audio-service transcript fetch returned a body that is not JSON')
+  }
   const text = body?.transcript?.text
   return typeof text === 'string' && text.trim() ? text : null
 }

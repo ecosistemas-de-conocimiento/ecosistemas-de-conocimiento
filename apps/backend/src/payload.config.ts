@@ -1,4 +1,4 @@
-import { buildConfig } from 'payload'
+import { buildConfig, defaultLoggerOptions } from 'payload'
 import { postgresAdapter } from '@payloadcms/db-postgres'
 import { lexicalEditor } from '@payloadcms/richtext-lexical'
 import path from 'node:path'
@@ -12,7 +12,7 @@ import { Documents } from './collections/Documents'
 import { GraphEntities } from './collections/GraphEntities'
 import { GraphMentions } from './collections/GraphMentions'
 import { GraphRelations } from './collections/GraphRelations'
-import { Media } from './collections/Media'
+import { MAX_MEDIA_UPLOAD_BYTES, Media } from './collections/Media'
 import { AiServiceCallbacks } from './collections/AiServiceCallbacks'
 import { AnonymisationReviews } from './collections/AnonymisationReviews'
 import { AnonymisationSettingChanges } from './collections/AnonymisationSettingChanges'
@@ -26,6 +26,7 @@ import { EvalItems } from './collections/EvalItems'
 import { EvalRuns } from './collections/EvalRuns'
 import { withoutDuplicate } from './collections/hooks/refuseDuplicate'
 import { lockDownPayloadInternals } from './access/payloadInternals'
+import { guardStaleUserRows } from './lib/staleUserRow'
 
 import { PlatformSettings } from './globals/PlatformSettings'
 
@@ -44,6 +45,8 @@ import { checkAIServiceCapabilities } from './lib/capabilityCheck'
 import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
 import { startEmbeddingJanitor } from './lib/embeddingJanitor'
+import { safeErrSerializer } from './lib/errorSummary'
+import { startGraphOrphanJanitor } from './lib/graph/orphanJanitor'
 import { startIngestRecoveryJanitor } from './lib/ingestRecovery'
 import { ensureEcosystemBudgets } from './lib/provisionEcosystem'
 import { registerPlatformSettings } from './lib/platformSettings'
@@ -105,6 +108,51 @@ export default buildConfig({
     headers: ['authorization', 'content-type', 'x-csrf-token'],
   },
   csrf: allowedOrigins,
+  /**
+   * 🔴 THE MEDIA CAP, WHILE THE BODY STREAMS (audit 2026-11-10, C-03). Without
+   * this key Payload's multipart parser buffers a whole file in memory and only
+   * then `rejectOversizedUpload` (collections/Media.ts) refuses it. Process RSS
+   * after an 800 MB POST: 1677 MB without this key, 479 MB with it; after a
+   * 300 MB POST, 675 MB and 494 MB (measured on torre, 2026-11-10, Payload's
+   * parser behind a local HTTP socket, load average 30-40). With it the cost no
+   * longer grows with the body; it is about twice the cap while the hook
+   * decides (inferred: the buffered parts plus Payload's concatenated copy).
+   *
+   * `fileSize` is the cap PLUS ONE byte: busboy stops buffering there and drains
+   * the rest, and a file of cap + 1 bytes is one the hook refuses (`size > cap`).
+   * `files: 1` because a cap per file is no cap if one request carries ten;
+   * Payload reads only the `file` field, and busboy drains any extra file
+   * without buffering it.
+   *
+   * ⚠ No `abortOnLimit`. In 3.88 it rejects a promise nobody is awaiting yet
+   * (`processMultipart.js`), and over a socket that is an unhandled rejection:
+   * plain Node exits on it, so an oversized upload would take the process down
+   * unless Next's own handler swallows it. No `useTempFiles` either:
+   * `generateFileData` reads the temp file back into a Buffer for every
+   * non-image upload, and `unlinkTempFiles` runs only after a create that
+   * SUCCEEDS, so every refused upload would leave its temp file behind.
+   *
+   * 🔴 Text fields are bounded too: without `fields` and `parts` busboy kept
+   * any number of 1 MiB fields. Peak RSS for 1000 MiB of them: 1189 MiB
+   * without these three keys, 222 MiB with them; for 400 MiB, 572 and 218
+   * (measured on torre, 2026-11-10, same socket method, load average 35-50).
+   * The app sends one `file` part (`apps/web/src/lib/server/uploadDocument.ts`);
+   * the admin panel sends `_payload` (the document as JSON) and at most a
+   * `file` string (quoted from `@payloadcms/ui` 3.88, `forms/Form`). So 8
+   * fields and 10 parts, at least four times what either sends.
+   * `fieldSize` stays at busboy's 1 MiB default, written out: a longer field is
+   * TRUNCATED, not refused, and a cut `_payload` fails Payload's `JSON.parse`.
+   * Past `fields` or `parts` busboy drops the rest without an error.
+   */
+  upload: {
+    limits: {
+      fileSize: MAX_MEDIA_UPLOAD_BYTES + 1,
+      files: 1,
+      fields: 8,
+      fieldSize: 1024 * 1024,
+      parts: 10,
+    },
+  },
   /**
    * 🔴 `withoutDuplicate` wraps EVERY collection: Payload's duplicate copies the
    * source row with field read access skipped, which leaked a testimonio's
@@ -350,6 +398,13 @@ export default buildConfig({
     //    and chat turns stuck at `embedding`, with a retryable reason.
     startIngestRecoveryJanitor(payload)
 
+    // 9b. Graph orphan sweep (lib/graph/orphanJanitor.ts, C-05). Daily
+    //     (GRAPH_ORPHAN_JANITOR_INTERVAL_MIN, default 1440). Deletes the
+    //     graph_entities (names) no mention or relation names any more, which
+    //     a deleted document leaves behind. GRAPH_ORPHAN_JANITOR_ENABLED=false
+    //     turns it off.
+    startGraphOrphanJanitor(payload)
+
     // 10. Every ecosistema has an ai-service budget row. The create hook in
     //     collections/Organizations.ts provisions once, fire-and-forget; a
     //     failure there left the ecosistema answering 402 forever. Reads
@@ -358,11 +413,20 @@ export default buildConfig({
     //     on ai-service. Never throws.
     void ensureEcosystemBudgets(payload, { logger: payload.logger })
   },
+  // 🔴 P-07: a failed query's DrizzleQueryError carries its params (a whole
+  // testimony) in `message` and `stack`. Payload logs request errors as
+  // `{ err }`; this serializer keeps the type, the SQLSTATE and the frames.
+  // `destination` keeps Payload's default pretty output.
+  logger: {
+    options: { serializers: { err: safeErrSerializer } },
+    destination: defaultLoggerOptions,
+  },
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {
     outputFile: path.resolve(dirname, 'payload-types.ts'),
   },
-  db: postgresAdapter({
+  // A stale user row cannot switch a deactivated account back on: `lib/staleUserRow.ts`.
+  db: guardStaleUserRows(postgresAdapter({
     pool: {
       connectionString: process.env.DATABASE_URI || '',
     },
@@ -395,5 +459,5 @@ export default buildConfig({
      * a new migration rather than leaving the database in that state.
      */
     push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_ALLOW_PUSH === '1',
-  }),
+  })),
 }).then(lockDownPayloadInternals)

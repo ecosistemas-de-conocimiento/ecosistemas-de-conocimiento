@@ -3,7 +3,7 @@
  * rejects a testimonio that is already published. Logic: `lib/rejectPublished.ts`.
  *
  *   200 { id, decision, reviewId, anonymisationStatus }
- *   400 malformed body   401   404 no such published testimonio, or not yours to review
+ *   400 malformed body   401   413 body over 8 MiB   404 no such published testimonio, or not yours to review
  *   500 the audit, the retire or the row write failed
  */
 
@@ -11,6 +11,7 @@ import configPromise from '@payload-config'
 import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
+import { API_BODY_MAX_BYTES, readCapped, tooLarge } from '@/lib/bodyCap'
 import { HoldNotVisibleError } from '@/lib/holdReview'
 import { rejectPublished } from '@/lib/rejectPublished'
 
@@ -30,7 +31,15 @@ export async function POST(request: Request, ctx: Ctx): Promise<Response> {
   if (!user) return fail(401, 'Authentication required.')
 
   const { id } = await ctx.params
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null
+  // 🔴 Counted: a multipart label skips the middleware, and `json()` has no cap.
+  const bytes = await readCapped(request, API_BODY_MAX_BYTES)
+  if (!bytes) return tooLarge(API_BODY_MAX_BYTES)
+  let body: Record<string, unknown> | null = null
+  try {
+    body = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown> | null
+  } catch {
+    // malformed: the 400 below
+  }
   if (!body || body.decision !== 'reject') return fail(400, '`decision` must be "reject".')
 
   try {

@@ -13,7 +13,7 @@ import type {
 } from 'payload'
 import { APIError, Forbidden, ValidationError } from 'payload'
 
-import { isPlatformAdminUser } from '../access'
+import { isActiveUser, isPlatformAdminUser } from '../access'
 import {
   ANONYMISATION_STATES,
   GATE_UNAVAILABLE_INGEST_CODE,
@@ -43,6 +43,7 @@ import { refuseDisabledAudioUpload } from './hooks/featureGates'
 import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
 import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote, publishStudentNoteChanges } from '../lib/studentNotes'
 import { anonimizacionEndpoints } from '../lib/anonymisationControls'
+import { errSummary } from '../lib/errorSummary'
 import {
   consumeCorpusCleanupSkip,
   isOwnersMedia,
@@ -122,7 +123,8 @@ import {
  */
 export const visibleToCaller: Access = async ({ req }) => {
   const user = req.user
-  if (!user) return false
+  // A deactivated account sees nothing, its own drafts included.
+  if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
 
   const organizationIds = await organizationIdsForUser(req.payload, user.id)
@@ -177,7 +179,7 @@ const PUBLICATION_LABELS: Record<PublicationState, string> = {
  *
  * ── THE HOLE THIS CLOSES ─────────────────────────────────────────────────────
  *
- * `documents.update` is `uploaderOnly`, so the person who uploaded a testimony
+ * `documents.update` is `uploaderWithWriteSeat`, so the person who uploaded a testimony
  * may PATCH their own row. `admin: { readOnly: true }` on these fields is an
  * ADMIN-PANEL hint and enforces nothing over REST. So without this, the uploader
  * of a HELD Voz could send:
@@ -244,9 +246,6 @@ const ingestMovesWithTextEdit: FieldAccess = ({ data, doc }) => {
   const incoming = (data as Record<string, unknown> | undefined)?.extractedText
   return incoming !== undefined && asText(incoming) !== asText((doc as Record<string, unknown> | undefined)?.extractedText)
 }
-
-/** A field only a platform admin may write (`keepPublicFigures`). */
-const platformAdminOnly: FieldAccess = ({ req }) => isPlatformAdminUser(req.user)
 
 /**
  * 🔴 `lengua` IS READABLE ONLY ON A `documento`. The read-side half of the same
@@ -496,7 +495,7 @@ function narrowedToReadable(where: unknown, prefix: string, userId: unknown): bo
  * ⚠ `where[uploadedBy][equals]=<me>` IS ALREADY NARROWED, so "Mis documentos"
  * passes through untouched. A `session` filter on the caller's own
  * conversation is narrowed but loses nothing: only the uploader can attach a
- * document to a session (`uploaderOnly`, `bindDocumentToEcosystem`).
+ * document to a session (`uploaderWithWriteSeat`, `bindDocumentToEcosystem`).
  *
  * `prefix` is the relationship path from another collection (`'document.'` on
  * `anonymisation-reviews`), whose where/sort reach the same column.
@@ -552,9 +551,33 @@ export function hideRevisions(inner: Access): Access {
 }
 
 const uploaderOnly: Access = ({ req: { user } }) => {
-  if (!user) return false
+  if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
   return { uploadedBy: { equals: user.id } } satisfies Where
+}
+
+/**
+ * 🔴 A PATCH NEEDS THE SAME SEAT AS PUBLISH AND RETRY (audit 2026-11-10, A-02):
+ * the uploader, in an ecosistema where they hold `documents:write`
+ * ({@link hasWriteSeatInDocumentEcosystem}). Uploader alone let someone who was
+ * removed PATCH their draft with new `extractedText` and `ingestStatus:
+ * 'pending'`, and even a rename re-runs the ingest of a `failed` row with no
+ * `ingestId` (`runExtractAndIngest`; measured 2026-11-10 against a real
+ * Postgres: `failed` → `embedding`): both on the ecosistema's budget.
+ * `Documents.removedMemberPatch.pg.test.ts`.
+ *
+ * ⚠ Every user update, not only the ones that touch text: a rename is enough,
+ * see above. Delete keeps `uploaderOnly` (open owner question).
+ */
+const uploaderWithWriteSeat: Access = async ({ req }) => {
+  const { user } = req
+  if (!user || !isActiveUser(user)) return false
+  if (isPlatformAdminUser(user)) return true
+  const seats = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.documentsWrite)
+  if (seats.length === 0) return false
+  const own: Where = { uploadedBy: { equals: user.id } }
+  const seated: Where = { organization: { in: seats } }
+  return { and: [own, seated] }
 }
 
 /**
@@ -1418,7 +1441,7 @@ async function markExtractIngestFailed(row: DocumentRow, err: unknown): Promise<
       where: [{ ingestStatus: { in: ['pending', 'extracting'] } }],
     })
   } catch (writeErr) {
-    console.error('[documents] could not mark doc', docId, 'failed after extract+ingest threw', writeErr)
+    console.error('[documents] could not mark doc', docId, 'failed after extract+ingest threw', errSummary(writeErr))
   }
 }
 
@@ -1502,7 +1525,8 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
   // visible to a fresh `findByID` until commit).
   setImmediate(() => {
     void runExtractAndIngest(row).catch(async (err) => {
-      console.error('[documents] background extract+ingest failed', row.id, err)
+      // 🔴 P-07: never `err` — a failed `extracted_text` write's message is its params.
+      console.error('[documents] background extract+ingest failed', row.id, errSummary(err))
       await markExtractIngestFailed(row, err)
     })
   })
@@ -2541,6 +2565,36 @@ export async function enqueueIngestForDoc(args: {
 // ---------------------------------------------------------------------------
 
 /**
+ * The extensions audio-service accepts (`services/audio-service/app/audio/formats.py`
+ * `ACCEPTED_EXTENSIONS`). Anything else after the last dot is part of the name:
+ * "Testimonio de M.Lopez" must not leave as `audio.lopez`.
+ */
+const AUDIO_EXTENSIONS = new Set([
+  'mp3', 'm4a', 'mp4', 'm4b', 'aac', 'wav', 'wave', 'ogg', 'oga', 'opus',
+  'webm', 'flac', 'mkv', 'mov', 'amr', '3gp', 'wma', 'aiff', 'aif',
+])
+
+/** The extension for a mime type when the filename carries none audio-service knows. */
+const AUDIO_EXTENSION_FOR_MIME: Record<string, string> = {
+  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/m4a': 'm4a',
+  'audio/aac': 'aac', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav', 'audio/vnd.wave': 'wav',
+  'audio/ogg': 'ogg', 'audio/opus': 'opus', 'audio/webm': 'webm', 'audio/flac': 'flac', 'audio/x-flac': 'flac',
+  'audio/amr': 'amr', 'audio/3gpp': '3gp', 'audio/x-ms-wma': 'wma', 'audio/aiff': 'aiff', 'audio/x-aiff': 'aiff',
+  'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm', 'video/x-matroska': 'mkv', 'video/3gpp': '3gp',
+}
+
+/**
+ * `audio.<ext>`: the filename's extension if audio-service knows it, else the
+ * mime type's, else `audio`. ffmpeg sniffs the container either way.
+ */
+export function neutralAudioFilename(filename: string | null | undefined, mimeType?: string | null): string {
+  const fromName = /\.([A-Za-z0-9]{1,8})$/.exec(filename ?? '')?.[1]?.toLowerCase()
+  const fromMime = AUDIO_EXTENSION_FOR_MIME[(mimeType ?? '').split(';')[0]!.trim().toLowerCase()]
+  const ext = fromName && AUDIO_EXTENSIONS.has(fromName) ? fromName : fromMime
+  return ext ? `audio.${ext}` : 'audio'
+}
+
+/**
  * Hand one audio document to `services/audio-service` and record the job id.
  *
  * Split out and exported for the same reason as {@link enqueueIngestForDoc}: it
@@ -2636,11 +2690,14 @@ export async function startTranscription(args: {
 
     result = await submitTranscription({
       body: media.body,
-      filename: media.filename,
+      // 🔴 NO NAME LEAVES FOR audio-service. It keeps both (24 h, quoted from
+      // its `config.py`) and echoes them in every callback; an upload's name is
+      // often the speaker's. It only reads the extension, so that is all it gets.
+      filename: neutralAudioFilename(media.filename, media.contentType),
       contentType: media.contentType,
       // The join key back to this row. The callback echoes it as `externalId`.
       externalId: String(docId),
-      title: fresh.name ?? null,
+      title: null,
       // ⚠ The attempt number is IN the key. audio-service dedupes on it within our
       // (org, project), which is what makes a double-fire of the hook free — but
       // it also means a retry reusing the key would silently re-adopt the failed
@@ -2881,9 +2938,9 @@ export const Documents: CollectionConfig = {
   },
   access: {
     read: hideRevisions(visibleToCaller),
-    update: hideRevisions(uploaderOnly),
+    update: hideRevisions(uploaderWithWriteSeat),
     delete: hideRevisions(uploaderOnly),
-    create: ({ req: { user } }) => Boolean(user),
+    create: ({ req: { user } }) => isActiveUser(user),
   },
   fields: [
     {
@@ -3136,14 +3193,18 @@ export const Documents: CollectionConfig = {
        * a conversation never keeps a name, whatever this says.
        *
        * ⚠ NO DEFAULT, on purpose: a default would store `false` and silently
-       * override the ecosistema. Writable by a platform admin only — it decides
-       * which names reach the corpus.
+       * override the ecosistema. It decides which names reach the corpus, so
+       * like `keepDocumentAuthor` NO CALLER WRITES IT THROUGH THE API, not even
+       * a platform admin (review 2026-11-10, R-01: a collection write left no
+       * audit row and no re-gate). Its writer is `PATCH …/anonimizacion`,
+       * which allows a platform admin only.
        */
       name: 'keepPublicFigures',
       type: 'checkbox',
-      access: { create: platformAdminOnly, update: platformAdminOnly },
+      access: { create: gateWritesOnly, update: gateWritesOnly },
       admin: {
         position: 'sidebar',
+        readOnly: true,
         description:
           'Conservar los nombres de figuras públicas en este documento. Vacío: lo que diga el ecosistema.',
       },
@@ -3843,6 +3904,30 @@ export const Documents: CollectionConfig = {
 // ---------------------------------------------------------------------------
 
 /**
+ * 🔴 PUBLISHING, RETRYING AND EDITING A NOTE NEED A SEAT IN THE DOCUMENT'S
+ * ECOSISTEMA NOW: an active membership, in an active ecosistema, whose role
+ * carries `documents:write`. Being the uploader is not enough. `visibleToCaller`
+ * keeps a person's own drafts readable after they leave, and that clause is
+ * right for reading; without this check it also let someone who was removed
+ * (or whose seat was switched off) push their drafts into the shared corpus.
+ *
+ * ⚠ Unpublish and delete do not ask: whether someone who left may take their
+ * own material back is an open owner question.
+ */
+async function hasWriteSeatInDocumentEcosystem(
+  req: PayloadRequest,
+  doc: { organization?: unknown },
+): Promise<boolean> {
+  if (isPlatformAdminUser(req.user)) return true
+  const organizationId = relationId(doc.organization)
+  if (!req.user || organizationId == null) return false
+  const allowed = await organizationIdsForUserWithPermission(req.payload, req.user.id, PERMISSIONS.documentsWrite)
+  return allowed.some((id) => String(id) === String(organizationId))
+}
+
+const NO_WRITE_SEAT = 'You are no longer a member of this ecosistema with permission to file documents.'
+
+/**
  * Sharing a draft with the ecosistema, and taking it back.
  *
  * ⚠ THESE ARE NOT PLAIN FIELD WRITES, which is why they are endpoints rather
@@ -3898,6 +3983,7 @@ function documentActionEndpoint(
         // No ecosistema = no shared corpus and no ai-service org to publish into.
         return fail(409, 'This document has no ecosistema, so it cannot be published.')
       }
+      if (action === 'publish' && !(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
 
       const state = doc.publicationStatus
       // 🔴 "Publicar cambios": a student's PUBLISHED note whose body changed
@@ -4043,6 +4129,7 @@ function noteEditEndpoint(): Endpoint {
       if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
         return fail(403, 'Only the person who uploaded a document can edit it.')
       }
+      if (!(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
 
       let body: Record<string, unknown> = {}
       try {
@@ -4251,12 +4338,13 @@ function retryIngestEndpoint(): Endpoint {
           user,
           req,
         })
-        .catch(() => null)) as unknown as (RetryableDocument & { uploadedBy?: unknown }) | null
+        .catch(() => null)) as unknown as (RetryableDocument & { uploadedBy?: unknown; organization?: unknown }) | null
 
       if (!doc) return fail(404, 'No such document.')
       if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
         return fail(403, 'Only the person who uploaded a document can retry it.')
       }
+      if (!(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
 
       const data = planIngestRetry(doc)
       if (!data) {
@@ -4434,6 +4522,7 @@ function retryGraphEndpoint(): Endpoint {
         // rather than guess: a guessed organization is a cross-tenant write.
         return fail(409, 'This document has no ecosistema, so it has no graph scope.')
       }
+      if (!(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
 
       await scheduleGraphExtractionForDoc({
         payload: req.payload,

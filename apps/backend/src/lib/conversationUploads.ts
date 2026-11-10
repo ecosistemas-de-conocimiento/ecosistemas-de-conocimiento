@@ -119,6 +119,10 @@
  * commit: a bulk delete runs every row's hook concurrently, so inside the
  * transaction two documents sharing one file would each still see the other,
  * and neither would plan to delete it.
+ * 🔴 That after-commit check and the media delete share one transaction that
+ * holds a row lock on the `media` row (`deleteMediaIfUnused`), so a second
+ * plan for the same file, or a document starting to point at it, cannot slip
+ * in between them.
  *
  * ⚠ THE STORED OBJECT IS CHECKED AFTER ITS ROW GOES. The plugin swallows a
  * failed object delete (above), so with object storage configured the cleanup
@@ -131,6 +135,7 @@
 import { sql } from '@payloadcms/db-postgres'
 import type { Payload, PayloadRequest, Where } from 'payload'
 
+import { errSummary } from './errorSummary'
 import { relationId } from './permissions'
 
 /**
@@ -651,7 +656,7 @@ export function scheduleUploadCleanup(payload: Payload, plan: UploadCleanupPlan)
   )
   void finishUploadCleanupAfterCommit(plan, { payload }).catch((err) => {
     payload.logger.warn(
-      { ...planIds(plan), err: String(err) },
+      { ...planIds(plan), err: errSummary(err) },
       `${tagOf(plan)} post-commit upload cleanup failed; these uploads may be orphans`,
     )
   })
@@ -730,6 +735,104 @@ async function defaultObjectStillStored(media: { filename?: string | null; prefi
 
 const isNotFound = (err: unknown): boolean => (err as { status?: number } | null)?.status === 404
 
+type StoredMedia = { filename?: string | null; prefix?: string | null }
+type TxAdapter = {
+  beginTransaction?: () => Promise<number | string | null>
+  commitTransaction: (id: number | string) => Promise<void>
+  rollbackTransaction: (id: number | string) => Promise<void>
+}
+
+/**
+ * How long a media delete waits for its row lock. Chosen, not measured: the
+ * holders are a document write referencing the row or another plan's delete,
+ * each a few statements long.
+ */
+const MEDIA_LOCK_TIMEOUT = '30s'
+
+/**
+ * 🔴 Delete a `media` row, and through Payload its file, unless a document
+ * points at it: the count and the delete in ONE transaction that holds
+ * `SELECT … FOR UPDATE` on the media row. Fills `seen` with the row's
+ * `filename` and `prefix`, read under the lock, for the object check.
+ *
+ *   · `in-use`: a document points at it; nothing deleted.
+ *   · `gone`: no row to lock. Another plan deleted it (two documents sharing
+ *     the file were deleted together); that plan checks the object.
+ *   · `deleted`: Payload's delete returned and the transaction was committed.
+ *     ⚠ The adapter swallows a failed COMMIT (header): the caller still checks
+ *     that the row is gone.
+ *
+ * WHY THE LOCK. Without it the count and the delete were two separate reads
+ * of the world:
+ *
+ *   · two plans for one file both counted 0 and both deleted. On local disk
+ *     the loser's `unlink` failed (Payload's `deleteAssociatedFiles`, 3.88.0)
+ *     while the winner had not committed, so the row was still visible and
+ *     the loser logged a false orphan. Under the lock the second plan waits
+ *     for the first to commit and then finds no row.
+ *   · a document created between the count and the delete, pointing at this
+ *     file, lost it (`ON DELETE SET NULL`). Under the lock, a document write
+ *     that references the row checks its foreign key with `FOR KEY SHARE`,
+ *     which conflicts with `FOR UPDATE`: one that committed first is counted;
+ *     one in flight makes this wait, then is counted; one that comes after
+ *     waits for this commit and then fails its foreign key (23503). Pinned in
+ *     `conversationUploads.pg.test.ts`.
+ *
+ * ⚠ An adapter without transactions (the unit tests' fake Payload) gets the
+ * same count and delete without the lock.
+ */
+async function deleteMediaIfUnused(payload: Payload, mediaId: Id, seen: StoredMedia): Promise<'in-use' | 'gone' | 'deleted'> {
+  const unused = async (req?: PayloadRequest) =>
+    (
+      await payload.count({
+        collection: 'documents',
+        where: { mediaFile: { equals: mediaId } },
+        overrideAccess: true,
+        req,
+      })
+    ).totalDocs === 0
+
+  const db = payload.db as unknown as TxAdapter | undefined
+  if (typeof db?.beginTransaction !== 'function') {
+    if (!(await unused())) return 'in-use'
+    try {
+      Object.assign(seen, await payload.delete({ collection: 'media', id: mediaId, depth: 0, overrideAccess: true }))
+    } catch (err) {
+      if (isNotFound(err)) return 'gone'
+      throw err
+    }
+    return 'deleted'
+  }
+
+  const transactionID = await db.beginTransaction()
+  if (transactionID == null) throw new Error('could not begin a transaction')
+  const req = { payload, transactionID } as unknown as PayloadRequest
+  try {
+    const tx = await transactionHandle(req)
+    if (!tx) throw new Error('cannot reach the transaction')
+    await tx.execute(sql.raw(`SET LOCAL lock_timeout = '${MEDIA_LOCK_TIMEOUT}'`))
+    const res = (await tx.execute(
+      sql`SELECT filename, prefix FROM media WHERE id = ${Number(mediaId)} FOR UPDATE`,
+    )) as { rows?: StoredMedia[] }
+    const row = res.rows?.[0]
+    if (!row) {
+      await db.rollbackTransaction(transactionID)
+      return 'gone'
+    }
+    Object.assign(seen, row)
+    if (!(await unused(req))) {
+      await db.rollbackTransaction(transactionID)
+      return 'in-use'
+    }
+    await payload.delete({ collection: 'media', id: mediaId, depth: 0, overrideAccess: true, req })
+    await db.commitTransaction(transactionID)
+    return 'deleted'
+  } catch (err) {
+    await db.rollbackTransaction(transactionID)
+    throw err
+  }
+}
+
 /**
  * THE AFTER-COMMIT HALF. Never throws: by now the rows are gone, and the only
  * thing left to do with a failure is log it.
@@ -802,33 +905,28 @@ export async function finishUploadCleanupAfterCommit(
     // The error NAME only: a storage error message can carry the object key,
     // which is the uploader's own filename.
     const errName = (err: unknown) => (err instanceof Error ? err.name : 'unknown')
-    let deleted: { filename?: string | null; prefix?: string | null }
+    const seen: StoredMedia = {}
+    let failure: unknown
     try {
-      // Also what keeps a document that survived (a failed bulk row, a
-      // rolled-back sibling) from losing its file.
-      const { totalDocs } = await payload.count({
-        collection: 'documents',
-        where: { mediaFile: { equals: mediaId } },
-        overrideAccess: true,
-      })
-      if (totalDocs > 0) continue
-      deleted = (await payload.delete({ collection: 'media', id: mediaId, depth: 0, overrideAccess: true })) as never
-      deletedMediaIds.push(String(mediaId))
+      // `in-use` is also what keeps a document that survived (a failed bulk
+      // row, a rolled-back sibling) from losing its file.
+      if ((await deleteMediaIfUnused(payload, mediaId, seen)) !== 'deleted') continue
     } catch (err) {
-      // Another plan got there first: two documents that shared the file were
-      // deleted together. Seen on the real-Postgres suite as a 404 or, when
-      // both deletes ran at once, a `TypeError` from inside Payload's delete
-      // (2026-10-17). Either way the row is gone, and that plan checks the
-      // object.
-      if (isNotFound(err) || !(await rowExists(payload, 'media', mediaId).catch(() => true))) continue
+      failure = err
+    }
+    // Decided on a fresh connection, whatever the call said: a failed COMMIT
+    // is swallowed, and a throw rolled the row back. A row that is gone after
+    // a throw still gets the object check below.
+    if (await rowExists(payload, 'media', mediaId).catch(() => true)) {
       log.warn(
-        { ...allIds, mediaId: String(mediaId), err: errName(err) },
+        { ...allIds, mediaId: String(mediaId), err: failure === undefined ? 'row-still-there' : errName(failure) },
         `${tag} could not delete a deleted upload’s stored file; it is now an orphan`,
       )
       continue
     }
+    if (failure === undefined) deletedMediaIds.push(String(mediaId))
     try {
-      if (await stillStored(deleted ?? {})) {
+      if (await stillStored(seen)) {
         log.warn(
           { ...allIds, mediaId: String(mediaId) },
           `${tag} the media row is gone but its stored object is still in the bucket (the storage plugin swallowed the error); it is now an orphan`,

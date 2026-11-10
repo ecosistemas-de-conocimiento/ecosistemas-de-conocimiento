@@ -1,9 +1,9 @@
 # Seguridad
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** descripción del estado actual; cada control está marcado como Implementado, Planeado o Pendiente
-- **Fuentes:** `apps/web/src/lib/server/auth.ts`, `apps/web/src/hooks.server.ts`, `apps/web/src/lib/markdown.ts`, `apps/backend/src/collections/Users.ts`, `apps/backend/src/access/index.ts`, `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/hmac.ts`, `apps/backend/src/lib/jwt/sign.ts`, `apps/backend/src/lib/rateLimit.ts`, `apps/backend/src/endpoints/serviceAuth.ts`, `apps/backend/src/lib/aiClient.ts`, `packages/identity-client/src/verify.ts`, `services/ai-service/src/server.ts`, `services/ai-service/src/plugins/auth.ts`, `services/ai-service/src/server-limits.ts`, `services/audio-service/requirements.txt`, `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, `infra/fleet/backups.md`, `plan/auditoria-ia-2026-10-17.md`, `pnpm-lock.yaml`, [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md), auditoría de código del 2026-10-28
+- **Fuentes:** `apps/web/src/lib/server/auth.ts`, `apps/web/src/hooks.server.ts`, `apps/web/src/lib/markdown.ts`, `apps/backend/src/collections/Users.ts`, `apps/backend/src/access/index.ts`, `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/hmac.ts`, `apps/backend/src/lib/jwt/sign.ts`, `apps/backend/src/lib/rateLimit.ts`, `apps/backend/src/lib/loginRateLimit.ts`, `apps/backend/src/endpoints/serviceAuth.ts`, `apps/backend/src/lib/aiClient.ts`, `packages/identity-client/src/verify.ts`, `services/ai-service/src/server.ts`, `services/ai-service/src/plugins/auth.ts`, `services/ai-service/src/server-limits.ts`, `services/audio-service/requirements.txt`, `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, `infra/fleet/backups.md`, `plan/auditoria-ia-2026-10-17.md`, `pnpm-lock.yaml`, [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md), auditoría de código del 2026-10-28
 
 > **Aviso.** El sistema aún no recibe testimonios reales de participantes en producción: no existe entorno de producción, y en desarrollo (dev) sí hay documentos reales del proyecto, con nombres reales en sus textos originales, incluidos materiales de participantes del taller de Semiosis, en borrador hasta tener el consentimiento de sus autores (ver [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)).
 
@@ -11,13 +11,13 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído el 2026-11-03. La sección 2 da el detalle de cada control.
+Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído el 2026-11-03; identidad y autorización, el 2026-11-10. La sección 2 da el detalle de cada control.
 
 | Estado | Controles | Cuántos |
 |---|---|---|
-| **Implementado** | Autenticación por cookie y JWT; Tokens entre servicios EdDSA; Registro cerrado; Bloqueo por intentos; Control de acceso en servidor; Aislamiento por ecosistema; Columnas protegidas; Archivos propios; Avisos firmados con HMAC; Llaves de API con SHA-256 en tiempo constante; Token de servicio; Límites de tasa existentes; Tiempos máximos existentes; Markdown seguro; Secretos fuera del repo; Cifrado en tránsito público; Versiones fijadas; Firewall de Hetzner; Herramientas de contención (retiro de documento, interruptor, desactivar cuenta) | 19 |
+| **Implementado** | Autenticación por cookie y JWT; Tokens entre servicios EdDSA; Registro cerrado; Bloqueo por intentos; Correo fijo para la cuenta; Control de acceso en servidor; Aislamiento por ecosistema; Columnas protegidas; Archivos propios; Avisos firmados con HMAC; Llaves de API con SHA-256 en tiempo constante; Token de servicio; Límite de tasa en login; Límites de tasa existentes; Tiempos máximos existentes; Markdown seguro; Secretos fuera del repo; Cifrado en tránsito público; Versiones fijadas; Firewall de Hetzner; Herramientas de contención (retiro de documento, interruptor, desactivar cuenta) | 21 |
 | **Planeado** | Respaldos cifrados; Copia del `APP_KEY` de Coolify fuera de la caja; Alertas de caída y de disco; Conserje de sesiones; Respaldo del detector en `none`; Retención cero e inferencia independiente | 6 |
-| **Pendiente** | Límite de tasa en login; Cambio de correo propio; Separación entre quien sube y quien revisa; Llaves sin valor por defecto; Límite de turnos de chat y contador por ecosistema; Tiempo máximo en `fetchMe`; CSP y cabeceras; Secretos por servicio; Mínimo privilegio en base de datos; Cifrado hacia el Spark y dentro del servidor; Cifrado en reposo de volúmenes; Escaneo de dependencias; Endurecimiento de ssh; Puertos del servidor; Puertos de desarrollo local; Depuración de trazas de ai-service; Rotación de secretos con bitácora; Procedimiento de actualización ante avisos; Respuesta a incidentes y bitácora; Notificación de vulneraciones | 20 |
+| **Pendiente** | Límite de tasa en login por correo; Verificación del correo; Separación entre quien sube y quien revisa; Llaves sin valor por defecto; Límite de turnos de chat y contador por ecosistema; Tiempo máximo en `fetchMe`; CSP y cabeceras; Secretos por servicio; Mínimo privilegio en base de datos; Cifrado hacia el Spark y dentro del servidor; Cifrado en reposo de volúmenes; Escaneo de dependencias; Endurecimiento de ssh; Puertos del servidor; Puertos de desarrollo local; Depuración de trazas de ai-service; Rotación de secretos con bitácora; Procedimiento de actualización ante avisos; Respuesta a incidentes y bitácora; Notificación de vulneraciones | 20 |
 
 Las secciones 2 a 7 marcan cada control o procedimiento. Lo más urgente:
 
@@ -113,11 +113,13 @@ flowchart LR
 |---|---|---|---|---|
 | Identidad | **Autenticación por cookie y JWT** | La sesión web es la cookie `chat_auth` con `httpOnly`, `SameSite=Lax` y `secure`, que lleva el JWT de Payload (2 h, valor por defecto de Payload); la cookie vive 7 días | `apps/web/src/lib/server/auth.ts` | **Implementado** |
 | Identidad | **Tokens entre servicios EdDSA** | Firmados con llave privada Ed25519, vigencia máxima 15 min; solo se acepta `alg=EdDSA` | `apps/backend/src/lib/jwt/sign.ts`; `packages/identity-client/src/verify.ts` | **Implementado** |
-| Identidad | **Registro cerrado** | No hay registro público; crea cuentas la administración de plataforma, o un responsable de ecosistema al agregar miembros | `apps/backend/src/collections/Users.ts`; `apps/backend/src/endpoints/miembros.ts` | **Implementado** |
+| Identidad | **Registro cerrado** | No hay registro público; crea cuentas la administración de plataforma, o quien gestiona miembros, al agregarlos por `/miembros` | `apps/backend/src/collections/Users.ts`; `apps/backend/src/endpoints/miembros.ts` | **Implementado** |
 | Identidad | **Bloqueo por intentos** | Valor por defecto de Payload, 5 intentos, no configurado en `Users.ts` (citado de `requisitos-no-funcionales.md`); desbloquear es solo de administración | `Users.ts` | **Implementado** |
-| Identidad | **Límite de tasa en login** | No existe. Hay límites en token, perfil, resolución y grafo, pero ninguno en el inicio de sesión | `apps/backend/src/lib/rateLimit.ts` | **Pendiente** |
-| Identidad | **Cambio de correo propio** | Una cuenta puede editar su propio registro; falta limitar el cambio de correo o pedir verificación | `Users.ts`; auditoría de código del 2026-10-28 | **Pendiente** |
-| Autorización | **Control de acceso en servidor** | Un mapa único de rol a permisos; todo permiso se revisa en el servidor; la cuenta inactiva no pasa; revocar a alguien corta su chat y su micrófono | `lib/permissions.ts`; `access/index.ts` | **Implementado** |
+| Identidad | **Límite de tasa en login** | Tope de fallos por (IP, correo), por debajo del bloqueo de 5 intentos de Payload, más un techo por IP | `apps/backend/src/lib/loginRateLimit.ts` | **Implementado** |
+| Identidad | **Límite de tasa en login por correo** | No existe un tope por correo entre IPs distintas | `apps/backend/src/lib/loginRateLimit.ts` | **Pendiente** |
+| Identidad | **Correo fijo para la cuenta** | Solo la administración de plataforma cambia un correo; la cuenta no cambia el suyo | `Users.ts` (campo `email`) | **Implementado** |
+| Identidad | **Verificación del correo** | No existe. Un correo nuevo no se confirma | `Users.ts` | **Pendiente** |
+| Autorización | **Control de acceso en servidor** | Un mapa único de rol a permisos; todo permiso se revisa en el servidor; la cuenta inactiva no inicia sesión, pierde sus sesiones abiertas y no lee, sube, publica ni reintenta; un inicio de sesión o una edición del perfil simultáneos no la reactivan; su subida en curso no se publica sola; publicar, reintentar, editar un documento y editar una nota piden membresía activa con `documents:write`; revocar a alguien corta su chat y su micrófono | `lib/permissions.ts`; `access/index.ts`; `Users.ts`; `Documents.ts` | **Implementado** |
 | Autorización | **Aislamiento por ecosistema** | Un acervo por ecosistema en ai-service (`X-AI-Org`); el ecosistema sale de la sesión del servidor, nunca del cliente; borradores por usuario; equipos y proyectos no cruzan ecosistemas | `lib/aiClient.ts`; `collections/Teams.ts`; `collections/Projects.ts` | **Implementado** |
 | Autorización | **Columnas protegidas** | Las columnas de la compuerta y del pipeline no se escriben por API | `gateWritesOnly` en `Documents.ts` | **Implementado** |
 | Autorización | **Archivos propios** | Un archivo solo se adjunta o lee por su dueño | `collections/Media.ts` | **Implementado** |
@@ -250,7 +252,7 @@ Cuatro revisiones cubrieron pruebas, calidad de IA, integridad del pipeline, seg
 
 **Sin cerrar:**
 
-- **Pendiente:** límite de tasa de login más allá del bloqueo; cabeceras de seguridad; secretos por servicio; ssh sin contraseña con fail2ban (estado sin verificar); protección contra borrado del servidor en Hetzner (estado sin verificar).
+- **Pendiente:** límite de tasa de login por correo entre IPs; cabeceras de seguridad; secretos por servicio; ssh sin contraseña con fail2ban (estado sin verificar); protección contra borrado del servidor en Hetzner (estado sin verificar).
 - **Planeado:** respaldos programados con copia en otro proveedor y prueba de restauración; copia del `APP_KEY` de Coolify fuera de la caja; alertas; conserje de sesiones.
 
 ### 5.2 Auditoría de código, 2026-10-28
@@ -279,7 +281,7 @@ Once revisiones, sobre el código del 2026-10-28. Totales: 1 crítico, 6 altos, 
 
 - Quitar el valor por defecto de la llave de administración de audio-service en `infra/docker-compose.yml` (hallazgo 11).
 - Publicar en `127.0.0.1` los puertos del archivo de desarrollo local `docker-compose.override.yml`.
-- Limitar el cambio de correo propio a la administración de plataforma, o pedir verificación.
+- Verificar el correo nuevo cuando se cambia.
 - Límite de tasa en turnos de chat; contador por ecosistema en ai-service en lugar de uno compartido entre todos los ecosistemas `edc-*`.
 - Revisión de `Origin` contra CSRF; cabeceras anti marco y `nosniff`.
 - Tiempo máximo en `fetchMe` y en el cliente de ai-service después de recibir cabeceras.
@@ -334,7 +336,7 @@ flowchart TD
 
 - Retirar y borrar un documento de ai-service: `retireDeletedDocumentHook` en `Documents.ts`.
 - Apagar el respaldo hospedado del detector sin desplegar: ajuste `platform-settings.detectorFallback`, que tarda como máximo 30 s en aplicarse (TTL en `lib/platformSettings.ts`). En staging, `none` retiene todo texto, porque allí no hay detector propio.
-- Cortar el acceso de una persona: desactivar la cuenta (`isActive`) o revocar su membresía; corta el chat y el micrófono.
+- Cortar el acceso de una persona: desactivar la cuenta (`isActive`), que impide iniciar sesión, vacía sus sesiones y le quita documentos, archivos, valoraciones, chat y micrófono; o revocar su membresía, que corta el chat, el micrófono, publicar y editar documentos en ese ecosistema.
 - Restaurar: procedimiento en [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md).
 
 ## 7. Lista de verificación antes de recibir datos reales
@@ -390,7 +392,7 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 6. **Planeado.** Activar retención cero donde esté disponible y migrar a inferencia albergada de forma independiente.
 7. **Pendiente.** Quitar el valor por defecto `dev-audio-key-admin`.
 8. **Pendiente.** Verificar ssh, instalar fail2ban si falta, y revisar los puertos de Coolify en el propio servidor.
-9. **Pendiente.** Agregar límite de tasa en login y en turnos de chat, con contador por ecosistema en ai-service.
+9. **Pendiente.** Agregar límite de tasa por correo en login y en turnos de chat, con contador por ecosistema en ai-service.
 10. **Pendiente.** Agregar CSP, HSTS, cabeceras anti marco y `nosniff`, y medir la revisión de `Origin`.
 11. **Pendiente.** Entregar a cada servicio solo sus secretos y usar roles de Postgres sin superusuario.
 12. **Pendiente.** Agregar tiempos máximos en `fetchMe` y en el cliente de ai-service.
@@ -398,6 +400,6 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 14. **Pendiente.** Decidir el cifrado en reposo de los volúmenes y verificar la red hacia el Spark.
 15. **Pendiente.** Configurar y correr el escaneo de dependencias; actualizar FastAPI, Starlette y python-multipart; usar `USER node` en la imagen de ai-service.
 16. **Pendiente.** Prefijar `127.0.0.1` en `docker-compose.override.yml`.
-17. **Pendiente.** Limitar el cambio de correo propio y crear la depuración de trazas de ai-service.
+17. **Pendiente.** Verificar el correo nuevo y crear la depuración de trazas de ai-service.
 18. **Pendiente.** Crear la bitácora de incidentes, la bitácora de operación y el procedimiento de notificación de vulneraciones.
 19. **Pendiente.** Aprobar las periodicidades de rotación de secretos.

@@ -11,9 +11,12 @@
  * on the emitter; we do not need to.
  *
  * Order (matters for security and latency):
- *   1. `await req.text()` — read the RAW body BEFORE any parse. Next.js's
+ *   1. Read the RAW body BEFORE any parse, counted up to
+ *      `CALLBACK_BODY_MAX_BYTES` (`lib/bodyCap.ts`); past it, 413. Next.js's
  *      request body parser is one-shot and any JSON round-trip loses the
- *      byte-fidelity HMAC verification needs.
+ *      byte-fidelity HMAC verification needs. 🔴 This route is public and the
+ *      read comes BEFORE the HMAC check, so `req.text()` here let anyone push
+ *      any body into memory (audit 2026-11-10, C-03).
  *   2. Verify HMAC + replay window (`lib/hmac.ts`) against the raw bytes.
  *   3. INSERT-on-conflict into `aiServiceCallbacks`; if the row already
  *      existed (unique violation), return 200 immediately — ai-service is
@@ -23,6 +26,7 @@
  *
  * Return-code mapping (from the contract):
  *   - 200 — happy path, also retries on already-deduped events.
+ *   - 413 — body over the cap, refused unread and unverified.
  *   - 400 — body unparseable as JSON (signature already verified, so the
  *           emit side is at fault). ai-service treats 4xx-not-401 as a
  *           permanent rejection and doesn't retry.
@@ -56,6 +60,7 @@ import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 import configPromise from '@payload-config'
 
+import { CALLBACK_BODY_MAX_BYTES, readCapped } from '@/lib/bodyCap'
 import {
   CALLBACK_SIGNATURE_HEADER,
   CALLBACK_TIMESTAMP_HEADER,
@@ -189,27 +194,46 @@ function naturalKeyFor(envelope: CallbackEnvelope): NaturalKey | null {
  * `transcribe.completed` body carries the raw, pre-anonymisation text. Keeping
  * it here outlived the document, its redaction and its deletion. The text is
  * replaced by its length and SHA-256: enough to tell two deliveries apart while
- * debugging, nothing to read. Every other field is kept as received.
+ * debugging, nothing to read.
+ *
+ * 🔴 Nor a name (audit 2026-11-10, C-11). audio-service echoes the `title` and
+ * `audio.filename` it was sent in `transcribe.completed` and `transcribe.failed`,
+ * and for a testimonio those are the very name the rest of the system hides.
+ * Both become `null`. Jobs submitted before the backend stopped sending them
+ * keep echoing them, so this holds whatever the submit side does.
+ *
+ * A body with none of the three is kept as received.
  *
  * ⚠ The HMAC was verified on the RAW bytes before this runs; the stored body is
  * a re-serialisation and can no longer be re-verified. Nothing replays from it.
  */
 function ledgerBody(rawBody: string, envelope: CallbackEnvelope): string {
-  const text = envelope.event === 'transcribe.completed' ? envelope.transcript?.text : undefined
-  const kept =
-    typeof text === 'string'
-      ? JSON.stringify({
-          ...envelope,
-          transcript: {
-            ...(envelope as Extract<CallbackEnvelope, { event: 'transcribe.completed' }>).transcript,
-            text: null,
-            textOmitted: {
-              characters: text.length,
-              sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
-            },
-          },
-        })
-      : rawBody
+  const body = envelope as Record<string, unknown>
+  const scrubbed: Record<string, unknown> = { ...body }
+  let changed = false
+  if (typeof body.title === 'string') {
+    scrubbed.title = null
+    changed = true
+  }
+  const audio = body.audio as Record<string, unknown> | null | undefined
+  if (audio && typeof audio === 'object' && typeof audio.filename === 'string') {
+    scrubbed.audio = { ...audio, filename: null }
+    changed = true
+  }
+  const transcript = body.transcript as Record<string, unknown> | null | undefined
+  const text = transcript && typeof transcript === 'object' ? transcript.text : undefined
+  if (typeof text === 'string') {
+    scrubbed.transcript = {
+      ...transcript,
+      text: null,
+      textOmitted: {
+        characters: text.length,
+        sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+      },
+    }
+    changed = true
+  }
+  const kept = changed ? JSON.stringify(scrubbed) : rawBody
   return kept.length > 100_000 ? kept.slice(0, 100_000) : kept
 }
 
@@ -217,7 +241,13 @@ export async function POST(req: Request): Promise<NextResponse> {
   // 1. Raw body first — anything that parses must read the bytes once.
   let rawBody: string
   try {
-    rawBody = await req.text()
+    const bytes = await readCapped(req, CALLBACK_BODY_MAX_BYTES)
+    if (!bytes) {
+      console.warn('[callback] body over the cap; refused before the signature check')
+      return NextResponse.json({ error: 'payload_too_large' }, { status: 413 })
+    }
+    // What `req.text()` did: UTF-8, replacement characters, a leading BOM dropped.
+    rawBody = new TextDecoder().decode(bytes)
   } catch (err) {
     console.warn('[callback] failed to read raw body', err)
     return NextResponse.json(
@@ -766,10 +796,11 @@ async function dispatchTranscribeCompleted(
     return
   }
 
-  // ⚠ Idempotency guard, because the `aiServiceCallbacks` composite UNIQUE index
-  // DOES NOT EXIST yet (no migration baseline), so the dedupe insert upstream is
-  // currently inert. Text on the row plus an ingestId means this already ran;
-  // running it again would enqueue a second ingest for the same document.
+  // ⚠ Idempotency guard, a second line behind the dedupe insert upstream
+  // (`ai_service_callbacks_natural_key_unq`, in the migration baseline): a
+  // dedupe row deleted after a failed dispatch lets a redelivery through. Text
+  // on the row plus an ingestId means this already ran; running it again would
+  // enqueue a second ingest for the same document.
   //
   // ⚠ And a row that has left `transcribing` with its text on it: the
   // transcript is already persisted, and `transcribed` is now a resting state
@@ -788,6 +819,8 @@ async function dispatchTranscribeCompleted(
   if (!text.trim()) {
     // Either the transcript was truncated out of the webhook body (over
     // CALLBACK_MAX_TRANSCRIPT_CHARS) or nothing was said. Ask before deciding.
+    // ⚠ A transient failure THROWS out of here on purpose: `POST` forgets the
+    // dedupe row and answers 500, and audio-service delivers again.
     const { fetchTranscriptText } = await import('@/lib/audioClient')
     text = (await fetchTranscriptText(envelope.transcribeId)) ?? ''
   }
@@ -807,14 +840,18 @@ async function dispatchTranscribeCompleted(
     // audio-service's Redis before we could fetch it. Either way there is
     // nothing to embed, and an empty ingest would produce a `ready` document
     // that matches nothing — a silent, permanent "why does search never find
-    // it". Fail it visibly instead.
-    console.warn('[callback] empty transcript for doc', docId, envelope.transcribeId)
+    // it". Fail it visibly instead, and say which: "no speech" tells the user to
+    // bring another file, while an expired transcript only needs a retry.
+    const expired = envelope.transcript?.truncated === true
+    console.warn('[callback] empty transcript for doc', docId, envelope.transcribeId, { expired })
     await payload.update({
       collection: 'documents',
       id: docId as never,
       data: {
         ingestStatus: 'failed',
-        ingestError: 'empty_transcript: no speech was detected in the recording',
+        ingestError: expired
+          ? 'transcript_expired: the full transcript expired from audio-service before it was fetched'
+          : 'empty_transcript: no speech was detected in the recording',
         audioMeta,
       },
       overrideAccess: true,

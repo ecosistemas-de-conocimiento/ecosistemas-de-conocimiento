@@ -1,8 +1,18 @@
-import type { CollectionAfterMeHook, CollectionConfig } from 'payload'
-import { ValidationError } from 'payload'
+import { sql } from '@payloadcms/db-postgres'
+import type { CollectionAfterMeHook, CollectionBeforeChangeHook, CollectionBeforeLoginHook, CollectionConfig } from 'payload'
+import { AuthenticationError, ValidationError } from 'payload'
 
-import { canAccessAdminPanel, isPlatformAdmin, isSelfOrPlatformAdmin, platformAdminFieldAccess } from '../access'
+import {
+  canAccessAdminPanel,
+  isPlatformAdmin,
+  isPlatformAdminUser,
+  isSelfOrPlatformAdmin,
+  platformAdminFieldAccess,
+} from '../access'
+import { transactionHandle } from '../lib/conversationUploads'
+import { loginRateLimitHooks } from '../lib/loginRateLimit'
 import { sessionMemberships } from '../lib/roles'
+import { markIntendedIsActive } from '../lib/staleUserRow'
 
 /**
  * A person. ONE account for the whole installation; which organizations they
@@ -18,9 +28,9 @@ import { sessionMemberships } from '../lib/roles'
  *   · SIGN-UP IS CLOSED (UX demo backlog #6, decided 2026-10-21). It used to
  *     be public (`create: () => true`, proxied by the SvelteKit app's
  *     `/api/auth/register`). A stranger who signed up got a login with no
- *     memberships — nothing to do and a confusing screen. Now only a platform
- *     admin creates accounts (Payload admin panel → Users → Create), then adds
- *     the person to an ecosistema (Memberships → Create). The web
+ *     memberships — nothing to do and a confusing screen. Now a platform
+ *     admin creates accounts (Payload admin panel → Users → Create), and so
+ *     does anyone who manages members, through `/miembros`. The web
  *     `/api/auth/register` route answers 403 and `/sign-up` redirects to
  *     `/sign-in`.
  *
@@ -37,7 +47,12 @@ import { sessionMemberships } from '../lib/roles'
  *
  *   · `isPlatformAdmin` / `isActive` — `isActive` is
  *     the revoke switch the resolver checks (`lib/permissions.ts`); Payload's
- *     own auth knows nothing about it, so it is enforced in `access/`.
+ *     own auth knows nothing about it, so it is enforced in `access/`, at
+ *     login (`refuseInactiveLogin`), on the open sessions (`dropSessionsOnDeactivate`)
+ *     and against stale writes (`pinIsActiveForOthers`, and below every Payload
+ *     auth path in `lib/staleUserRow.ts`).
+ *
+ *   · `email` — only a platform admin changes it. See the field.
  *
  *   · EMAIL NORMALIZATION — Email is the join key
  *     between this backend and anything that verifies its tokens, so
@@ -61,6 +76,98 @@ export const attachMemberships: CollectionAfterMeHook = async ({ req, response }
   if (!body || !user || user.id === undefined || user.id === null) return response
   const memberships = await sessionMemberships(req.payload, user.id).catch(() => [])
   return { ...body, user: { ...user, memberships } } as typeof response
+}
+
+/**
+ * 🔴 A DEACTIVATED ACCOUNT DOES NOT SIGN IN. Runs after the password check, so
+ * it answers exactly what a wrong password answers: same error, same 401, no
+ * hint that the address exists or was switched off. Payload revokes the
+ * session it just added when this throws. Anything but `true` (a NULL
+ * included) is off.
+ *
+ * 🔴 IT READS THE COMMITTED ROW, NOT THE `user` IT IS HANDED. Payload 3.88's
+ * login reads the row before the password check, then `addSessionToUser`
+ * writes that WHOLE copy back (`payload.db.updateOne({ data: user })`,
+ * `dist/auth/sessions.js`) before this hook runs (`dist/auth/operations/login.js`).
+ * A deactivation that committed in between was overwritten with
+ * `isActive: true`, and the stale copy passed this check (audit 2026-11-10,
+ * reproduced 3 of 3 runs). The read goes through the login's own transaction
+ * (`req`): `guardStaleUserRows` (`lib/staleUserRow.ts`) took the row under
+ * `SELECT … FOR UPDATE` and dropped the stale `isActive` from that write, so
+ * what the transaction sees is the committed value. The throw rolls the
+ * session write back.
+ *
+ * ⚠ NEVER WITHOUT `req`. A read on a second connection while the login holds
+ * its first exhausted the pool: 20 concurrent logins hung for good on the
+ * default 10 connections (re-audit 2026-11-10, measured;
+ * `Users.concurrentLogins.pg.test.ts`).
+ *
+ * ⚠ LOCK ORDER. The login's `updateOne` holds the row lock until it commits.
+ * A deactivation that committed before it is what this read sees. One that had
+ * the lock first made the login's `updateOne` wait for its commit, so it is
+ * seen too. One that comes later waits on the login's lock and writes after
+ * it, sessions included (`dropSessionsOnDeactivate`): the row ends off with no
+ * session. `Users.loginRace.pg.test.ts`.
+ */
+export const refuseInactiveLogin: CollectionBeforeLoginHook = async ({ req, user }) => {
+  const committed = await req.payload.db
+    .findOne({
+      collection: 'users',
+      where: { id: { equals: (user as { id: number | string }).id } },
+      select: { isActive: true },
+      req,
+    })
+    .catch(() => null)
+  if ((committed as { isActive?: unknown } | null)?.isActive !== true) {
+    throw new AuthenticationError(req.t)
+  }
+  return user
+}
+
+/**
+ * 🔴 ONLY A PLATFORM ADMIN MOVES `isActive`, AND A STALE WRITE CANNOT MOVE IT
+ * BACK. Payload's update writes the whole row it read (`originalDoc` merged
+ * with the body), and field access only keeps the body's `isActive` out. A
+ * self-PATCH that read the row before a deactivation committed wrote
+ * `isActive: true` back on top of it.
+ *
+ * So any other signed-in write takes the committed value under `SELECT … FOR UPDATE`, in
+ * the update's own transaction: a deactivation that committed first is what it
+ * reads, and one that comes later waits for this write and lands after it.
+ * Without a transaction handle it reads committed, which narrows the window
+ * instead of closing it. `Users.loginRace.pg.test.ts`.
+ */
+export const pinIsActiveForOthers: CollectionBeforeChangeHook = async ({ data, operation, originalDoc, req }) => {
+  if (operation !== 'update' || !data || !req.user || isPlatformAdminUser(req.user)) return data
+  const id = (originalDoc as { id?: number | string } | undefined)?.id
+  if (id === undefined || id === null) return data
+  const tx = await transactionHandle(req)
+  let committed: unknown
+  if (tx) {
+    const res = (await tx.execute(sql`SELECT is_active FROM users WHERE id = ${Number(id)} FOR UPDATE`)) as {
+      rows?: Array<{ is_active: unknown }>
+    }
+    committed = res.rows?.[0]?.is_active
+  } else {
+    const row = await req.payload.db.findOne({ collection: 'users', where: { id: { equals: id } }, select: { isActive: true } })
+    committed = (row as { isActive?: unknown } | null)?.isActive
+  }
+  return { ...data, isActive: committed === true }
+}
+
+/**
+ * 🔴 SWITCHING AN ACCOUNT OFF EMPTIES ITS SESSIONS. With `useSessions` (on by
+ * default in Payload 3.88, quoted from `dist/collections/config/defaults.js`)
+ * a JWT is only honoured while its `sid` is on the row, so this ends every
+ * token already handed out instead of letting it live out its 2 h (the default
+ * `tokenExpiration`, 7200 s, quoted from the same file).
+ *
+ * ⚠ HERE, NOT IN A FIELD HOOK: `sessions` is `update: false` at field level,
+ * and Payload applies field access before the collection `beforeChange` runs.
+ */
+export const dropSessionsOnDeactivate: CollectionBeforeChangeHook = ({ data, operation }) => {
+  if (operation !== 'update' || !data || !('isActive' in data) || data.isActive === true) return data
+  return { ...data, sessions: [] }
 }
 
 export const Users: CollectionConfig = {
@@ -103,6 +210,10 @@ export const Users: CollectionConfig = {
      * gate re-asks.
      */
     afterMe: [attachMemberships],
+    ...loginRateLimitHooks,
+    beforeLogin: [refuseInactiveLogin],
+    // `markIntendedIsActive` last: it reads the `data` that will be written.
+    beforeChange: [pinIsActiveForOthers, dropSessionsOnDeactivate, markIntendedIsActive],
     beforeValidate: [
       ({ data, operation, req }) => {
         const next = { ...(data ?? {}) } as Record<string, unknown>
@@ -130,6 +241,18 @@ export const Users: CollectionConfig = {
     ],
   },
   fields: [
+    {
+      // 🔴 ONLY A PLATFORM ADMIN CHANGES AN EMAIL. It is the key `/miembros`
+      // matches a new member on: an account that could rename itself to the
+      // address of someone about to be added would be handed that person's
+      // membership and role. Payload strips an unauthorized write (the PATCH
+      // succeeds, the address stays). Merged over Payload's own `email` field,
+      // which keeps its validation and uniqueness. Verifying a new address is
+      // not built.
+      name: 'email',
+      type: 'email',
+      access: { update: platformAdminFieldAccess },
+    },
     {
       name: 'displayName',
       type: 'text',
