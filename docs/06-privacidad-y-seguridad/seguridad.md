@@ -1,9 +1,9 @@
 # Seguridad
 
-- **Versión:** 1.2
+- **Versión:** 1.3
 - **Fecha:** 2026-11-10
-- **Estado:** descripción del estado actual; cada control está marcado como Implementado, Planeado o Pendiente
-- **Fuentes:** `apps/web/src/lib/server/auth.ts`, `apps/web/src/hooks.server.ts`, `apps/web/src/lib/markdown.ts`, `apps/backend/src/collections/Users.ts`, `apps/backend/src/access/index.ts`, `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/hmac.ts`, `apps/backend/src/lib/jwt/sign.ts`, `apps/backend/src/lib/rateLimit.ts`, `apps/backend/src/lib/loginRateLimit.ts`, `apps/backend/src/endpoints/serviceAuth.ts`, `apps/backend/src/lib/aiClient.ts`, `packages/identity-client/src/verify.ts`, `services/ai-service/src/server.ts`, `services/ai-service/src/plugins/auth.ts`, `services/ai-service/src/server-limits.ts`, `services/audio-service/requirements.txt`, `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, `infra/fleet/backups.md`, `plan/auditoria-ia-2026-10-17.md`, `pnpm-lock.yaml`, [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md), auditoría de código del 2026-10-28
+- **Estado:** descripción del estado actual; cada control está marcado como Implementado, Implementado (pendiente de desplegar en dev), Planeado o Pendiente
+- **Fuentes:** `apps/web/src/lib/server/auth.ts`, `apps/web/src/hooks.server.ts`, `apps/web/src/lib/markdown.ts`, `apps/backend/src/collections/Users.ts`, `apps/backend/src/access/index.ts`, `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/hmac.ts`, `apps/backend/src/lib/jwt/sign.ts`, `apps/backend/src/lib/rateLimit.ts`, `apps/backend/src/lib/loginRateLimit.ts`, `apps/backend/src/lib/bodyCap.ts`, `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/eslint/noRawErrorLog.js`, `apps/backend/src/endpoints/serviceAuth.ts`, `apps/backend/src/lib/aiClient.ts`, `packages/identity-client/src/verify.ts`, `services/ai-service/src/server.ts`, `services/ai-service/src/plugins/auth.ts`, `services/ai-service/src/server-limits.ts`, `services/audio-service/requirements.txt`, `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, `infra/fleet/backups.md`, `plan/auditoria-ia-2026-10-17.md`, `pnpm-lock.yaml`, [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md), auditoría de código del 2026-10-28
 
 > **Aviso.** El sistema aún no recibe testimonios reales de participantes en producción: no existe entorno de producción, y en desarrollo (dev) sí hay documentos reales del proyecto, con nombres reales en sus textos originales, incluidos materiales de participantes del taller de Semiosis, en borrador hasta tener el consentimiento de sus autores (ver [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)).
 
@@ -11,13 +11,14 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído el 2026-11-03; identidad y autorización, el 2026-11-10. La sección 2 da el detalle de cada control.
+Definiciones. **Implementado:** funciona hoy en dev, con evidencia en código. **Implementado (pendiente de desplegar en dev):** está en `main` (`b7dc944f`) pero no en lo desplegado en dev (`367c2698`, despliegue del 2026-11-10 a las 18:27 UTC, citado de `infra/fleet/edc-1.md` §4zzzzzzzz). **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` el 2026-11-10. Staging sigue en su imagen del 2026-10-17: ningún control posterior a esa fecha corre allí. La sección 2 da el detalle de cada control; lo diferido está en [Etapa 2](#etapa-2).
 
 | Estado | Controles | Cuántos |
 |---|---|---|
-| **Implementado** | Autenticación por cookie y JWT; Tokens entre servicios EdDSA; Registro cerrado; Bloqueo por intentos; Correo fijo para la cuenta; Control de acceso en servidor; Aislamiento por ecosistema; Columnas protegidas; Archivos propios; Avisos firmados con HMAC; Llaves de API con SHA-256 en tiempo constante; Token de servicio; Límite de tasa en login; Límites de tasa existentes; Tiempos máximos existentes; Markdown seguro; Secretos fuera del repo; Cifrado en tránsito público; Versiones fijadas; Firewall de Hetzner; Herramientas de contención (retiro de documento, interruptor, desactivar cuenta) | 21 |
-| **Planeado** | Respaldos cifrados; Copia del `APP_KEY` de Coolify fuera de la caja; Alertas de caída y de disco; Conserje de sesiones; Respaldo del detector en `none`; Retención cero e inferencia independiente | 6 |
-| **Pendiente** | Límite de tasa en login por correo; Verificación del correo; Separación entre quien sube y quien revisa; Llaves sin valor por defecto; Límite de turnos de chat y contador por ecosistema; Tiempo máximo en `fetchMe`; CSP y cabeceras; Secretos por servicio; Mínimo privilegio en base de datos; Cifrado hacia el Spark y dentro del servidor; Cifrado en reposo de volúmenes; Escaneo de dependencias; Endurecimiento de ssh; Puertos del servidor; Puertos de desarrollo local; Depuración de trazas de ai-service; Rotación de secretos con bitácora; Procedimiento de actualización ante avisos; Respuesta a incidentes y bitácora; Notificación de vulneraciones | 20 |
+| **Implementado** | Autenticación por cookie y JWT; Tokens entre servicios EdDSA; Registro cerrado; Bloqueo por intentos; Correo fijo para la cuenta; Control de acceso en servidor; Aislamiento por ecosistema; Columnas protegidas; Archivos propios; Avisos firmados con HMAC; Llaves de API con SHA-256 en tiempo constante; Token de servicio; Límite de tasa en login; Límites de tasa existentes; Límites de cuerpo y de archivo; Tiempos máximos existentes; Markdown seguro; Secretos fuera del repo; Cifrado en tránsito público; Versiones fijadas; Firewall de Hetzner; Retención cero en OpenRouter; Herramientas de contención (retiro de documento, interruptor, desactivar cuenta) | 23 |
+| **Implementado (pendiente de desplegar en dev)** | Subidas simultáneas por cuenta y cuerpos lentos; Registros sin texto de errores (la parte de la regla de eslint); Borrar lo publicado pide membresía; Ajustes solo para el responsable | 4 |
+| **Planeado** | Respaldos cifrados; Copia del `APP_KEY` de Coolify fuera de la caja; Alertas de caída y de disco; Conserje de sesiones; Respaldo del detector en `none`; Inferencia independiente | 6 |
+| **Pendiente** | Límite de tasa en login por correo (etapa 2); Verificación del correo (etapa 2); Cambio obligado de la contraseña temporal (etapa 2); Retención cero con DeepInfra (etapa 2); Protección CSRF de las rutas JSON de la web; Separación entre quien sube y quien revisa; Llaves sin valor por defecto; Límite de turnos de chat y contador por ecosistema; Tiempo máximo en `fetchMe`; CSP y cabeceras; Secretos por servicio; Mínimo privilegio en base de datos; Cifrado hacia el Spark y dentro del servidor; Cifrado en reposo de volúmenes; Escaneo de dependencias; Endurecimiento de ssh; Puertos del servidor; Puertos de desarrollo local; Depuración de trazas de ai-service; Rotación de secretos con bitácora; Procedimiento de actualización ante avisos; Respuesta a incidentes y bitácora; Notificación de vulneraciones | 23 |
 
 Las secciones 2 a 7 marcan cada control o procedimiento. Lo más urgente:
 
@@ -26,7 +27,7 @@ Las secciones 2 a 7 marcan cada control o procedimiento. Lo más urgente:
 - **Corrección: una persona revisora sí puede aprobar su propia subida.** `decideOnHold` lo permite (`lib/holdReview.ts`).
 - **Corrección: el texto sin anonimizar sí puede salir a Estados Unidos.** Ver [protección de datos](proteccion-de-datos.md#9-flujos-a-terceros).
 
-**Sobre la inferencia.** Por ahora se usan proveedores hospedados, cuya retención de datos depende de sus condiciones; está planeado activar retención cero donde esté disponible y migrar a inferencia albergada de forma independiente. Hoy no hay retención cero configurada ni contratos documentados.
+**Sobre la inferencia.** Por ahora se usan proveedores hospedados. En dev, toda llamada a OpenRouter pide retención cero (ZDR) y falla cerrada si no la consigue; DeepInfra no recibe ese parámetro. No hay contratos documentados. Está planeado migrar a inferencia albergada de forma independiente.
 
 ## 1. Modelo de amenazas
 
@@ -114,12 +115,13 @@ flowchart LR
 | Identidad | **Autenticación por cookie y JWT** | La sesión web es la cookie `chat_auth` con `httpOnly`, `SameSite=Lax` y `secure`, que lleva el JWT de Payload (2 h, valor por defecto de Payload); la cookie vive 7 días | `apps/web/src/lib/server/auth.ts` | **Implementado** |
 | Identidad | **Tokens entre servicios EdDSA** | Firmados con llave privada Ed25519, vigencia máxima 15 min; solo se acepta `alg=EdDSA` | `apps/backend/src/lib/jwt/sign.ts`; `packages/identity-client/src/verify.ts` | **Implementado** |
 | Identidad | **Registro cerrado** | No hay registro público; crea cuentas la administración de plataforma, o quien gestiona miembros, al agregarlos por `/miembros` | `apps/backend/src/collections/Users.ts`; `apps/backend/src/endpoints/miembros.ts` | **Implementado** |
-| Identidad | **Bloqueo por intentos** | Valor por defecto de Payload, 5 intentos, no configurado en `Users.ts` (citado de `requisitos-no-funcionales.md`); desbloquear es solo de administración | `Users.ts` | **Implementado** |
-| Identidad | **Límite de tasa en login** | Tope de fallos por (IP, correo), por debajo del bloqueo de 5 intentos de Payload, más un techo por IP | `apps/backend/src/lib/loginRateLimit.ts` | **Implementado** |
-| Identidad | **Límite de tasa en login por correo** | No existe un tope por correo entre IPs distintas | `apps/backend/src/lib/loginRateLimit.ts` | **Pendiente** |
-| Identidad | **Correo fijo para la cuenta** | Solo la administración de plataforma cambia un correo; la cuenta no cambia el suyo | `Users.ts` (campo `email`) | **Implementado** |
-| Identidad | **Verificación del correo** | No existe. Un correo nuevo no se confirma | `Users.ts` | **Pendiente** |
-| Autorización | **Control de acceso en servidor** | Un mapa único de rol a permisos; todo permiso se revisa en el servidor; la cuenta inactiva no inicia sesión, pierde sus sesiones abiertas y no lee, sube, publica ni reintenta; un inicio de sesión o una edición del perfil simultáneos no la reactivan; su subida en curso no se publica sola; publicar, reintentar, editar un documento y editar una nota piden membresía activa con `documents:write`; revocar a alguien corta su chat y su micrófono | `lib/permissions.ts`; `access/index.ts`; `Users.ts`; `Documents.ts` | **Implementado** |
+| Identidad | **Bloqueo por intentos** | 5 fallos bloquean la cuenta 10 minutos, valor por defecto de Payload 3.88 (citado de `lib/loginRateLimit.ts`); desbloquear es solo de administración | `Users.ts` | **Implementado** |
+| Identidad | **Límite de tasa en login** | Por debajo del bloqueo: 4 fallos por hora por (IP, correo), para que una IP no pueda bloquear una cuenta ajena; y 100 fallos por hora por IP, contra el rociado de contraseñas (valores por defecto de `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX` e `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX` en `lib/rateLimit.ts`). El intento se reserva antes de comprobar la contraseña y se devuelve si el login funciona. Responde 429 con `Retry-After`, que la web pasa al navegador. La IP es la del navegador, también tras la web (A-08, A-11) | `apps/backend/src/lib/loginRateLimit.ts`; `lib/rateLimit.ts` | **Implementado** |
+| Identidad | **Límite de tasa en login por correo** | No existe un tope por correo entre IPs distintas; por decisión, es funcionalidad nueva | `apps/backend/src/lib/loginRateLimit.ts` | **Pendiente** (etapa 2) |
+| Identidad | **Correo fijo para la cuenta** | Solo la administración de plataforma cambia un correo; la cuenta no cambia el suyo. Cierra la toma de una membresía ajena por `/miembros` (A-03) | `Users.ts` (campo `email`, `access.update`) | **Implementado** |
+| Identidad | **Verificación del correo** | No existe. Un correo que cambia la administración no se confirma | `Users.ts` | **Pendiente** (etapa 2) |
+| Identidad | **Contraseña temporal** | `/miembros` muestra una sola vez la contraseña de una cuenta nueva. Nada obliga a cambiarla, y la web no tiene pantalla para cambiarla (A-04) | `apps/backend/src/endpoints/miembros.ts` | **Pendiente** (etapa 2) |
+| Autorización | **Control de acceso en servidor** | Un mapa único de rol a permisos; todo permiso se revisa en el servidor; la cuenta inactiva no inicia sesión, pierde sus sesiones abiertas y no lee, sube, publica ni reintenta; un inicio de sesión o una edición del perfil simultáneos no la reactivan; su subida en curso no se publica sola; publicar, reintentar, editar un documento y editar una nota piden membresía activa con `documents:write`; revocar a alguien corta su chat y su micrófono (A-01, A-02). **Implementado (pendiente de desplegar en dev):** borrar algo que no es un borrador propio pide esa misma membresía (commit `512dcc1f`), y Ajustes del ecosistema es solo del responsable y de la administración de plataforma (commit `50bde2ae`) | `lib/permissions.ts`; `access/index.ts`; `Users.ts`; `Documents.ts` | **Implementado** |
 | Autorización | **Aislamiento por ecosistema** | Un acervo por ecosistema en ai-service (`X-AI-Org`); el ecosistema sale de la sesión del servidor, nunca del cliente; borradores por usuario; equipos y proyectos no cruzan ecosistemas | `lib/aiClient.ts`; `collections/Teams.ts`; `collections/Projects.ts` | **Implementado** |
 | Autorización | **Columnas protegidas** | Las columnas de la compuerta y del pipeline no se escriben por API | `gateWritesOnly` en `Documents.ts` | **Implementado** |
 | Autorización | **Archivos propios** | Un archivo solo se adjunta o lee por su dueño | `collections/Media.ts` | **Implementado** |
@@ -130,16 +132,20 @@ flowchart LR
 | Integración | **Token de servicio** | Máximo 20 fallos por minuto por IP | `apps/backend/src/endpoints/serviceAuth.ts` | **Implementado** |
 | Disponibilidad | **Límites de tasa existentes** | ai-service: 100/min en `/v1` y 30/min en generación, por llave (`server-limits.ts`); backend: token, perfil, resolución y grafo (`lib/rateLimit.ts`); grafo 120/min de vista y 60/min de recuperación por usuario | Varios | **Implementado** |
 | Disponibilidad | **Límite de turnos de chat y contador por ecosistema** | No existe límite por persona. El contador de ai-service es uno solo, compartido entre todos los ecosistemas `edc-*`, de 30/min | Auditoría de código del 2026-10-28 | **Pendiente** |
+| Disponibilidad | **Límites de cuerpo y de archivo** | Un cuerpo JSON y cada campo de texto de un formulario de subida, hasta 8 MiB (413); un archivo, hasta 20 MB si es documento y 200 MB si es audio, contado mientras llega | `lib/bodyCap.ts`; `payload.config.ts`; `collections/Media.ts` | **Implementado** |
+| Disponibilidad | **Subidas simultáneas por cuenta y cuerpos lentos** | 2 subidas en curso por cuenta (`UPLOAD_MAX_CONCURRENT_PER_USER`; la siguiente, 429 con `Retry-After: 5`); un cuerpo se corta tras 30 s sin bytes o 120 s en total (408). Los tres valores son inferidos, no medidos (citado del mensaje del commit `780f614d`) | `lib/uploadSlots.ts`; `lib/bodyCap.ts` | **Implementado (pendiente de desplegar en dev)** |
 | Disponibilidad | **Tiempos máximos existentes** | Detector 90 s; generación 600 s; grafo 660 s; embeddings primarios 5 s | `detector.ts`; `env-manifests.md` | **Implementado** |
 | Disponibilidad | **Tiempo máximo en `fetchMe`** | No existe: un backend atascado detiene cada petición | `apps/web/src/lib/server/auth.ts` | **Pendiente** |
 | Contenido | **Markdown seguro** | Las imágenes del asistente se muestran como texto escapado; DOMPurify bloquea `img` e `iframe`; citas sobre el DOM, no con expresiones regulares sobre HTML | `apps/web/src/lib/markdown.ts`; `apps/web/src/lib/citationLinks.ts` | **Implementado** |
-| Contenido | **CSP y cabeceras** | No existen: política de seguridad de contenido (CSP), HSTS, `X-Frame-Options`, `nosniff`, retirar `x-powered-by` y revisión de `Origin` más allá de lo que trae SvelteKit por defecto (no medido en esta versión) | Sin rastro en `apps/web/src/hooks.server.ts` ni en la configuración de `apps/web` y `apps/backend` | **Pendiente** |
+| Contenido | **Protección CSRF de las rutas JSON de la web** | El backend acepta escrituras con cookie solo desde `ALLOWED_ORIGINS` (`csrf` en `payload.config.ts`). En la web, SvelteKit solo revisa `Origin` en formularios: un POST sin `Content-Type` desde un subdominio hermano lleva la cookie `SameSite=Lax` y puede, por ejemplo, publicar borradores de la víctima (A-09, plausible; no reproducido en este carril) | `apps/web/src/hooks.server.ts`; `apps/web/src/lib/server/auth.ts` | **Pendiente** |
+| Contenido | **CSP y cabeceras** | No existen: política de seguridad de contenido (CSP), HSTS, `X-Frame-Options`, `nosniff` y retirar `x-powered-by` (no medido en esta versión) | Sin rastro en `apps/web/src/hooks.server.ts` ni en la configuración de `apps/web` y `apps/backend` | **Pendiente** |
 | Secretos | **Secretos fuera del repo** | `.env` excluido por `.gitignore`; valores en Coolify; la auditoría del 2026-10-17 no halló secretos en el repo; pendiente: confirmar y rotar una credencial que podría seguir en el historial. Excepción: el valor por defecto `dev-audio-key-admin` | `.gitignore`; `plan/auditoria-ia-2026-10-17.md` | **Implementado** |
 | Secretos | **Secretos por servicio** | No se cumple: un `env_file` compartido entrega todas las variables a backend, web y ai-service | `infra/docker-compose.yml`; `infra/fleet/env-manifests.md` | **Pendiente** |
+| Datos | **Registros sin parámetros de consulta ni texto de errores** | **Implementado:** un error de base de datos no lleva los parámetros de la consulta, y el registrador de Payload serializa `err` con `safeErrSerializer` (P-07). **Implementado (pendiente de desplegar en dev):** ninguna línea interpola el texto de un error; la regla de eslint `edc/no-raw-error-log` lo hace cumplir | `payload.config.ts`; `lib/errorSummary.ts`; `apps/backend/eslint/noRawErrorLog.js` | **Implementado** en parte |
 | Datos | **Mínimo privilegio en base de datos** | No se cumple: backend y ai-service entran como superusuario de Postgres | `infra/docker-compose.yml`; `infra/postgres/init/10-create-databases.sh` | **Pendiente** |
 | Transporte | **Cifrado en tránsito público** | HTTPS con certificados Let's Encrypt vía Traefik | `infra/fleet/edc-1.md` | **Implementado** |
 | Transporte | **Cifrado hacia el Spark y dentro del servidor** | Spark por Tailscale, una VPN sobre WireGuard; su configuración no se verificó en esta versión. Postgres, Redis y RustFS van sin TLS por la red Docker interna (inferido) | [infraestructura y entornos](../05-infraestructura/infraestructura-y-entornos.md) | **Pendiente** |
-| Almacenamiento | **Respaldos cifrados** | Hoy: imagen diaria de Hetzner y volcados manuales sin cifrar, con copia en un equipo de desarrollo. Nada programado ni probado; el diseño propone cifrado, copia en otro proveedor y prueba de restauración | `infra/fleet/backups.md`; [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md) | **Planeado** |
+| Almacenamiento | **Respaldos cifrados** | Hoy: imagen diaria de Hetzner y volcados manuales sin cifrar, con `umask 077`, copia en un equipo de desarrollo y los 7 más recientes por entorno (regla y primera purga del 2026-11-10, citado de `infra/fleet/edc-1.md` §7). Nada programado ni probado; el diseño propone cifrado, copia en otro proveedor y prueba de restauración | `infra/fleet/backups.md`; [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md) | **Planeado** |
 | Almacenamiento | **Cifrado en reposo de volúmenes** | No existe, y `backups.md` solo cubre respaldos | Sin plan | **Pendiente** |
 | Almacenamiento | **Copia del `APP_KEY` de Coolify fuera de la caja** | No consta; diseño y pendiente registrados | `infra/fleet/backups.md`; [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md) | **Planeado** |
 | Cadena de suministro | **Versiones fijadas** | Versiones fijadas en `pnpm-lock.yaml` y `requirements.txt` | Sección 4 | **Implementado** |
@@ -151,8 +157,10 @@ flowchart LR
 | Servidor | **Alertas de caída y de disco** | No existen; el diseño las considera parte de los respaldos | `infra/fleet/backups.md` | **Planeado** |
 | Datos | **Conserje de sesiones** | Código listo, apagado por defecto | `apps/backend/src/lib/sessionJanitor.ts` | **Planeado** |
 | Datos | **Depuración de trazas de ai-service** | No existe | Sin purga en `services/ai-service/src` | **Pendiente** |
-| Proveedores | **Respaldo del detector en `none`** | Interruptor listo; valor por defecto `hosted`; staging siempre usa OpenRouter | `lib/platformSettings.ts`; `fallbackGenerator.ts` | **Planeado** |
-| Proveedores | **Retención cero e inferencia independiente** | Sin configuración en el código ni contratos documentados | Sin evidencia en código | **Planeado** |
+| Proveedores | **Respaldo del detector en `none`** | Interruptor listo; valor por defecto `hosted`; dev usa `hosted` desde el 2026-11-10 (citado de `infra/fleet/edc-1.md` §4zzzzzzz); staging siempre usa OpenRouter | `lib/platformSettings.ts`; `fallbackGenerator.ts` | **Planeado** |
+| Proveedores | **Retención cero en OpenRouter** | Toda llamada lleva `provider.zdr: true`; sin un proveedor con ZDR, falla cerrada y no se reintenta. En dev desde el 2026-11-10; staging no (inferido de su imagen del 2026-10-17) | `services/ai-service/src/services/ai/router/adapters/openrouter.ts`; `resilience.ts` | **Implementado** |
+| Proveedores | **Retención cero con DeepInfra** | DeepInfra no recibe ningún parámetro de retención (P-06) | `rerank-client.ts` | **Pendiente** (etapa 2) |
+| Proveedores | **Inferencia independiente** | Sin contratos documentados | Sin evidencia en código | **Planeado** |
 
 ## 3. Gestión de secretos
 
@@ -252,7 +260,7 @@ Cuatro revisiones cubrieron pruebas, calidad de IA, integridad del pipeline, seg
 
 **Sin cerrar:**
 
-- **Pendiente:** límite de tasa de login por correo entre IPs; cabeceras de seguridad; secretos por servicio; ssh sin contraseña con fail2ban (estado sin verificar); protección contra borrado del servidor en Hetzner (estado sin verificar).
+- **Pendiente:** límite de tasa de login por correo entre IPs (etapa 2); cabeceras de seguridad; secretos por servicio; ssh sin contraseña con fail2ban (estado sin verificar); protección contra borrado del servidor en Hetzner (estado sin verificar).
 - **Planeado:** respaldos programados con copia en otro proveedor y prueba de restauración; copia del `APP_KEY` de Coolify fuera de la caja; alertas; conserje de sesiones.
 
 ### 5.2 Auditoría de código, 2026-10-28
@@ -281,14 +289,34 @@ Once revisiones, sobre el código del 2026-10-28. Totales: 1 crítico, 6 altos, 
 
 - Quitar el valor por defecto de la llave de administración de audio-service en `infra/docker-compose.yml` (hallazgo 11).
 - Publicar en `127.0.0.1` los puertos del archivo de desarrollo local `docker-compose.override.yml`.
-- Verificar el correo nuevo cuando se cambia.
+- Verificar el correo nuevo cuando se cambia. Hoy solo la administración de plataforma lo cambia; la verificación es de la etapa 2.
 - Límite de tasa en turnos de chat; contador por ecosistema en ai-service en lugar de uno compartido entre todos los ecosistemas `edc-*`.
-- Revisión de `Origin` contra CSRF; cabeceras anti marco y `nosniff`.
+- Revisión de `Origin` contra CSRF en las rutas JSON de la web (A-09 en la auditoría del 2026-11-10); cabeceras anti marco y `nosniff`.
 - Tiempo máximo en `fetchMe` y en el cliente de ai-service después de recibir cabeceras.
 - Roles de Postgres sin superusuario.
 - Ruptura de reintentos de audio-service ante caídas del Spark de más de unos 2.5 min (citado de la auditoría).
 - Purga de trabajos en cola de ai-service al borrar un documento (en el stack de IA).
 - Decisión del responsable técnico sobre si un revisor puede aprobar su propia subida. Hoy el código lo permite.
+
+### 5.3 Auditoría de login y permisos, 2026-11-10
+
+Doce hallazgos, de A-01 a A-12 (citados de la auditoría de login y permisos del 2026-11-10).
+
+| Id | Hallazgo | Estado |
+|---|---|---|
+| A-01 | Una cuenta desactivada seguía iniciando sesión, leyendo, subiendo y publicando | **Implementado**: sin login, sin sesiones abiertas, sin datos y sin subir (commit `ce46db7b`); una escritura vieja no la reactiva (`6841b71a`, `b2d6958d`) |
+| A-02 | Quien salía de un ecosistema seguía publicando sus borradores | **Implementado**: publicar, reintentar y editar piden membresía activa (`ce46db7b`, `6841b71a`). Borrar lo publicado, **Implementado (pendiente de desplegar en dev)** (`512dcc1f`) |
+| A-03 | Cambiar el correo propio antes de un alta en `/miembros` daba la membresía de otra persona | **Implementado**: solo la administración de plataforma cambia un correo (`ce46db7b`). Verificación del correo: etapa 2 |
+| A-04 | La contraseña temporal de `/miembros` no se obliga a cambiar | **Pendiente** (etapa 2) |
+| A-07 | Quien revisa veía y cambiaba la anonimización de borradores ajenos | **Implementado (pendiente de desplegar en dev)** (`50bde2ae`) |
+| A-08 | Todo el tráfico web compartía un límite por IP en `/me` | **Implementado** (`93ff9aba`) |
+| A-11 | Cualquiera bloqueaba una cuenta ajena; el login no tenía límite de tasa | **Implementado**: límites por (IP, correo) y por IP (`a7ca4b48`, `2a4b8a44`, `8a7fb92d`). Límite por correo: etapa 2 |
+| A-05 | Cualquier miembro ve qué colega valoró qué conversación (`Ratings.ts`, sin acceso de campo en `user`, `session` y `message`) | **Pendiente** |
+| A-06 | `/v1/identity/token` distingue un ecosistema inexistente, uno apagado y uno sin membresía (`endpoints/token.ts`) | **Pendiente** |
+| A-09 | CSRF en las rutas JSON de la web desde subdominios hermanos | **Pendiente** |
+| A-10 | Los proxies de la web no codifican `params.id` (`apps/web/src/routes/api/documents/[id]/+server.ts`) | **Pendiente** |
+
+A-12 no se verificó en este documento.
 
 ## 6. Respuesta a incidentes
 
@@ -389,17 +417,29 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 3. **Planeado.** Guardar el `APP_KEY` de Coolify fuera de la caja.
 4. **Planeado.** Poner alertas de caída y de disco.
 5. **Planeado.** Activar el conserje de sesiones.
-6. **Planeado.** Activar retención cero donde esté disponible y migrar a inferencia albergada de forma independiente.
+6. **Planeado.** Migrar a inferencia albergada de forma independiente.
 7. **Pendiente.** Quitar el valor por defecto `dev-audio-key-admin`.
 8. **Pendiente.** Verificar ssh, instalar fail2ban si falta, y revisar los puertos de Coolify en el propio servidor.
-9. **Pendiente.** Agregar límite de tasa por correo en login y en turnos de chat, con contador por ecosistema en ai-service.
-10. **Pendiente.** Agregar CSP, HSTS, cabeceras anti marco y `nosniff`, y medir la revisión de `Origin`.
+9. **Pendiente.** Agregar límite de tasa en turnos de chat, con contador por ecosistema en ai-service.
+10. **Pendiente.** Agregar CSP, HSTS, cabeceras anti marco y `nosniff`, y proteger contra CSRF las rutas JSON de la web (A-09).
 11. **Pendiente.** Entregar a cada servicio solo sus secretos y usar roles de Postgres sin superusuario.
 12. **Pendiente.** Agregar tiempos máximos en `fetchMe` y en el cliente de ai-service.
 13. **Pendiente.** Decidir si una persona revisora puede aprobar su propia subida y aplicarlo.
 14. **Pendiente.** Decidir el cifrado en reposo de los volúmenes y verificar la red hacia el Spark.
 15. **Pendiente.** Configurar y correr el escaneo de dependencias; actualizar FastAPI, Starlette y python-multipart; usar `USER node` en la imagen de ai-service.
 16. **Pendiente.** Prefijar `127.0.0.1` en `docker-compose.override.yml`.
-17. **Pendiente.** Verificar el correo nuevo y crear la depuración de trazas de ai-service.
+17. **Pendiente.** Crear la depuración de trazas de ai-service.
 18. **Pendiente.** Crear la bitácora de incidentes, la bitácora de operación y el procedimiento de notificación de vulneraciones.
 19. **Pendiente.** Aprobar las periodicidades de rotación de secretos.
+20. **Pendiente.** Cerrar A-05, A-06 y A-10 de la auditoría del 2026-11-10.
+21. **Implementado (pendiente de desplegar en dev).** Desplegar en dev el tope de subidas por cuenta, el corte de cuerpos lentos, la regla `edc/no-raw-error-log`, el permiso para borrar lo publicado y Ajustes solo para el responsable.
+
+## Etapa 2
+
+Diferido a la etapa 2 (rama `etapa-2`; `main` solo lleva correcciones). Ninguno está hecho:
+
+- Límite de tasa en login por correo entre IPs (parte de A-11).
+- Verificación del correo cuando la administración lo cambia (parte de A-03).
+- Cambio obligado de la contraseña temporal en el primer acceso, con pantalla de cambio de contraseña en la web (A-04).
+- Retención cero con DeepInfra, por contrato o sacándolo de la ruta (P-06).
+- Trazas de ai-service sin la salida del detector, y su purga (P-14).
