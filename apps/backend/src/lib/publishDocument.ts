@@ -56,6 +56,7 @@ import type { Payload } from 'payload'
 
 import { isRateLimited, withRateLimitRetry, type RetryOptions } from './aiRetry'
 import { corpusTextFor, rowMustPassGate } from './anonymiseDocument'
+import { CONSENT_HELD_MESSAGE, isConsentHeld, readConsentHeld } from './consentHold'
 import { updateDocumentColumns } from './documentColumns'
 import { chunkMetadata, contentKindOf, knownContentKind, titleFor } from './contentKind'
 import { draftCorpus, publishedCorpus } from './corpus'
@@ -138,6 +139,69 @@ export class NotPublishableError extends Error {
     super(message)
     this.name = 'NotPublishableError'
   }
+}
+
+/** Why {@link publishBlocker} refuses. */
+export type PublishBlock = 'consent-held' | 'regate-failed' | 'regate-pending'
+
+/** Spanish, because the publish endpoint returns it (409) and the UI shows it verbatim. */
+export const PUBLISH_BLOCK_MESSAGES: Record<PublishBlock, string> = {
+  'consent-held': CONSENT_HELD_MESSAGE,
+  'regate-failed':
+    'No se puede publicar: la nueva anonimización de este documento falló. Reintenta desde su anonimización.',
+  'regate-pending':
+    'No se puede publicar: el texto todavía conserva un nombre que la configuración actual quita. ' +
+    'Primero hay que volver a anonimizarlo.',
+}
+
+/** A {@link NotPublishableError} (the endpoint's 409) that says which block. */
+export class PublishBlockedError extends NotPublishableError {
+  constructor(readonly block: PublishBlock) {
+    super(PUBLISH_BLOCK_MESSAGES[block])
+    this.name = 'PublishBlockedError'
+  }
+}
+
+/**
+ * 🔴 WHAT KEEPS A DOCUMENT OUT OF THE SHARED CORPUS BEYOND `corpusTextFor`
+ * (owner decisions 2026-11-10), read off the STORED row:
+ *
+ *   consent-held    retenido por consentimiento (`lib/consentHold.ts`)
+ *   regate-failed   gated, and a re-gate after a switch change failed on this
+ *                   verdict (`anonymisationReport.regate.failedAt`,
+ *                   `lib/anonymisationControls.ts`): its copies were withdrawn
+ *                   and its text still keeps a name the settings now remove
+ *   regate-pending  gated, and `pendingRegateOf` under the CURRENT effective
+ *                   switches: the verdict keeps a name some switch now removes
+ *                   (an ecosistema default turned off, its job not done yet)
+ *
+ * The gate's own states (`pending`, `held`, `rejected`, no verdict) are
+ * `corpusTextFor`'s and the guarded write's in {@link beginPublish}. A
+ * successful re-gate clears both re-gate blocks: its reset drops `failedAt`,
+ * and the new verdict is made under the current switches.
+ *
+ * ⚠ A `payload` without `findByID` is a unit-test fake: `doc` is the row, and
+ * `regate-pending` (which reads the ecosistema's switches) is not checked.
+ */
+export async function publishBlocker(doc: PublishableDocument, payload: Payload): Promise<PublishBlock | null> {
+  const canRead = typeof (payload as { findByID?: unknown }).findByID === 'function'
+  const stored = canRead
+    ? ((await payload
+        .findByID({ collection: 'documents', id: doc.id as never, depth: 0, overrideAccess: true })
+        .catch(() => null)) as unknown as Record<string, unknown> | null)
+    : null
+  const row = (stored ?? doc) as Record<string, unknown>
+  if (isConsentHeld(row) || isConsentHeld(doc as { consentHeld?: unknown })) return 'consent-held'
+  if (!rowMustPassGate(row)) return null
+  const report = row.anonymisationReport as { regate?: { failedAt?: unknown } } | null | undefined
+  if (typeof report?.regate?.failedAt === 'string') return 'regate-failed'
+  if (!canRead) return null
+  const organizationId = plainId(row.organization)
+  if (organizationId === null) return null
+  const { pendingRegateOf } = await import('./anonymisationControls')
+  const { effectiveSwitches } = await import('./publicFigures')
+  const switches = await effectiveSwitches(payload, organizationId, row)
+  return pendingRegateOf(row as never, switches) ? 'regate-pending' : null
 }
 
 type Ids = { organizationId: number | string; userId: number | string }
@@ -477,6 +541,10 @@ export async function beginPublish(
   deps: TransitionDeps,
 ): Promise<{ ingestId: string; corpus: string }> {
   const { organizationId } = idsOf(doc)
+  // 🔴 Before anything is written. Every publisher comes through here: the
+  // endpoint, the auto-publish callback, the seeds. See `publishBlocker`.
+  const block = await publishBlocker(doc, deps.payload)
+  if (block) throw new PublishBlockedError(block)
   /**
    * 🔴 THE GATE'S OUTPUT FOR A TESTIMONY, THE ORIGINAL FOR A DOCUMENT — and it
    * is `corpusTextFor` that knows which. Reading `extractedText` here directly
@@ -737,8 +805,26 @@ export async function failPublish(
 export async function unpublish(
   doc: PublishableDocument,
   deps: TransitionDeps,
-): Promise<{ ingestId: string; corpus: string }> {
+): Promise<{ ingestId: string; corpus: string; retiredOnly?: true }> {
   const { organizationId, userId } = idsOf(doc)
+  /**
+   * 🔴 RETENIDO POR CONSENTIMIENTO: RETIRE, NEVER RE-EMBED (`lib/consentHold.ts`).
+   * The shared copy is closed and the row goes straight to `draft`; nothing is
+   * sent to the draft corpus, whose copy the publish already retired, so the
+   * document ends retrievable by nobody. `ingestId` is empty: there is no ingest.
+   */
+  if (isConsentHeld(doc as { consentHeld?: unknown }) || (await readConsentHeld(deps.payload, doc.id))) {
+    const now = (deps.now ?? (() => new Date()))()
+    await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+    await deps.payload.update({
+      collection: 'documents',
+      id: doc.id as never,
+      data: { publicationStatus: 'draft', publicationError: null, publishIngestId: null },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+    return { ingestId: '', corpus: publishedCorpus(organizationId), retiredOnly: true }
+  }
   // Same rule as `beginPublish`: the gate's output for gated content, the
   // original for a plain document. Un-publishing is still a full re-embed.
   const selected = corpusTextFor(doc)
