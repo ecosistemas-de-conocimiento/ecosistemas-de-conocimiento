@@ -456,6 +456,24 @@ export const rateLimits = {
    * (`overrideAccess`) and are not counted. At 60, 20 000 takes two weeks.
    */
   sessionCreatePerUser: (): number => envInt('SESSION_RATELIMIT_CREATE_USER_MAX', 60),
+
+  // --- filters through a relationship ----------------------------------------
+
+  /**
+   * Requests one person sends with a filter through a relationship
+   * (`session.title`, `uploadedBy.email`…), per minute (audit 2026-11-10, D2;
+   * `takeRelationSlot` in `access/relationFilters.ts`, which also caps how many
+   * run at once). Each reads the target before the query runs: one at the
+   * per-request caps answered in 319-745 ms (measured on torre 2026-11-10,
+   * `relationFilters.bounds.pg.test.ts`).
+   *
+   * 30, one every two seconds. The web sends none (grep of `apps/web/src`,
+   * 2026-11-10: every filter it sends is on a column or a relation's id), and
+   * the admin panel is platform admins only, who are not counted; so a person
+   * never meets it. At 30 a minute, at the caps, one person keeps the process
+   * busy for at most ~10-22 s a minute (inferred from those timings).
+   */
+  relationReadPerUser: (): number => envInt('QUERY_RELATION_RATELIMIT_USER_MAX', 30),
 }
 
 // --- checking ----------------------------------------------------------------
