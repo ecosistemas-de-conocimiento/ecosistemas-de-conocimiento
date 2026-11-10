@@ -6,6 +6,7 @@ vi.mock('$lib/server/auth', () => ({
 }));
 
 import { GET } from './+server';
+import { downloadName } from '$lib/server/downloadName';
 import { backendFetch } from '$lib/server/auth';
 
 type Locals = {
@@ -39,7 +40,9 @@ const mocked = backendFetch as unknown as ReturnType<typeof vi.fn>;
 const ownDoc = {
   id: 7,
   uploadedBy: { id: 1 },
-  mediaFile: { id: 3, filename: 'Diagnóstico – campo 2026.pdf' },
+  name: 'Diagnóstico – campo 2026',
+  // Stored under a neutral name since C-12; the download keeps the document's own name.
+  mediaFile: { id: 3, filename: '0f9c2b1e-6a43-4d2e-9b7a-3c1d5e8f2a10.pdf' },
 };
 
 beforeEach(() => {
@@ -70,7 +73,8 @@ describe('GET /api/documents/[id]/original', () => {
     expect(res.headers.get('content-type')).toBe('application/pdf');
     const cd = res.headers.get('content-disposition')!;
     expect(cd).toMatch(/^attachment;/);
-    expect(cd).toContain(`filename*=UTF-8''${encodeURIComponent(ownDoc.mediaFile.filename)}`);
+    expect(cd).toContain(`filename*=UTF-8''${encodeURIComponent('Diagnóstico – campo 2026.pdf')}`);
+    expect(cd).not.toContain('0f9c2b1e');
     expect(await res.text()).toBe('%PDF-1.7');
     expect(mocked.mock.calls[0]![1]).toBe('/api/documents/7?depth=1');
     expect(mocked.mock.calls[1]![1]).toBe(
@@ -108,5 +112,17 @@ describe('GET /api/documents/[id]/original', () => {
     });
     const res = await GET(makeEvent());
     expect(res.status).toBe(502);
+  });
+});
+
+describe('downloadName', () => {
+  it.each([
+    ['Diagnóstico – campo 2026', 'x.pdf', 'Diagnóstico – campo 2026.pdf'],
+    ['Notas.PDF', 'x.pdf', 'Notas.PDF'],
+    ['', 'x.pdf', 'x.pdf'],
+    [null, 'x.pdf', 'x.pdf'],
+    ['Sin extensión', 'x', 'Sin extensión'],
+  ])('%s + %s → %s', (name, stored, expected) => {
+    expect(downloadName(name, stored)).toBe(expected);
   });
 });
