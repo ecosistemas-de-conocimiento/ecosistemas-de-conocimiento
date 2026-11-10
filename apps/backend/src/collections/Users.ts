@@ -91,9 +91,16 @@ export const attachMemberships: CollectionAfterMeHook = async ({ req, response }
  * `dist/auth/sessions.js`) before this hook runs (`dist/auth/operations/login.js`).
  * A deactivation that committed in between was overwritten with
  * `isActive: true`, and the stale copy passed this check (audit 2026-11-10,
- * reproduced 3 of 3 runs). So the read goes through the adapter WITHOUT `req`,
- * on another connection: it sees what is committed, not the login's own
- * uncommitted write. The throw rolls that write back.
+ * reproduced 3 of 3 runs). The read goes through the login's own transaction
+ * (`req`): `guardStaleUserRows` (`lib/staleUserRow.ts`) took the row under
+ * `SELECT … FOR UPDATE` and dropped the stale `isActive` from that write, so
+ * what the transaction sees is the committed value. The throw rolls the
+ * session write back.
+ *
+ * ⚠ NEVER WITHOUT `req`. A read on a second connection while the login holds
+ * its first exhausted the pool: 20 concurrent logins hung for good on the
+ * default 10 connections (re-audit 2026-11-10, measured;
+ * `Users.concurrentLogins.pg.test.ts`).
  *
  * ⚠ LOCK ORDER. The login's `updateOne` holds the row lock until it commits.
  * A deactivation that committed before it is what this read sees. One that had
@@ -108,6 +115,7 @@ export const refuseInactiveLogin: CollectionBeforeLoginHook = async ({ req, user
       collection: 'users',
       where: { id: { equals: (user as { id: number | string }).id } },
       select: { isActive: true },
+      req,
     })
     .catch(() => null)
   if ((committed as { isActive?: unknown } | null)?.isActive !== true) {
