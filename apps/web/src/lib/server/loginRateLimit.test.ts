@@ -24,7 +24,9 @@ vi.mock('$app/server', () => ({
 const { POST: loginApi } = await import('../../routes/api/auth/login/+server');
 const { actions } = await import('../../routes/sign-in/+page.server');
 const { AUTH_ERROR_COPY } = await import('./auth');
-const { LOGIN_FAIL_WINDOW_MS, resetLoginRateLimit } = await import('./loginRateLimit');
+const { LOGIN_FAIL_WINDOW_MS, MAX_LOGIN_EMAIL_LENGTH, loginRateLimitKeys, resetLoginRateLimit } = await import(
+  './loginRateLimit'
+);
 
 const WRONG_PASSWORD = { errors: [{ message: 'The email or password provided is incorrect.' }] };
 const LOCKED = {
@@ -192,6 +194,26 @@ describe('failed sign-ins per (IP, email)', () => {
     expect(await viaApi()).toBe(401);
   });
 
+  it("passes the backend's own Retry-After on, from its header or its message", async () => {
+    const message = { errors: [{ message: 'Too many failed sign-ins. Retry in 1234s.' }] };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(message), { status: 429, headers: { 'Retry-After': '777' } })),
+    );
+    const request = () =>
+      new Request('http://edc.test/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'ana@example.org', password: 'x' }),
+      });
+    const withHeader = await loginApi({ request: request(), cookies: cookies() } as never);
+    expect(withHeader.status).toBe(429);
+    expect(withHeader.headers.get('Retry-After')).toBe('777');
+    backend(429, message);
+    const fromMessage = await loginApi({ request: request(), cookies: cookies() } as never);
+    expect(fromMessage.headers.get('Retry-After')).toBe('1234');
+  });
+
   it("maps the backend's own 429 to the same Spanish sentence, never Payload's English", async () => {
     backend(429, { errors: [{ message: 'Too many failed sign-ins. Retry in 3600s.' }] });
     const request = new Request('http://edc.test/api/auth/login', {
@@ -204,12 +226,57 @@ describe('failed sign-ins per (IP, email)', () => {
     expect(await res.json()).toEqual({ error: AUTH_ERROR_COPY['rate-limited'] });
   });
 
-  it('defaults to 4 per 10 minutes, one below the account lockout', async () => {
+  it('defaults to 4 per hour, one below the account lockout', async () => {
     delete envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX;
     backend(401, WRONG_PASSWORD);
     for (let i = 0; i < 4; i += 1) expect(await viaApi()).toBe(401);
     expect(await viaApi()).toBe(429);
   });
+});
+
+describe('what one IP can put in the map (re-audit 2026-11-10, N3/N4)', () => {
+  it(`refuses an email over ${MAX_LOGIN_EMAIL_LENGTH} characters before the backend or any key`, async () => {
+    const fetchFn = backend(401, WRONG_PASSWORD);
+    const long = `${'a'.repeat(MAX_LOGIN_EMAIL_LENGTH - '@example.org'.length + 1)}@example.org`;
+    expect(await viaApi(long)).toBe(400);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(loginRateLimitKeys()).toEqual([]);
+    // One shorter is an ordinary attempt.
+    expect(await viaApi(long.slice(1))).toBe(401);
+  });
+
+  it('keys a hash of the email, never the email itself', async () => {
+    backend(401, WRONG_PASSWORD);
+    await viaApi('ana@example.org');
+    const keys = loginRateLimitKeys();
+    expect(keys).toHaveLength(2);
+    for (const key of keys) {
+      expect(key).not.toContain('ana');
+      expect(key.length).toBeLessThan(100);
+    }
+  });
+
+  it('a refunded attempt leaves no key behind', async () => {
+    backend(200, OK);
+    for (let i = 0; i < 20; i += 1) expect(await viaApi(`user${i}@example.org`)).toBe(200);
+    expect(loginRateLimitKeys()).toEqual([]);
+  });
+
+  it("one IP cannot evict another IP's live (IP, email) bucket", async () => {
+    // Refunded attempts (here the backend's own 429) used to leave an empty key
+    // each; 10,001 of them from IP-B pushed IP-A's spent bucket out of the map.
+    delete envState.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX;
+    const { signIn } = await import('./auth');
+    backend(401, WRONG_PASSWORD);
+    for (let i = 0; i < 3; i += 1) await signIn('ana@example.org', 'x', cookies(), false);
+    ip = '198.51.100.2';
+    backend(429, { errors: [{ message: 'Too many failed sign-ins.' }] });
+    for (let i = 0; i < 10_001; i += 1) await signIn(`x${i}@flood.example`, 'x', cookies(), false);
+    ip = '203.0.113.7';
+    const fetchFn = backend(401, WRONG_PASSWORD);
+    expect(await signIn('ana@example.org', 'x', cookies(), false)).toMatchObject({ status: 429 });
+    expect(fetchFn).not.toHaveBeenCalled();
+  }, 60_000);
 });
 
 describe('failed sign-ins per IP, across every email', () => {

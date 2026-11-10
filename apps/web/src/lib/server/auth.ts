@@ -9,7 +9,7 @@
 
 import { env } from '$env/dynamic/private';
 import { currentClientIp, forwardClientIp } from './clientIp';
-import { reserveLoginAttempt } from './loginRateLimit';
+import { MAX_LOGIN_EMAIL_LENGTH, reserveLoginAttempt } from './loginRateLimit';
 
 export const SESSION_COOKIE = 'chat_auth';
 // Match Payload's default 2h JWT lifetime. The the backend response carries
@@ -122,6 +122,19 @@ export interface LoginResult {
   failure?: AuthFailure;
   /** The backend's / runtime's own words. FOR LOGS ONLY — never rendered. */
   detail?: string;
+  /** On the backend's 429: its wait, from `Retry-After` or its message. */
+  retryAfterSeconds?: number;
+}
+
+/**
+ * The backend's wait on a 429: its `Retry-After` header in seconds, else the
+ * "Retry in Ns" its message carries (`LoginRateLimited` in
+ * `apps/backend/src/lib/loginRateLimit.ts`). Undefined when neither parses.
+ */
+function backendRetryAfter(res: Response, detail: string): number | undefined {
+  const raw = res.headers.get('Retry-After')?.trim() ?? '';
+  const seconds = /^\d+$/.test(raw) ? Number(raw) : Number(/Retry in (\d+)s/.exec(detail)?.[1]);
+  return Number.isFinite(seconds) && seconds >= 1 ? seconds : undefined;
 }
 
 interface PayloadErrorBody {
@@ -177,7 +190,9 @@ export async function loginWithBackend(
             : res.status === 401 || res.status === 400
               ? 'invalid-credentials'
               : 'login-failed';
-      return { ok: false, failure, detail };
+      return failure === 'rate-limited'
+        ? { ok: false, failure, detail, retryAfterSeconds: backendRetryAfter(res, detail) }
+        : { ok: false, failure, detail };
     }
     return { ok: true, token: body.token, user: body.user };
   } catch (err) {
@@ -197,7 +212,7 @@ export type SignInResult =
       ok: false;
       status: 400 | 401 | 429 | 503;
       error: string;
-      /** Set on our own 429, for a `Retry-After` header. */
+      /** Set on a 429, ours or the backend's, for a `Retry-After` header. */
       retryAfterSeconds?: number;
     };
 
@@ -218,6 +233,10 @@ export async function signIn(
   const password = typeof rawPassword === 'string' ? rawPassword : '';
   if (!email || !password) {
     return { ok: false, status: 400, error: authErrorMessage('missing-fields') };
+  }
+  // Refused before any rate-limit key is built on it (re-audit 2026-11-10, N3).
+  if (email.length > MAX_LOGIN_EMAIL_LENGTH) {
+    return { ok: false, status: 400, error: authErrorMessage('invalid-credentials') };
   }
 
   // 🔴 Per (IP, email) and per IP, failures only (A-11): `loginRateLimit.ts`
@@ -248,7 +267,9 @@ export async function signIn(
     // answer 401 — that reads as "wrong password" to every caller.
     const status =
       failure === 'unreachable' || failure === 'server' ? 503 : failure === 'rate-limited' ? 429 : 401;
-    return { ok: false, status, error: authErrorMessage(failure) };
+    return status === 429 && result.retryAfterSeconds
+      ? { ok: false, status, error: authErrorMessage(failure), retryAfterSeconds: result.retryAfterSeconds }
+      : { ok: false, status, error: authErrorMessage(failure) };
   }
 
   slot.release();

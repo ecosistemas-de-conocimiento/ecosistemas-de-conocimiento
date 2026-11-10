@@ -24,6 +24,18 @@
  * Calls from the web BFF carry the browser's IP there (A-08); see `clientIp`
  * for why a direct caller cannot choose its own bucket.
  *
+ * ⚠ ONE IP HOLDS AT MOST ITS PER-IP CEILING OF KEYS. The per-IP bucket is
+ * checked first, so a request it refuses keys nothing on the email; the email
+ * is length-capped and hashed before it is keyed; a refund that empties a
+ * bucket deletes it. One IP therefore cannot fill the store to its cap and
+ * evict someone else's live (IP, email) bucket (re-audit 2026-11-10, N3/N4).
+ *
+ * ⚠ Accepted, not fixed: more than `loginFailPerIpEmail` concurrent sign-ins
+ * to ONE account from ONE IP get 429 even with the right password, because each
+ * holds a slot until its own check refunds it. Only a shared account signed in
+ * to at the same instant from behind one NAT meets it, and a retry a moment
+ * later passes (inferred from the reserve-then-refund order, not measured).
+ *
  * ⚠ Only the REST route reaches `afterError`. A failed `payload.login` on the
  * local API (seeds, tests) stays counted, whatever the error; a successful one
  * is refunded.
@@ -42,6 +54,8 @@ import {
   type RequestContext,
 } from 'payload'
 
+import { createHash } from 'node:crypto'
+
 import { clientIp } from '../endpoints/http'
 import { LOGIN_FAIL_WINDOW_MS, rateLimits, reserveRateLimits, type RateLimitRule } from './rateLimit'
 
@@ -53,23 +67,49 @@ export function normaliseLoginEmail(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().toLowerCase() : ''
 }
 
+/**
+ * Longer than this is refused before any bucket is keyed on it. 254 is the
+ * commonly cited practical maximum for an address (RFC 5321's 256-octet path,
+ * less its angle brackets); Payload 3.88's own `email` validation has no
+ * length cap (measured, `payload/dist/fields/validations.js`). Counted in
+ * UTF-16 units, never more than the octets, so no 254-octet address is refused.
+ */
+export const MAX_LOGIN_EMAIL_LENGTH = 254
+
+/**
+ * The email as it sits in a key: sha256, first 128 bits, so a key has a fixed
+ * size whatever was posted. A collision needs ~2^64 distinct addresses
+ * (inferred, birthday bound).
+ */
+function emailKey(email: string): string {
+  return createHash('sha256').update(email).digest('hex').slice(0, 32)
+}
+
 function loginRules(ip: string, email: string): RateLimitRule[] {
   return [
-    {
-      // The key holds the email; the scope, which reaches logs, does not.
-      // `|` cannot appear in an IP, so no (IP, email) pair aliases another.
-      scope: 'login:fail:ip-email',
-      key: `login:fail:ip-email:${ip}|${email}`,
-      limit: rateLimits.loginFailPerIpEmail(),
-      windowMs: rateLimits.loginFailPerIpEmailWindowMs(),
-    },
+    // Per IP FIRST: a request it refuses never reaches the (IP, email) rule,
+    // so it keys nothing on the email.
     {
       scope: 'login:fail:ip',
       key: `login:fail:ip:${ip}`,
       limit: rateLimits.loginFailPerIp(),
       windowMs: LOGIN_FAIL_WINDOW_MS,
     },
+    {
+      // `|` cannot appear in an IP, so no (IP, email) pair aliases another.
+      scope: 'login:fail:ip-email',
+      key: `login:fail:ip-email:${ip}|${emailKey(email)}`,
+      limit: rateLimits.loginFailPerIpEmail(),
+      windowMs: rateLimits.loginFailPerIpEmailWindowMs(),
+    },
   ]
+}
+
+/** An email past `MAX_LOGIN_EMAIL_LENGTH`: refused before it is keyed, so it holds no slot. */
+export class LoginEmailTooLong extends APIError {
+  constructor() {
+    super('Email too long.', 400, undefined, true)
+  }
 }
 
 /** Our own 429. Thrown before a slot is held, so `afterError` finds nothing to settle. */
@@ -90,6 +130,7 @@ function takeRelease(context: RequestContext | undefined): (() => Promise<void>)
 export const reserveLoginAttempt: CollectionBeforeOperationHook = async ({ args, operation, req }) => {
   if (operation !== 'login') return
   const email = normaliseLoginEmail((args as { data?: { email?: unknown } }).data?.email)
+  if (email.length > MAX_LOGIN_EMAIL_LENGTH) throw new LoginEmailTooLong()
   const reservation = await reserveRateLimits(loginRules(clientIp(req), email))
   if (reservation.allowed) {
     req.context[CONTEXT_KEY] = reservation.release

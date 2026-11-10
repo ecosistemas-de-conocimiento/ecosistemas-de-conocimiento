@@ -8,7 +8,9 @@ import { AuthenticationError, LockedAuth, ValidationError, type PayloadRequest }
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  LoginEmailTooLong,
   LoginRateLimited,
+  MAX_LOGIN_EMAIL_LENGTH,
   refundLoginSuccess,
   reserveLoginAttempt,
   settleLoginFailure,
@@ -200,8 +202,67 @@ describe('failed logins per IP, across every email', () => {
   })
 })
 
+describe('what one IP can put in the store (re-audit 2026-11-10, N3/N4)', () => {
+  /** The installed in-process store's own map, read through its private field. */
+  const trackedKeys = (): string[] => {
+    const store = (globalThis as Record<symbol, unknown>)[Symbol.for('edc.backend.rateLimit.store')]
+    return [...(store as { buckets: Map<string, unknown> }).buckets.keys()]
+  }
+
+  it(`refuses an email over ${MAX_LOGIN_EMAIL_LENGTH} characters before any key is built`, async () => {
+    const req = request(ATTACKER)
+    const long = `${'a'.repeat(MAX_LOGIN_EMAIL_LENGTH - 'b@example.invalid'.length + 1)}b@example.invalid`
+    await expect(
+      reserveLoginAttempt({ operation: 'login', args: { data: { email: long } }, req, context: req.context } as never),
+    ).rejects.toBeInstanceOf(LoginEmailTooLong)
+    expect(trackedKeys()).toEqual([])
+    // One shorter is an ordinary attempt.
+    expect(await attempt(ATTACKER, wrongPassword(), long.slice(1))).toBe('reached')
+  })
+
+  it('keys a hash of the email, never the email itself', async () => {
+    await attempt(ATTACKER, wrongPassword(), VICTIM)
+    const keys = trackedKeys()
+    expect(keys).toHaveLength(2)
+    for (const key of keys) {
+      expect(key).not.toContain('victim')
+      expect(key.length).toBeLessThan(100)
+    }
+  })
+
+  it('a request the per-IP ceiling refuses keys nothing on its email', async () => {
+    for (let i = 0; i < 10; i += 1) await attempt(ATTACKER, wrongPassword(), `user${i}@example.invalid`)
+    const before = trackedKeys()
+    for (let i = 10; i < 50; i += 1) {
+      expect(await attempt(ATTACKER, wrongPassword(), `user${i}@example.invalid`)).toBe('refused')
+    }
+    expect(trackedKeys()).toEqual(before)
+  })
+
+  it('a refunded attempt leaves no key behind', async () => {
+    for (let i = 0; i < 20; i += 1) expect(await attempt(ATTACKER, undefined, `user${i}@example.invalid`)).toBe('reached')
+    expect(trackedKeys()).toEqual([])
+  })
+
+  it("one IP cannot evict another IP's live (IP, email) bucket within its 100/h budget", async () => {
+    // The re-audit's repro: IP-B's 56,000 refused requests on distinct emails
+    // pushed the store past its 50,000-key cap, evicting IP-A's spent bucket.
+    delete process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX
+    vi.useFakeTimers()
+    for (let i = 0; i < 3; i += 1) await attempt(ATTACKER, wrongPassword())
+    expect(await attempt(ATTACKER)).toBe('refused')
+    vi.advanceTimersByTime(1_000) // so IP-A's bucket is the least recently touched
+    for (let i = 0; i < 56_000; i += 1) await attempt('198.51.100.2', wrongPassword(), `x${i}@flood.invalid`)
+    vi.advanceTimersByTime(1_100) // past the over-cap sweep's 1 s gap
+    await attempt('198.51.100.2', wrongPassword(), 'trigger@flood.invalid')
+    expect(await attempt(ATTACKER)).toBe('refused')
+    // IP-A's two keys, IP-B's per-IP key and its 100 (IP, email) keys.
+    expect(trackedKeys().length).toBeLessThanOrEqual(2 + 1 + 100)
+  }, 120_000)
+})
+
 describe('defaults', () => {
-  it('4 per (IP, email) per 10 minutes, 100 per IP per hour', () => {
+  it('4 per (IP, email) per hour, 100 per IP per hour', () => {
     delete process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX
     delete process.env.IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX
     expect(rateLimits.loginFailPerIpEmail()).toBe(4)
