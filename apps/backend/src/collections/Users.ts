@@ -7,6 +7,7 @@ import {
   isSelfOrPlatformAdmin,
   platformAdminFieldAccess,
 } from '../access'
+import { loginRateLimitHooks } from '../lib/loginRateLimit'
 import { sessionMemberships } from '../lib/roles'
 
 /**
@@ -140,6 +141,7 @@ export const Users: CollectionConfig = {
      * gate re-asks.
      */
     afterMe: [attachMemberships],
+    ...loginRateLimitHooks,
     beforeLogin: [refuseInactiveLogin],
     beforeChange: [dropSessionsOnDeactivate],
     beforeValidate: [
