@@ -1162,6 +1162,32 @@ export const ROUTES: readonly RouteRow[] = [
     },
   },
   {
+    method: 'patch',
+    path: '/v1/corpus/{name}/titles',
+    tag: 'Corpus',
+    summary: 'Rename ingested documents — no re-embedding.',
+    description:
+      'For each `{externalId, title}` (up to 200), rewrites `title` on the document row ' +
+      'and `metadata.title` on the document and on every chunk it owns (where ' +
+      '`metadata` is an object), in one transaction. Chunk text, embeddings and the ' +
+      'lexical index are untouched: the title is not part of the embedded text, so ' +
+      'nothing is re-embedded and no text is sent to the embedding provider. ' +
+      '`metadata.title` is the copy `/v1/retrieve` returns.\n\n' +
+      'Idempotent: only values that differ are written, and `changed` says whether ' +
+      'anything did. `dryRun: true` reports the same without writing. An external id ' +
+      'the corpus does not hold is listed in `notFound` rather than failing the batch.\n\n' +
+      'Admin only, scoped to the caller\'s (org, project); a corpus in another tenant ' +
+      'reads as missing.',
+    auth: 'admin',
+    params: z.object({ name: z.string() }),
+    body: { schema: C.DocumentTitlesRequest, required: true },
+    responses: {
+      200: json(R.setDocumentTitlesResponseSchema, 'Per-document outcome.'),
+      400: problem('Validation error (empty or oversized batch, empty `title`, duplicate id, unknown key).'),
+      404: nested('`CORPUS_NOT_FOUND`.'),
+    },
+  },
+  {
     method: 'delete',
     path: '/v1/corpus/{name}/documents/{externalId}',
     tag: 'Corpus',

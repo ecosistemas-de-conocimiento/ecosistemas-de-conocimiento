@@ -54,6 +54,7 @@ export type {
   ProvisionTenantRequest,
   CorpusAliasRequest,
   DocumentValidityRequest,
+  DocumentTitlesRequest,
   ChatTurn,
   RetrieveRewrite,
   RetrieveRequest,
@@ -530,6 +531,21 @@ export interface SetDocumentValidityResult {
   chunksUpdated: number;
   validFrom: string | null;
   validTo: string | null;
+}
+
+/** Result of `admin.setDocumentTitles`. Titles are not echoed back. */
+export interface SetDocumentTitlesResult {
+  dryRun: boolean;
+  documents: Array<{
+    externalId: string;
+    documentId: string;
+    /** Something differed (and, unless `dryRun`, was rewritten). */
+    changed: boolean;
+    /** Chunks whose `metadata.title` differed. */
+    chunksChanged: number;
+  }>;
+  /** External ids the corpus does not hold. */
+  notFound: string[];
 }
 
 /**

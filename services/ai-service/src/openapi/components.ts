@@ -25,6 +25,7 @@ import {
   corpusAliasRequestSchema,
   corpusCreateSchema,
   corpusUpdateSchema,
+  documentTitlesSchema,
   documentValiditySchema,
   embedRequestSchema,
   ingestRequestSchema,
@@ -57,6 +58,7 @@ export const IngestRequest = reg('IngestRequest', ingestRequestSchema);
 export const RetrieveRequest = reg('RetrieveRequest', retrieveRequestSchema);
 export const RetrieveMultiRequest = reg('RetrieveMultiRequest', retrieveMultiRequestSchema);
 export const DocumentValidityRequest = reg('DocumentValidityRequest', documentValiditySchema);
+export const DocumentTitlesRequest = reg('DocumentTitlesRequest', documentTitlesSchema);
 export const EmbedRequest = reg('EmbedRequest', embedRequestSchema);
 export const CorpusAliasRequest = reg('CorpusAliasRequest', corpusAliasRequestSchema);
 export const CorpusCreateRequest = reg('CorpusCreateRequest', corpusCreateSchema);

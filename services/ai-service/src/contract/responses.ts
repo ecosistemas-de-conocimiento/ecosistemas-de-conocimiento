@@ -249,6 +249,20 @@ export const setDocumentValidityResponseSchema = z.object({
   validTo: z.string().nullable(),
 });
 
+/** `PATCH /v1/corpus/{name}/titles`. Titles are not echoed: they are consumer free text. */
+export const setDocumentTitlesResponseSchema = z.object({
+  dryRun: z.boolean(),
+  documents: z.array(
+    z.object({
+      externalId: z.string(),
+      documentId: z.string().uuid(),
+      changed: z.boolean(),
+      chunksChanged: z.number().int(),
+    }),
+  ),
+  notFound: z.array(z.string()),
+});
+
 /**
  * `POST /v1/corpus/{name}/alias`. The body is identical on 201 and 200; the
  * status is the only signal, mirrored in `created`.

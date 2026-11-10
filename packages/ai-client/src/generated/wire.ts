@@ -291,6 +291,14 @@ export type DocumentValidityRequest = {
   validTo?: string | null;
 };
 
+export type DocumentTitlesRequest = {
+  documents: {
+    externalId: string;
+    title: string;
+  }[];
+  dryRun?: boolean;
+};
+
 /** A conversation turn passed to the rewrite step. Ordered oldest → newest. */
 export type ChatTurn = {
   role: "user" | "assistant" | "system";

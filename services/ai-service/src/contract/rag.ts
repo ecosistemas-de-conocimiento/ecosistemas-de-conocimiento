@@ -521,6 +521,34 @@ export const documentValiditySchema = z
 export type DocumentValidityInput = z.infer<typeof documentValiditySchema>;
 
 // ---------------------------------------------------------------------------
+// PATCH /v1/corpus/:name/titles — body.
+// ---------------------------------------------------------------------------
+// Rename already-ingested documents without re-embedding them: each row's
+// title and every chunk's `metadata.title`. Up to 200 per call (the service's
+// `DOCUMENT_TITLES_MAX`); external ids unique within a call.
+
+export const documentTitlesSchema = z
+  .object({
+    documents: z
+      .array(
+        z
+          .object({
+            externalId: z.string().min(1).max(200),
+            title: z.string().min(1).max(1000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(200)
+      .refine((d) => new Set(d.map((x) => x.externalId)).size === d.length, {
+        message: 'documents[].externalId must be unique',
+      }),
+    dryRun: z.boolean().optional(),
+  })
+  .strict();
+export type DocumentTitlesInput = z.infer<typeof documentTitlesSchema>;
+
+// ---------------------------------------------------------------------------
 // Corpus control plane — POST /v1/corpora + PATCH /v1/corpora/:name.
 // ---------------------------------------------------------------------------
 // Explicit corpus lifecycle: create a corpus with its config BEFORE any data

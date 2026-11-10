@@ -8,11 +8,13 @@
 // ⚠ Despite the sub-API's name, several methods here take the ordinary
 // APP-ROLE key: `deleteCorpus`, `deleteDocument` and `setDocumentValidity`
 // are scoped by `(org, project)`, not by role. Each method's doc says which.
+// `setDocumentTitles` is admin-role.
 
 import type { HttpClient } from './http.js';
 import type {
   DeleteCorpusResult,
   DeleteDocumentResult,
+  SetDocumentTitlesResult,
   SetDocumentValidityResult,
 } from './types.js';
 
@@ -171,6 +173,38 @@ export class AdminAPI {
         externalId,
       )}/validity`,
       body: bounds,
+    });
+  }
+
+  /**
+   * Rename already-ingested documents WITHOUT re-embedding them: each
+   * document row's `title` and `metadata.title`, and every chunk's
+   * `metadata.title` — the copy `retrieve` returns. Chunk text and vectors are
+   * not touched, and no text goes to the embedding provider.
+   *
+   * Up to 200 documents of one corpus per call. Idempotent: only differing
+   * values are written and `changed` says whether anything was. `dryRun`
+   * reports the same without writing. An unknown external id lands in
+   * `notFound` instead of failing the batch.
+   *
+   * Admin-role token, scoped to the key's `(org, project)`.
+   *
+   * Errors:
+   *   - 404 (`CORPUS_NOT_FOUND`) — also what a cross-tenant corpus looks like.
+   *   - 400 on an empty or oversized batch, an empty title or a duplicate id.
+   *   - 403 when the bearer token lacks the admin role.
+   *
+   * @param corpus corpus name (an alias resolves to its target)
+   */
+  async setDocumentTitles(
+    corpus: string,
+    documents: Array<{ externalId: string; title: string }>,
+    opts: { dryRun?: boolean } = {},
+  ): Promise<SetDocumentTitlesResult> {
+    return this.http.json<SetDocumentTitlesResult>({
+      method: 'PATCH',
+      path: `/v1/corpus/${encodeURIComponent(corpus)}/titles`,
+      body: { documents, ...(opts.dryRun !== undefined ? { dryRun: opts.dryRun } : {}) },
     });
   }
 }

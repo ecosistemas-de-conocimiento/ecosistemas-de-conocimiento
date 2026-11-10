@@ -57,6 +57,7 @@ export const WIRE_TYPES: readonly WireTypeEntry[] = [
   { name: 'CorpusUpdateRequest', module: 'rag', schema: 'corpusUpdateSchema' },
   { name: 'CorpusAliasRequest', module: 'rag', schema: 'corpusAliasRequestSchema' },
   { name: 'DocumentValidityRequest', module: 'rag', schema: 'documentValiditySchema' },
+  { name: 'DocumentTitlesRequest', module: 'rag', schema: 'documentTitlesSchema' },
   { name: 'ChatTurn', module: 'rag', schema: 'chatTurnSchema' },
   { name: 'RetrieveRewrite', module: 'rag', schema: 'retrieveRewriteSchema' },
   { name: 'RetrieveRequest', module: 'rag', schema: 'retrieveRequestSchema' },
