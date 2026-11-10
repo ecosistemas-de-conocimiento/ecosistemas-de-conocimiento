@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
 const { everySurvivorIsTown, isPlaceOnlyHold, regatePlaceOnlyHolds } = await import('./regatePlaceHolds')
+const { NOT_CONSENT_HELD } = await import('./consentHold')
 
 type Row = Record<string, unknown>
 
@@ -95,7 +96,7 @@ describe('regatePlaceOnlyHolds', () => {
     const gate = vi.fn()
     const report = await regatePlaceOnlyHolds(db.payload as never, { apply: true, gate })
     const where = (db.payload.find.mock.calls[0] as unknown as [{ where: { and: unknown[] } }])[0].where.and
-    expect(where).toContainEqual({ consentHeld: { not_equals: true } })
+    expect(where).toContainEqual(NOT_CONSENT_HELD)
     expect(gate.mock.calls.map((c) => c[1])).toEqual(['4'])
     expect(report).toMatchObject({ matched: 1, regated: 1, ids: ['4'] })
     expect(db.store[0]!.anonymisationStatus).toBe('held')
