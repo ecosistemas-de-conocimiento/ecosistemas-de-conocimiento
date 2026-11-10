@@ -48,6 +48,27 @@ export function janitorIntervalMsFromEnv(varName: string, defaultMin: number): n
   return Math.max(1, minutes) * 60_000
 }
 
+/** Shared by every janitor here: minutes from boot to the first sweep. */
+export const JANITOR_FIRST_SWEEP_MIN_VAR = 'JANITOR_FIRST_SWEEP_MIN'
+/**
+ * 2 min: inferred, not measured. Past the boot's own work (migrations, the
+ * budget check) and short enough that a backend restarted several times a day
+ * still sweeps. Before 2026-11-10 the first sweep waited a whole interval, and
+ * a daily janitor on a process that restarts more than once a day never ran.
+ */
+export const JANITOR_FIRST_SWEEP_DEFAULT_MIN = 2
+
+/**
+ * Delay to the first sweep, in ms: `JANITOR_FIRST_SWEEP_MIN` (unparseable or
+ * negative falls back to the default; `0` sweeps on the next tick), never
+ * longer than the janitor's own interval.
+ */
+export function janitorFirstSweepMs(intervalMs: number): number {
+  const raw = Number(process.env[JANITOR_FIRST_SWEEP_MIN_VAR])
+  const minutes = process.env[JANITOR_FIRST_SWEEP_MIN_VAR]?.trim() && Number.isFinite(raw) && raw >= 0 ? raw : JANITOR_FIRST_SWEEP_DEFAULT_MIN
+  return Math.min(minutes * 60_000, intervalMs)
+}
+
 /** Everything a janitor has to say about itself for the scheduler to run it. */
 export interface JanitorSchedule {
   /** Log tag, e.g. `embedding-janitor`. Also the key this janitor's timer is held under. */
@@ -64,16 +85,18 @@ export interface JanitorSchedule {
   sweep(payload: Payload): Promise<void>
 }
 
-/** One timer per janitor, keyed by prefix. Two janitors must not share a slot. */
-const timers = new Map<string, ReturnType<typeof setInterval>>()
+/** One timer per janitor, keyed by prefix (the first-sweep timeout, then the interval). Two janitors must not share a slot. */
+const timers = new Map<string, { first?: ReturnType<typeof setTimeout>; every?: ReturnType<typeof setInterval> }>()
 
 /**
  * Arm a janitor's sweep. Idempotent: a second call is a no-op while a timer is
  * already armed. Returns true if armed (or already armed), false if disabled.
  *
- * The first sweep does NOT run at boot — we wait one interval, so a deploy
- * never fails or stamps anything the instant it comes up. The interval is
- * unref'd so it never keeps the process alive on its own.
+ * The first sweep runs {@link janitorFirstSweepMs} after boot (2 min by
+ * default), not the instant the process comes up, then every interval. Every
+ * sweep here acts only on rows past its own deadline (stuck 30 min, 30 days…),
+ * so a sweep soon after a restart finds the same rows a later one would. The
+ * timers are unref'd so they never keep the process alive on its own.
  *
  * ⚠ THE TRY/CATCH IS THE REASON THIS IS SHARED. A sweep that throws must not
  * kill the interval; without the catch, one bad pass silently disarms the
@@ -89,12 +112,13 @@ export function startJanitor(payload: Payload, schedule: JanitorSchedule): boole
   if (timers.has(schedule.prefix)) return true
 
   const intervalMs = schedule.intervalMs()
+  const firstMs = janitorFirstSweepMs(intervalMs)
   payload.logger.info(
     { intervalMinutes: intervalMs / 60_000, ...(schedule.armedContext?.() ?? {}) },
     `[${schedule.prefix}] armed`,
   )
 
-  const timer = setInterval(() => {
+  const pass = () => {
     void (async () => {
       try {
         await schedule.sweep(payload)
@@ -105,18 +129,26 @@ export function startJanitor(payload: Payload, schedule: JanitorSchedule): boole
         )
       }
     })()
-  }, intervalMs)
-  if (typeof timer.unref === 'function') timer.unref()
-  timers.set(schedule.prefix, timer)
+  }
+  const slot: { first?: ReturnType<typeof setTimeout>; every?: ReturnType<typeof setInterval> } = {}
+  slot.first = setTimeout(() => {
+    slot.first = undefined
+    pass()
+    slot.every = setInterval(pass, intervalMs)
+    if (typeof slot.every.unref === 'function') slot.every.unref()
+  }, firstMs)
+  if (typeof slot.first.unref === 'function') slot.first.unref()
+  timers.set(schedule.prefix, slot)
 
   return true
 }
 
 /** Stop a janitor's interval (used by tests / graceful shutdown). */
 export function stopJanitor(prefix: string): void {
-  const timer = timers.get(prefix)
-  if (timer) {
-    clearInterval(timer)
+  const slot = timers.get(prefix)
+  if (slot) {
+    clearTimeout(slot.first)
+    clearInterval(slot.every)
     timers.delete(prefix)
   }
 }

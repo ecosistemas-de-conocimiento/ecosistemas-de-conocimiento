@@ -12,6 +12,7 @@ import {
   startCallbackRetentionJanitor,
   stopCallbackRetentionJanitor,
 } from './callbackRetention'
+import { JANITOR_FIRST_SWEEP_DEFAULT_MIN } from './janitorScheduler'
 
 function fake() {
   const queries: unknown[] = []
@@ -58,7 +59,7 @@ describe('purgeCallbackBodies', () => {
 })
 
 describe('startCallbackRetentionJanitor', () => {
-  it('🔴 is on by default, daily, and sweeps when the interval elapses (not at boot)', async () => {
+  it('🔴 is on by default, daily: first sweep soon after boot (janitorScheduler), then every interval', async () => {
     expect(CALLBACK_RETENTION_JANITOR_DEFAULT_MIN).toBe(1440)
     vi.useFakeTimers()
     const { payload, queries } = fake()
@@ -67,11 +68,13 @@ describe('startCallbackRetentionJanitor', () => {
       { intervalMinutes: 1440, retentionDays: 30 },
       '[callback-retention-janitor] armed',
     )
-    await vi.advanceTimersByTimeAsync(1439 * 60_000)
+    await vi.advanceTimersByTimeAsync(JANITOR_FIRST_SWEEP_DEFAULT_MIN * 60_000 - 1)
     expect(queries).toHaveLength(0)
-    await vi.advanceTimersByTimeAsync(60_000)
+    await vi.advanceTimersByTimeAsync(1)
     expect(queries).toHaveLength(1)
     expect(payload.logger.info).toHaveBeenCalledWith({ purged: 2 }, '[callback-retention-janitor] swept')
+    await vi.advanceTimersByTimeAsync(1440 * 60_000)
+    expect(queries).toHaveLength(2)
   })
 
   it('CALLBACK_RETENTION_JANITOR_ENABLED=false turns it off', () => {
