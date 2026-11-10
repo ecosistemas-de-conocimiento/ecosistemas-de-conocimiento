@@ -23,7 +23,8 @@ declare const payload: { logger: { warn: (...a: unknown[]) => void; error: (...a
 declare const opts: { log?: { warn: (...a: unknown[]) => void } }
 declare function errSummary(e: unknown): string
 declare function safeErrMessage(e: unknown): string
-declare const err: Error, error: Error, e: Error, cause: Error, writeErr: Error, updateError: Error
+declare const err: Error, error: Error, e: Error, cause: Error, writeErr: Error, updateError: Error, ex: Error, reason: Error
+declare const job: Promise<void>
 `
 const lines = (body: string) => prelude.split('\n').length + body.trimStart().split('\n').length - 1
 
@@ -48,6 +49,17 @@ describe('edc/no-raw-error-log', () => {
     `payload.logger.warn(\`[x] failed: \${err instanceof Error ? err.message : String(err)}\`)`,
     `payload.logger.warn('[x] ' + err.message)`,
     `opts.log?.warn({ err: (err as Error).message }, '[x]')`,
+    `console.error('[x]', ex)`,
+    `console.error('[x]', reason)`,
+    `console.error('[x]', JSON.stringify(err))`,
+    `console.error(\`[x] \${JSON.stringify({ err })}\`)`,
+    `payload.logger.warn({ detail: JSON.stringify(writeErr) }, '[x]')`,
+    // Any name a catch binds, whatever it is.
+    `try { void 0 } catch (boom) { console.error('[x]', boom) }`,
+    `try { void 0 } catch (boom) { console.error(\`[x] \${boom}\`) }`,
+    `try { void 0 } catch (boom) { payload.logger.warn({ id: 1, detail: boom }, '[x]') }`,
+    `job.catch((boom) => console.error('[x]', boom))`,
+    `job.catch(function (boom) { console.warn('[x]', String(boom)) })`,
   ])('🔴 rejects %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([lines(body)])
   })
@@ -63,6 +75,13 @@ describe('edc/no-raw-error-log', () => {
     `payload.logger.warn({ err: safeErrMessage(err) }, '[x]')`,
     `opts.log?.warn(\`[x] \${errSummary(err)}\`)`,
     `throw new Error(\`wrapped: \${err.message}\`)`,
+    `console.error('[x]', JSON.stringify({ id: 1 }))`,
+    `try { void 0 } catch (boom) { console.error('[x]', errSummary(boom), boom instanceof Error ? boom.name : 'x') }`,
+    `try { void 0 } catch (boom) { payload.logger.error({ err: boom }, '[x]') }`,
+    `job.catch((boom) => payload.logger.error(boom))`,
+    // Bound outside a catch: an ordinary value.
+    `const boom = 'fine'; console.log('[x]', boom)`,
+    `job.then((boom) => console.log('[x]', boom))`,
   ])('allows %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([])
   })

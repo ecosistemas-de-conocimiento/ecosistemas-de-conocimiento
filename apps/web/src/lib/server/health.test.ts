@@ -164,15 +164,16 @@ describe('🔴 redaction — the body carries a closed vocabulary only', () => {
     expect(report.checks.backend.error).toBe(PROBE_ERROR.UNREACHABLE);
   });
 
-  it('logs the full error server-side even though it redacts the body', async () => {
-    const err = new Error('secret detail');
+  it('logs the error server-side even though it redacts the body', async () => {
+    const err = new Error('probe detail');
     const fetchImpl = throwingFetch(err);
 
     await getReadiness(fetchImpl);
 
+    // Its log-safe form (P-07): type, code, and the message only when safe.
     expect(console.error).toHaveBeenCalledWith(
       '[health] the backend readiness probe failed',
-      err,
+      'Error: probe detail',
     );
   });
 });

@@ -75,6 +75,7 @@
  * does not impose one.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import type { AIClient, GraphProvider, RetrievedChunk } from '@edc/chat-engine/core';
 import { backendFetch } from '$lib/server/auth';
 import type { LenguaIndex } from '$lib/lengua';
@@ -171,7 +172,7 @@ export async function fetchGraphView(
     }
     return { view: parseGraphView(await res.json()), ok: true };
   } catch (err) {
-    console.warn('[grafo] graph view read failed', err);
+    console.warn('[grafo] graph view read failed', safeErrMessage(err));
     return { view: EMPTY_VIEW, ok: false };
   }
 }
@@ -218,7 +219,7 @@ export async function fetchGraphEntity(
     if (!detail) return { state: 'not-found' };
     return { state: 'ok', detail };
   } catch (err) {
-    console.warn('[grafo] entity read failed', err);
+    console.warn('[grafo] entity read failed', safeErrMessage(err));
     return { state: 'unavailable' };
   }
 }

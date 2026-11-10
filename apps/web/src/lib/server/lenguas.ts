@@ -8,6 +8,7 @@
  * row, never from the browser. The backend re-checks membership anyway.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { backendFetch } from '$lib/server/auth';
 import { EMPTY_LENGUA_INDEX, parseLenguaIndex, type LenguaIndex } from '$lib/lengua';
 
@@ -30,7 +31,7 @@ export async function fetchLenguaIndex(
     }
     return { ok: true, index: parseLenguaIndex(await res.json().catch(() => null)) };
   } catch (err) {
-    console.warn('[lenguas] read failed', err);
+    console.warn('[lenguas] read failed', safeErrMessage(err));
     return { ok: false, index: EMPTY_LENGUA_INDEX };
   }
 }

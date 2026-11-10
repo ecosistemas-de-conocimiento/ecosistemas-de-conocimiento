@@ -6,6 +6,7 @@
  * 404 here. The `preguntas` action is the one paid model call.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { fail } from '@sveltejs/kit';
 
 import { CONSENT_CHANGED } from '$lib/consent';
@@ -94,7 +95,7 @@ export const actions: Actions = {
       if (preguntas.length === 0) return fail(502, { message: 'No se pudieron generar. Intenta de nuevo.' });
       return { preguntas };
     } catch (err) {
-      console.warn('[estudiante] preguntas failed', err);
+      console.warn('[estudiante] preguntas failed', safeErrMessage(err));
       return fail(502, { message: 'No se pudieron generar. Intenta de nuevo.' });
     }
   },

@@ -17,6 +17,7 @@
  * module does and therefore cannot be loaded in a test today.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import {
   BudgetExceededError,
   BudgetNotConfiguredError,
@@ -88,7 +89,7 @@ export function logAIWarnings(warnings: unknown, surface: string): void {
     if (!w || typeof w !== 'object') continue;
     console.warn('[generate] ai-service warning', {
       aiWarningCode: w.code,
-      aiWarningMessage: w.message,
+      aiWarningMessage: safeErrMessage(w.message),
       surface,
     });
   }

@@ -65,13 +65,13 @@ export function degradeListResponse(
     return { kind: 'unauthorized', status: 401, body: { error: 'unauthorized' } };
   }
 
-  const reason: DegradeReason = res.status === 403 ? 'forbidden' : 'unavailable';
+  const why: DegradeReason = res.status === 403 ? 'forbidden' : 'unavailable';
 
   // Keep the signal: a 403 here is usually "empty tenant", but it can also be a
   // real authz regression — warn so it stays observable in logs rather than
   // silently swallowed.
   console.warn(
-    `[degrade] ${ctx}: backend returned ${res.status}; degrading to empty list (reason=${reason})`,
+    `[degrade] ${ctx}: backend returned ${res.status}; degrading to empty list (reason=${why})`,
   );
 
   return {
@@ -79,7 +79,7 @@ export function degradeListResponse(
     // Respond 200 so the browser treats it as a successful (empty) read; the
     // `degraded` flag drives the non-fatal banner.
     status: 200,
-    body: { docs: [], totalDocs: 0, degraded: true, reason },
-    reason,
+    body: { docs: [], totalDocs: 0, degraded: true, reason: why },
+    reason: why,
   };
 }

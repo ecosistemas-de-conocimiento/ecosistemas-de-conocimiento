@@ -1,3 +1,4 @@
+import { safeErrMessage } from '$lib/errorSummary';
 import { redirect, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { SESSION_COOKIE, fetchMe } from '$lib/server/auth';
 
@@ -73,11 +74,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 // reach `+error.svelte` untouched and never pass through here.
 //
 // For anything else (an unhandled exception in a load/handler — e.g. a backend
-// read that threw instead of degrading), we log the real error server-side and
+// read that threw instead of degrading), we log its log-safe form server-side
+// (`$lib/errorSummary`: a raw error can quote a backend row, P-07) and
 // return a SANITISED `App.Error` body so the boundary renders a branded page
 // instead of leaking a raw 500 stack trace to the user.
 export const handleError: HandleServerError = ({ error, status }) => {
-  console.error('[handleError] uncaught error', error);
+  console.error('[handleError] uncaught error', safeErrMessage(error));
   return {
     message: 'Something went wrong. Please try again.',
     kind: 'generic',

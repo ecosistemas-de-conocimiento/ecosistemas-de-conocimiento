@@ -100,6 +100,6 @@ for (const [i, doc] of docs.entries()) {
 
 const skippedTotal = Object.values(skipped).reduce((a, b) => a + b, 0)
 console.log(`[republish] listo: ${ok} enviados, ${skippedTotal} omitidos, ${failed} fallidos`)
-for (const [reason, n] of Object.entries(skipped).sort((a, b) => b[1] - a[1])) {
-  console.log(`[republish]   ${n} ${reason}`)
+for (const [why, n] of Object.entries(skipped).sort((a, b) => b[1] - a[1])) {
+  console.log(`[republish]   ${n} ${why}`)
 }

@@ -13,12 +13,17 @@ const src = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const SHAPES = [
   // console.error('…', err) and friends: the raw error as a whole argument.
-  /console\.(?:log|info|warn|error|debug)\(.*,\s*(?:err|error|e|cause|\w+Err|\w+Error)\s*\)/,
+  /console\.(?:log|info|warn|error|debug)\(.*,\s*(?:err|error|e|ex|cause|reason|\w+Err|\w+Error)\s*\)/,
+  // JSON.stringify of an error in a log line.
+  /(?:console|logger)\.(?:log|info|warn|error|debug)\(.*JSON\.stringify\(\s*(?:err|error|e|ex|cause|reason|\w+Err|\w+Error)\s*\)/,
   // A log field holding the error's text.
   /\berr: err instanceof Error \? err\.message/,
   /\berr: String\(err\)/,
   /\berr: \(err as Error\)\.message/,
 ]
+
+/** The lint rule's own opt-out on the line above, which the rule also honours. */
+const EXEMPT = /eslint-disable-next-line edc\/no-raw-error-log -- \S/
 
 /**
  * ⚠ Files other lanes were editing when this landed (wave 4, 2026-11-10).
@@ -39,9 +44,10 @@ function hits(): Map<string, string[]> {
   const out = new Map<string, string[]>()
   for (const file of sources(src)) {
     const rel = path.relative(src, file)
-    const lines = readFileSync(file, 'utf8')
-      .split('\n')
-      .flatMap((line, i) => (SHAPES.some((re) => re.test(line)) ? [`${rel}:${i + 1}: ${line.trim()}`] : []))
+    const all = readFileSync(file, 'utf8').split('\n')
+    const lines = all.flatMap((line, i) =>
+      SHAPES.some((re) => re.test(line)) && !EXEMPT.test(all[i - 1] ?? '') ? [`${rel}:${i + 1}: ${line.trim()}`] : [],
+    )
     if (lines.length) out.set(rel, lines)
   }
   return out

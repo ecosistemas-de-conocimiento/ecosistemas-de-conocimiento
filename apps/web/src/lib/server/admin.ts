@@ -38,6 +38,7 @@
  * and throws the text away — see `withTranscriptSizes`.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { normalizeEcosystems, type Ecosystem } from '$lib/ecosystems';
 import { backendFetch } from '$lib/server/auth';
 import {
@@ -180,7 +181,7 @@ async function readPages<T>(
     }
     return { rows, totalDocs, truncated, ok: true };
   } catch (err) {
-    console.warn(`[admin] read of ${collection} failed`, err);
+    console.warn(`[admin] read of ${collection} failed`, safeErrMessage(err));
     return { ...EMPTY, rows, totalDocs };
   }
 }
@@ -283,7 +284,7 @@ async function hydratePeople(
       return { ...p, name, email: found.email };
     });
   } catch (err) {
-    console.warn('[admin] user hydration failed', err);
+    console.warn('[admin] user hydration failed', safeErrMessage(err));
     return people;
   }
 }
@@ -335,7 +336,7 @@ async function withTranscriptSizes(
     }
     return docs.map((d) => (sizes.has(d.id) ? { ...d, transcriptChars: sizes.get(d.id)! } : d));
   } catch (err) {
-    console.warn('[admin] transcript sizing failed', err);
+    console.warn('[admin] transcript sizing failed', safeErrMessage(err));
     return docs;
   }
 }
@@ -399,7 +400,7 @@ export async function fetchEcosystemMetrics(
     }
     return { metrics, ok: true };
   } catch (err) {
-    console.warn('[admin] ecosystem metrics read failed', err);
+    console.warn('[admin] ecosystem metrics read failed', safeErrMessage(err));
     return METRICS_UNAVAILABLE;
   }
 }
@@ -447,7 +448,7 @@ export async function fetchChatUsage(
     }
     return { summary, ok: true };
   } catch (err) {
-    console.warn('[admin] chat usage read failed', err);
+    console.warn('[admin] chat usage read failed', safeErrMessage(err));
     return unavailable;
   }
 }
@@ -690,7 +691,7 @@ export async function readEcosystem(
     const body = await res.json().catch(() => null);
     return normalizeEcosystems([body])[0] ?? null;
   } catch (err) {
-    console.warn('[admin] ecosystem lookup failed', err);
+    console.warn('[admin] ecosystem lookup failed', safeErrMessage(err));
     return null;
   }
 }
