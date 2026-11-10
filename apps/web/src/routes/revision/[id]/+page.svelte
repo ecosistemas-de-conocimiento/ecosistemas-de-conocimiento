@@ -44,6 +44,7 @@
     REJECT_LABEL,
     segmentHeldText,
     STALE_HIGHLIGHTS_NOTICE,
+    substantivelyEdited,
     survivorBreakdown,
     SURVIVORS_TITLE,
     survivorLabel,
@@ -86,12 +87,15 @@
   /** 🔴 See `highlightsAreStale`: edited text means the offsets point elsewhere. */
   const stale = $derived(highlightsAreStale(original, text));
   /**
-   * 🔴 A `content` hold is never approved as-is (P-01; the backend refuses it
-   * too): approve appears only once the text differs from what was sent.
+   * 🔴 A `content` hold, or a `verify` hold whose verification never finished
+   * (ola 4), is never approved as-is (P-01; the backend refuses it too):
+   * approve appears only once the words differ from what was sent.
    * Gated on `seeded` so the server render, where effects never run, hides it.
    */
-  const editRequired = $derived(mustEditToApprove(hold?.stage));
-  const edited = $derived(seeded === (hold?.id ?? '') && original !== null && text !== original);
+  const editRequired = $derived(mustEditToApprove(hold?.stage, hold?.reason));
+  const edited = $derived(
+    seeded === (hold?.id ?? '') && original !== null && substantivelyEdited(text, original),
+  );
   const mayApprove = $derived(original !== null && (!editRequired || edited));
   const segments = $derived(original === null ? [] : segmentHeldText(text, hold?.survivors ?? []));
   const breakdown = $derived(survivorBreakdown(hold?.survivors ?? []));

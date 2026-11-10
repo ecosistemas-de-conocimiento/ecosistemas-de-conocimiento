@@ -165,7 +165,9 @@ export class HoldSettingsChangedError extends HoldReviewInputError {
  * 🔴 A `content` HOLD IS NEVER APPROVED AS-IS (audit 2026-11-10, P-01). The
  * model did not finish stage 3 there, or reported a name it could not find in
  * the text: nothing vouches for what `heldText` still carries. The reviewer
- * must send a text that differs from it, or reject.
+ * must send a text that differs from it, or reject. Same for a `verify`
+ * hold whose verification never finished (ola 4, `verifyNeverFinished`), and
+ * "differs" means in its words (`substantivelyEdited`).
  */
 export class HoldContentAsIsError extends HoldReviewInputError {
   constructor() {
@@ -374,6 +376,38 @@ function modelNeverRan(stage: string | null, reason: string | null): boolean {
   return stage === 'content' && typeof reason === 'string' && reason.startsWith(MODEL_NEVER_RAN)
 }
 
+/**
+ * 🔴 A `verify` hold whose verification never finished (`gate.ts`, round
+ * `catch`: "La segunda revisión automática no pudo terminar", transport,
+ * invalid JSON, timeout). Stage 3 DID run, so `heldText` is its redacted
+ * output and is shown; but no model checked it afterwards. Like a `content`
+ * hold: approved only with a real edit, never as-is.
+ */
+const VERIFY_NEVER_FINISHED = 'La segunda revisión automática no pudo terminar'
+function verifyNeverFinished(stage: string | null, reason: string | null): boolean {
+  return stage === 'verify' && typeof reason === 'string' && reason.startsWith(VERIFY_NEVER_FINISHED)
+}
+
+/** True when this hold may only leave with an edited text (or a rejection). */
+function mustEditToApprove(stage: string | null, reason: string | null): boolean {
+  return stage === 'content' || verifyNeverFinished(stage, reason)
+}
+
+/**
+ * The text as it reads: words and numbers only, case- and width-folded.
+ * 🔴 "EDITED" MEANS THIS CHANGED (carril D, gap 2): a space, a line break, a
+ * zero-width character, a full stop or a capital letter does not remove
+ * anything that identifies a person, so it does not count as a correction.
+ */
+function readingOf(value: string): string {
+  return (value.normalize('NFKC').replace(/\p{Cf}/gu, '').toLowerCase().match(/[\p{L}\p{M}\p{N}]+/gu) ?? []).join(' ')
+}
+
+/** True when `supplied` changes what `gateOutput` says, not only how it is spaced or punctuated. */
+export function substantivelyEdited(supplied: string, gateOutput: string | null): boolean {
+  return gateOutput === null || readingOf(supplied) !== readingOf(gateOutput)
+}
+
 /** One held document, with the text and the flags a reviewer acts on. */
 export async function heldDocument(args: {
   payload: Payload
@@ -518,11 +552,15 @@ export async function decideOnHold(args: {
           'An approved redaction cannot be empty — an empty chunk can never be found or corrected.',
         )
       }
+      // `textEdited` on the audit row records ANY change; the gate below asks
+      // for one that changes the words.
       textEdited = supplied !== gateOutput
-      if (stage === 'content' && !textEdited) throw new HoldContentAsIsError()
+      if (mustEditToApprove(stage, reason) && !substantivelyEdited(supplied, gateOutput)) {
+        throw new HoldContentAsIsError()
+      }
       approvedText = supplied
     } else {
-      if (stage === 'content') throw new HoldContentAsIsError()
+      if (mustEditToApprove(stage, reason)) throw new HoldContentAsIsError()
       if (gateOutput === null) {
         // A `structural` hold produced no output, so there is nothing to approve
         // as-is. Refusing is right: the alternative is silently reaching for

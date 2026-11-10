@@ -549,9 +549,27 @@ export const NO_TEXT_NOTICE =
 export const NO_CHECKED_TEXT_NOTICE = 'No hay texto revisado que aprobar. Puedes rechazarlo.';
 export const EDIT_TO_APPROVE = 'Para aprobarlo, corrige el texto.';
 
-/** True when this hold may only be approved with an edited text. */
-export function mustEditToApprove(stage: string | null | undefined): boolean {
-  return stage === 'content';
+/**
+ * True when this hold may only be approved with an edited text: a `content`
+ * hold, or a `verify` hold whose verification never finished (ola 4). Mirrors
+ * `mustEditToApprove` in `apps/backend/src/lib/holdReview.ts`.
+ */
+export function mustEditToApprove(stage: string | null | undefined, reason?: string | null): boolean {
+  if (stage === 'content') return true;
+  return stage === 'verify' && (reason ?? '').startsWith('La segunda revisión automática no pudo terminar');
+}
+
+/** Words and numbers only, case- and width-folded. Mirrors the backend's `readingOf`. */
+function readingOf(value: string): string {
+  return (value.normalize('NFKC').replace(/\p{Cf}/gu, '').toLowerCase().match(/[\p{L}\p{M}\p{N}]+/gu) ?? []).join(' ');
+}
+
+/**
+ * 🔴 An edit that only changes spacing, punctuation or case is not a
+ * correction (backend `substantivelyEdited`): approve stays hidden.
+ */
+export function substantivelyEdited(text: string, original: string | null): boolean {
+  return original === null || readingOf(text) !== readingOf(original);
 }
 
 // ── Approving ──────────────────────────────────────────────────────────────
