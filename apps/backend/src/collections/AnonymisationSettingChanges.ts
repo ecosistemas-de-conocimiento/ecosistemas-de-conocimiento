@@ -22,7 +22,7 @@
  * (`overrideAccess`), never updated or deleted through the API.
  */
 
-import type { CollectionConfig } from 'payload'
+import type { CollectionBeforeOperationHook, CollectionConfig } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { organizationIdsForUserWithPermission, PERMISSIONS } from '../lib/permissions'
@@ -44,6 +44,22 @@ export const AnonymisationSettingChanges: CollectionConfig = {
     defaultColumns: ['key', 'scope', 'before', 'after', 'organization', 'document', 'actor', 'createdAt'],
     group: 'Feedback',
     description: 'Cada cambio de las opciones de anonimización, por documento o por ecosistema. Solo se agregan filas.',
+  },
+  hooks: {
+    /**
+     * 🔴 `where[document.name]` / `sort=document.name` (and `uploadedBy`,
+     * `session`) reach the gated `documents` columns through the relationship,
+     * where the narrowing on `documents` never runs: a reviewer who did not
+     * upload a gated documento could confirm its file name row by row (audit
+     * 2026-11-10). Same rule as `anonymisation-reviews`, at this path.
+     * Imported lazily: `Documents.ts` is a large module graph.
+     */
+    beforeOperation: [
+      (async (hookArgs: Parameters<CollectionBeforeOperationHook>[0]) =>
+        (await import('./Documents')).constrainGatedQueriesAt('document.')(
+          hookArgs,
+        )) as CollectionBeforeOperationHook,
+    ],
   },
   access: {
     // Same readers as the review log: `holds:review` in that ecosistema, or a platform admin.

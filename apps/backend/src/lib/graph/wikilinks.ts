@@ -48,6 +48,7 @@
  * Pure, no I/O (callers do the lookups). Unit-tested in `wikilinks.test.ts`.
  */
 
+import { titleIsGated } from '../contentKind'
 import { extractMarkdownLinks } from '../extract/markdown'
 
 import { isGraphNoiseLabel } from './noise'
@@ -130,9 +131,9 @@ const NEUTRAL_TITLES = new Set(['documento', 'documento sin titulo', 'testimonio
 /**
  * The note's title as a seed `tema`, or null.
  *
- * 🔴 For gated content (`gated`: a documento filed for anonymisation) the
- * title is the uploader's free text and never went through the gate, so it
- * must pass the same whole-word test as a link. An ungated documento's name is
+ * 🔴 For a gated title (`gated`: {@link titleIsGated}, so `anonymise` NULL or
+ * absent counts) the title is the uploader's free text and never went through
+ * the gate, so it must pass the same whole-word test as a link. An ungated documento's name is
  * already its public title everywhere (`titleFor`).
  */
 export function wikiSeedTitle(args: {
@@ -425,7 +426,11 @@ export function emptyExtraction(promptVersion: string): GraphExtraction {
  * ⚠ A Markdown FILE upload (`mediaFile`) is not read here: its bytes live in
  * storage and are extracted in the sandbox worker, which returns text only.
  *
- * `gated` is `rowMustPassGate(row)`; `corpusText` is `corpusTextFor(row).text`.
+ * `corpusText` is `corpusTextFor(row).text`.
+ *
+ * 🔴 The title follows the TITLE rule, {@link titleIsGated}: `anonymise` NULL
+ * or absent is a gated title (audit 2026-11-10), even where the body's rule
+ * (`rowMustPassGate`) reads NULL as open. Pass the row with `anonymise`.
  */
 export function wikiSeedsForRow(
   row: {
@@ -433,9 +438,9 @@ export function wikiSeedsForRow(
     contentKind?: unknown
     name?: unknown
     bodyMarkdown?: unknown
+    anonymise?: unknown
   },
   corpusText: string,
-  gated: boolean,
 ): WikiSeeds | null {
   if (row.kind !== 'markdown' || typeof row.bodyMarkdown !== 'string' || !row.bodyMarkdown.trim()) return null
   const contentKind = typeof row.contentKind === 'string' ? row.contentKind : null
@@ -444,7 +449,7 @@ export function wikiSeedsForRow(
   const title = wikiSeedTitle({
     contentKind,
     name: typeof row.name === 'string' ? row.name : null,
-    gated,
+    gated: titleIsGated(row.anonymise),
     corpusText,
   })
   return { title, links }
