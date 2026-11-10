@@ -57,7 +57,13 @@ interface DocRow {
   /** What the material IS. Decides the label and which text column is used. */
   contentKind?: string | null;
   ingestStatus?: string | null;
+  /** 🔴 P-13: a gated documento's title is its report's `redactedTitle` (`libraryTitleFor`). */
+  anonymise?: unknown;
+  anonymisationReport?: unknown;
 }
+
+/** 🔴 P-13: the title a row shows — a gated documento's redacted title, never `name`. */
+const titleOf = (r: DocRow): string => libraryTitleFor(r.contentKind, r.name, null, r);
 
 export interface ChatAdapterCtx {
   token: string | undefined;
@@ -90,8 +96,13 @@ export interface ChatAdapterCtx {
    * ⚠ Optional on purpose. `routes/api/context-search/+server.ts` builds this
    * adapter too, per keystroke, and has no such list; it must keep working, so
    * the fetch below stays as the fallback.
+   *
+   * 🔴 `null` = the caller TRIED and the read failed (I-08, audit 2026-11-10).
+   * Then there is no list: no fallback fetch (its rows carry the raw `name` of
+   * the caller's own testimonio), no document named in the summary, and no
+   * `@`-ref counted as this conversation's. Fail closed.
    */
-  documents?: readonly DocRow[];
+  documents?: readonly DocRow[] | null;
   /**
    * The ecosistema's languages (`GET /api/lenguas`), for one summary line that
    * answers "¿qué lenguas aparecen?" from the column rather than from whatever
@@ -101,6 +112,17 @@ export interface ChatAdapterCtx {
   lenguaFacets?: () => Promise<readonly LenguaFacet[]>;
   /** The turn's lengua filter, when one is set. Said in the summary. */
   lenguaFilter?: string;
+}
+
+/** Two ids are the same row (`7` and `'7'` alike); a missing id matches nothing. */
+function sameId(a: unknown, b: unknown): boolean {
+  if (a == null || b == null || a === '' || b === '') return false;
+  return String(a) === String(b);
+}
+
+/** A relationship at depth 0 (an id) or populated (`{ id }`). */
+function relId(v: unknown): unknown {
+  return v && typeof v === 'object' && 'id' in v ? (v as { id?: unknown }).id : v;
 }
 
 export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
@@ -150,9 +172,10 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
    */
   async function sessionDocuments(query: string, limit: number): Promise<DocRow[]> {
     const q = query.trim().toLowerCase();
+    if (ctx.documents === null) return [];
     if (ctx.documents) {
       const rows = q
-        ? ctx.documents.filter((d) => (d.name ?? '').toLowerCase().includes(q))
+        ? ctx.documents.filter((d) => titleOf(d).toLowerCase().includes(q))
         : ctx.documents;
       return rows.slice(0, limit);
     }
@@ -163,7 +186,9 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
     });
     if (query.trim()) qs.set('where[and][1][name][contains]', query.trim());
     const body = await getJson<{ docs?: DocRow[] }>(`/api/documents?${qs.toString()}`);
-    return body?.docs ?? [];
+    // 🔴 P-13: the backend matched `name`; a gated documento is kept only if its
+    // TITLE matches, so a raw filename is never an oracle for the `@` menu.
+    return (body?.docs ?? []).filter((d) => !q || titleOf(d).toLowerCase().includes(q));
   }
 
   return {
@@ -209,7 +234,7 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
               out.push({
                 kind: 'document',
                 id: r.id,
-                label: libraryTitleFor(r.contentKind, r.name),
+                label: titleOf(r),
                 sublabel: 'Documento adjunto',
               });
             }
@@ -225,6 +250,8 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
       if (ref.id == null) return '';
       try {
         if (ref.kind === 'org') {
+          // 🔴 I-10: only THIS conversation's ecosistema, whatever the browser sent.
+          if (!sameId(ref.id, ctx.organizationId)) return '';
           const r = await findById<OrgRow>('organizations', ref.id);
           if (!r) return '';
           return clamp(`Ecosistema: ${r.name}. ${r.description ?? ''}`, REF_BLOCK_MAX);
@@ -237,9 +264,23 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
               redactedText?: string | null;
               anonymisationStatus?: string | null;
               anonymise?: boolean | null;
+              organization?: unknown;
+              publicationStatus?: string | null;
             }
           >('documents', ref.id);
           if (!r) return '';
+          /**
+           * 🔴 I-10 (audit 2026-11-10): the browser's refs are scoped HERE. A
+           * ref reaches the prompt only if it is a document of this
+           * conversation, or published in this conversation's ecosistema.
+           * Another ecosistema's document, or a draft of another conversation,
+           * is dropped even when the caller may read it.
+           */
+          const inConversation =
+            Array.isArray(ctx.documents) && ctx.documents.some((d) => sameId(d.id, ref.id));
+          const publishedHere =
+            r.publicationStatus === 'published' && sameId(relId(r.organization), ctx.organizationId);
+          if (!inConversation && !publishedHere) return '';
           /**
            * 🔴 GATED CONTENT GOES INTO THE PROMPT AS `redactedText`, NEVER THE
            * ORIGINAL — not even for the uploader, who is the one caller the
@@ -251,7 +292,8 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
            * or `approved`, the backend's `corpusTextFor` rule. A held or
            * rejected row is sent with no text, even if a `redactedText` lingers.
            */
-          const title = libraryTitleFor(r.contentKind, r.name);
+          // 🔴 P-13: a gated documento's redacted title, never `name`.
+          const title = titleOf(r);
           const gateCleared = r.anonymisationStatus === 'ready' || r.anonymisationStatus === 'approved';
           const text = (
             // 🔴 A documento filed for anonymisation too (owner ruling 2026-10-26).
@@ -335,7 +377,8 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
       const docNames = docs
         .map(
           (d) =>
-            `${d.name}${
+            // 🔴 Neutral for gated kinds, never `undefined` (I-08 / L-12).
+            `${titleOf(d)}${
               d.ingestStatus && d.ingestStatus !== 'n/a' && d.ingestStatus !== 'ready'
                 ? ` (${d.ingestStatus})`
                 : ''

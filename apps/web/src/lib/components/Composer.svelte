@@ -153,16 +153,12 @@
   }
 
   /**
-   * On stop (`null`), the last live line lands in the input so the speaker can
-   * edit it and send it as a chat message. ⚠ Sending stores it ungated, like
-   * any typed message; only the uploaded recording goes through the gate.
+   * 🔴 Live text is shown while recording and dropped on stop (`null`). It
+   * never lands in the input, so it can't be sent or stored ungated (C-13,
+   * 2026-11-10); only the uploaded recording goes on, through the gate.
    */
   function onLiveText(line: string | null): void {
-    const last = liveText;
     liveText = line;
-    if (line !== null || !last || last === '…') return;
-    text = text.trim() ? `${text.trimEnd()} ${last}` : last;
-    queueMicrotask(() => textarea?.focus());
   }
 </script>
 

@@ -42,7 +42,8 @@
   let step = $state<UploadStep>('archivo');
   let file = $state<File | null>(null);
   let contentKind = $state<UploadContentKind>('documento');
-  let anonymise = $state(false);
+  /** 🔴 On by default for a `documento` (ADR-0020: the most protective value). */
+  let anonymise = $state(true);
   let uploading = $state(false);
   let dragging = $state(false);
   let error = $state<{ title: string; message: string } | null>(null);
@@ -54,7 +55,7 @@
     step = 'archivo';
     file = null;
     contentKind = 'documento';
-    anonymise = false;
+    anonymise = true;
     error = null;
     dragging = false;
   }

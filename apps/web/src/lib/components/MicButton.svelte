@@ -4,8 +4,8 @@
    * uploads as a normal audio document (same route, gate and titles).
    *
    * 🔴 The live text is raw, pre-gate testimony from `LiveUplink`. It lives in
-   * this component's state only, is shown to the speaker, and is dropped when
-   * the upload starts.
+   * the composer's state only, is shown to the speaker while recording, and is
+   * dropped on stop: it never reaches the chat input (C-13).
    *
    * Simulator (dev/test): `?simvoz=1` makes the button pick an audio file and
    * play it into the same recorder at real-time pace, instead of the mic.

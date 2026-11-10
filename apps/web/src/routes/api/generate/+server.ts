@@ -638,7 +638,8 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     corpora,
     organizationId,
     // Hand over the list we just read so the adapter does not fetch it again.
-    ...(sessionDocs.ok ? { documents: sessionDocs.docs } : {}),
+    // 🔴 `null` on a failed read: the adapter must not re-read it (I-08).
+    documents: sessionDocs.ok ? sessionDocs.docs : null,
     ...(lenguaFacets ? { lenguaFacets: () => lenguaFacets } : {}),
     ...(lengua.lengua ? { lenguaFilter: lengua.lengua } : {}),
   }));

@@ -102,8 +102,8 @@ async function stopAndExpectUpload(page: Page): Promise<void> {
   );
   await page.getByTestId('mic-stop').click();
   await expect(page.getByTestId('live-text')).toHaveCount(0);
-  // The last live line lands in the input, ready to send as a chat message.
-  await expect(page.getByTestId('composer-input')).toHaveValue(/Juchit/i);
+  // 🔴 Raw live text never lands in the input (C-13).
+  await expect(page.getByTestId('composer-input')).toHaveValue('');
   const res = await upload;
   // A request in flight at Stop must not bring the text back.
   await page.waitForTimeout(3_000);
