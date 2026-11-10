@@ -549,14 +549,21 @@ export const NO_TEXT_NOTICE =
 export const NO_CHECKED_TEXT_NOTICE = 'No hay texto revisado que aprobar. Puedes rechazarlo.';
 export const EDIT_TO_APPROVE = 'Para aprobarlo, corrige el texto.';
 
+/** A `verify` hold where the model reported a name it could not place (backend `VERIFY_UNLOCATED`). */
+const VERIFY_UNLOCATED =
+  /^La revisión automática señaló (?:un dato que no se pudo|\d+ datos que no se pudieron) ubicar en el texto\./;
+
 /**
  * True when this hold may only be approved with an edited text: a `content`
- * hold, or a `verify` hold whose verification never finished (ola 4). Mirrors
+ * hold, a `verify` hold whose verification never finished (ola 4), or one
+ * where the model reported a name it could not place (ola 11). Mirrors
  * `mustEditToApprove` in `apps/backend/src/lib/holdReview.ts`.
  */
 export function mustEditToApprove(stage: string | null | undefined, reason?: string | null): boolean {
   if (stage === 'content') return true;
-  return stage === 'verify' && (reason ?? '').startsWith('La segunda revisión automática no pudo terminar');
+  if (stage !== 'verify') return false;
+  const r = reason ?? '';
+  return r.startsWith('La segunda revisión automática no pudo terminar') || VERIFY_UNLOCATED.test(r);
 }
 
 /** Words and numbers only, case- and width-folded. Mirrors the backend's `readingOf`. */
