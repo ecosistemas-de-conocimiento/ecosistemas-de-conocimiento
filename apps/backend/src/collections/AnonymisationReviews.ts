@@ -27,8 +27,13 @@
  * conversation delete takes a HELD document with it, that document's rows go
  * too (`lib/conversationUploads.ts`), so no reviewer item points at nothing.
  * Rows of a `rejected` or `approved` document keep the document alive instead.
- * (The `document` foreign key is `ON DELETE cascade` anyway, baseline
- * migration, so any other document delete takes its rows with it as well.)
+ *
+ * 🔴 ANY OTHER DOCUMENT DELETE KEEPS ANOTHER PERSON'S DECISION (owner decision
+ * 2026-11-10). The `document` foreign key is `ON DELETE set null`
+ * (`20261110_181621_consent_held_reviews_keep`), and `documentIdSnapshot`
+ * keeps which document it was. Only the deleting user's own rows go with the
+ * document (`deleteOwnReviewRows` in `collections/Documents.ts`): uploading
+ * your own document does not let you erase what a reviewer decided about it.
  *
  * ── 🔴 WHAT IS NOT HERE, AND WILL NOT BE ─────────────────────────────────────
  *
@@ -46,7 +51,7 @@
 import type { CollectionBeforeOperationHook, CollectionConfig } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
-import { organizationIdsForUserWithPermission, PERMISSIONS } from '../lib/permissions'
+import { organizationIdsForUserWithPermission, PERMISSIONS, relationId } from '../lib/permissions'
 
 /** What a reviewer decided. Two outcomes, no third. */
 export const REVIEW_DECISIONS = ['approved', 'rejected'] as const
@@ -63,6 +68,14 @@ export const AnonymisationReviews: CollectionConfig = {
       'Every human decision on a document the anonymisation gate held. Append-only.',
   },
   hooks: {
+    // The snapshot is the document id at decision time, whoever writes the row.
+    beforeChange: [
+      ({ data, operation }) => {
+        if (operation !== 'create' || !data) return data
+        const id = relationId(data.document)
+        return { ...data, documentIdSnapshot: id == null ? null : Number(id) }
+      },
+    ],
     /**
      * 🔴 `where[document.name]` / `sort=document.name` reach the gated
      * `documents.name` through the relationship, and the narrowing on
@@ -120,12 +133,22 @@ export const AnonymisationReviews: CollectionConfig = {
   },
   fields: [
     {
+      /**
+       * 🔴 NULL ONCE THE DOCUMENT IS DELETED (`ON DELETE set null`): the
+       * decision outlives it. See the file header.
+       */
       name: 'document',
       type: 'relationship',
       relationTo: 'documents',
-      required: true,
       index: true,
       admin: { description: 'The held document this decision was about.' },
+    },
+    {
+      /** The document's id when the decision was made; survives its delete. */
+      name: 'documentIdSnapshot',
+      type: 'number',
+      index: true,
+      admin: { readOnly: true },
     },
     {
       /**

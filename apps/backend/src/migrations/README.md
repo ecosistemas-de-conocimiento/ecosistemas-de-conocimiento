@@ -26,6 +26,7 @@ The chain since then:
 | `20261104_075139_documents_authors_kept` | `documents.authors_kept jsonb` (nullable) — the reviewers' log of the document's actual author (the uploader's membership `personName`) as the gate left them in `redacted_text`, as `{ name, model, at }[]`; NULL on a hold or when none was kept | Generated. No backfill: rows gated earlier keep their authors redacted, and a re-run of the gate fills it |
 | `20261108_001902_documents_anonymise_switches` | `documents.keep_document_author boolean`, `documents.keep_cited_authors boolean` (nullable; NULL = the ecosistema's `keepDocumentAuthor` / `keepCitedAuthors`, both off by default), `documents.cited_authors_kept jsonb` (the cited names the gate left in `redacted_text`, `{ name, model, at }[]`) and `anonymisation_setting_changes` (append-only audit of every switch change: ecosistema, document, actor, scope, key, before, after) | 🔴 SQL: the `organization_id` FK is `ON DELETE cascade` (generated `set null` on NOT NULL; the `.json` still says `set null`); `down` drops the `payload_locked_documents_rels` constraint before the table (generated order failed). No backfill. Up/down/up + `migrate:create` = "No schema changes" measured on a throwaway postgres:16-alpine 2026-11-07 |
 | `20261110_070204_anonymisation_setting_changes_keys` | `enum_anonymisation_setting_changes_key` gains `keepPublicFigures` and `detectorFallback`; `enum_anonymisation_setting_changes_scope` gains `plataforma`; `anonymisation_setting_changes.organization_id` nullable (a platform change has no ecosistema). Audit 2026-11-10 P-04/I-13 | 🔴 SQL: `down` first deletes the rows only the new values can hold (audit rows lost: throwaway databases only). No backfill. Up/down/up (with a `plataforma` row present at down) + `migrate:create` = "No schema changes" measured on a throwaway postgres:16-alpine 2026-11-10 |
+| `20261110_181621_consent_held_reviews_keep` | `documents.consent_held boolean DEFAULT false NOT NULL` — retenido por consentimiento (`lib/consentHold.ts`; held rows are never re-ingested, re-gated, graphed or published); `anonymisation_reviews.document_id` nullable with its FK `ON DELETE set null` (was `cascade`, baseline) and `document_id_snapshot numeric` (+ index): a document delete keeps another person's decision (owner decisions 2026-11-10) | 🔴 SQL: the FK rewrite to `set null` and the snapshot backfill (generated: only `DROP NOT NULL`); here the `.json` agrees with the database (`set null`). `down` first deletes the review rows whose document is gone (audit rows lost: throwaway databases only). No backfill of `consent_held`: the workshop rows are held by `scripts/hold-for-consent.ts`. Up/down/up (with an orphaned review present at down) in `lib/consentHold.pg.test.ts`, the full chain by `payload migrate` on a fresh postgres:16-alpine, and `migrate:create --skip-empty` = no file, measured 2026-11-10 |
 
 ⚠ A migration file is frozen once committed, comments included. Nothing had ever been deployed
 — no CI, no deploy script, and `edc_backend` on `localhost:45432` was the only
@@ -247,6 +248,13 @@ between CASCADE (deleting an ecosistema deletes its corpus) and RESTRICT (a
 readable refusal), and that is a product decision, not a migration cleanup.
 Verified on the scratch database: `DELETE FROM organizations` fails on
 `memberships.organization_id` before it reaches anything else.
+
+⚠ **Since `20261110_181621_consent_held_reviews_keep` the `document_id` FK is
+`ON DELETE set null` again, on purpose and correctly this time**: the column is
+nullable now, and a document delete keeps another person's review row
+(`document_id_snapshot` keeps the id; owner decision 2026-11-10). The deleting
+user's own rows are deleted by a `beforeDelete` hook (`collections/Documents.ts`),
+not by the database. The `organization_id` and `reviewer_id` FKs stay `cascade`.
 
 ## 🔴 The ratings foreign keys are hand-written too (2026-10-20)
 
