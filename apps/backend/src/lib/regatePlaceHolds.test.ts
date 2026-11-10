@@ -90,6 +90,27 @@ describe('regatePlaceOnlyHolds', () => {
     hold(4, { organization: 3 }),
   ]
 
+  it('🔴 a row held for consent is never reset or gated (query, per row, and a fresh read before the reset)', async () => {
+    const db = fakeDb([hold(1, { consentHeld: true }), hold(4, { organization: 3 })])
+    const gate = vi.fn()
+    const report = await regatePlaceOnlyHolds(db.payload as never, { apply: true, gate })
+    const where = (db.payload.find.mock.calls[0] as unknown as [{ where: { and: unknown[] } }])[0].where.and
+    expect(where).toContainEqual({ consentHeld: { not_equals: true } })
+    expect(gate.mock.calls.map((c) => c[1])).toEqual(['4'])
+    expect(report).toMatchObject({ matched: 1, regated: 1, ids: ['4'] })
+    expect(db.store[0]!.anonymisationStatus).toBe('held')
+
+    // Held between the read and the reset: the fresh read stops it.
+    const late = fakeDb([hold(1)])
+    ;(late.payload as { db: unknown }).db = {
+      drizzle: { execute: vi.fn(async () => ({ rows: [{ consent_held: true }] })) },
+    }
+    const gate2 = vi.fn()
+    expect(await regatePlaceOnlyHolds(late.payload as never, { apply: true, gate: gate2 })).toMatchObject({ regated: 0 })
+    expect(gate2).not.toHaveBeenCalled()
+    expect(late.store[0]!.anonymisationStatus).toBe('held')
+  })
+
   it('dry run lists, writes nothing, gates nothing', async () => {
     const db = fakeDb(rows())
     const gate = vi.fn()

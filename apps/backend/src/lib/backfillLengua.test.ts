@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { NOT_CONSENT_HELD } from './consentHold'
 import { BACKFILL_WHERE, backfillLengua, type BackfillCandidate, type LenguaIngester } from './backfillLengua'
 
 function fakePayload(docs: BackfillCandidate[]) {
@@ -45,6 +46,7 @@ describe('backfillLengua (C-3)', () => {
     const args = payload.find.mock.calls[0]![0] as unknown as { where: { and: unknown[] }; sort: string }
     expect(args.where.and).toEqual([
       ...BACKFILL_WHERE,
+      NOT_CONSENT_HELD,
       { organization: { equals: 3 } },
       { id: { greater_than: 40 } },
     ])
@@ -72,6 +74,15 @@ describe('backfillLengua (C-3)', () => {
     // Paced: one pause between two enqueues.
     expect(sleep).toHaveBeenCalledTimes(1)
     expect(sleep).toHaveBeenCalledWith(500)
+  })
+
+  it('🔴 a row held for consent: excluded by the query, and skipped per row when a payload ignores it', async () => {
+    const { calls, clientFor } = fakeClients()
+    const payload = fakePayload([{ ...DOC, consentHeld: true }, { ...DOC, id: 12, consentHeld: false }])
+    const report = await backfillLengua(payload as never, clientFor, { apply: true, delayMs: 0 })
+    expect((payload.find.mock.calls[0]![0] as { where: { and: unknown[] } }).where.and).toContainEqual(NOT_CONSENT_HELD)
+    expect(calls.map((c) => c.req.documents[0]!.id)).toEqual(['12'])
+    expect(report).toMatchObject({ enqueued: 1, skipped: 1, skippedIds: ['11'] })
   })
 
   it('skips a gated or text-less row instead of publishing the original', async () => {

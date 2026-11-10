@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TITLE_BACKFILL_WHERE, backfillTestimonioTitles, titleSourceOf } from './backfillTestimonioTitles'
+import { NOT_CONSENT_HELD } from './consentHold'
 import { invalidateFeatures } from './features'
 import type { TitleGenerator, TitleStore } from './testimonioTitle'
 
@@ -76,10 +77,34 @@ describe('backfillTestimonioTitles', () => {
     const p = fakePayload([])
     await backfillTestimonioTitles(p as never, () => fakes([]).client, { organizationId: 2 })
     const where = (p.find.mock.calls[0]![0] as { where: { and: unknown[] } }).where.and
-    expect(where).toEqual([...TITLE_BACKFILL_WHERE, { organization: { equals: 2 } }])
+    expect(where).toEqual([...TITLE_BACKFILL_WHERE, NOT_CONSENT_HELD, { organization: { equals: 2 } }])
     const p2 = fakePayload([])
     await backfillTestimonioTitles(p2 as never, () => fakes([]).client, { force: true })
-    expect((p2.find.mock.calls[0]![0] as { where: { and: unknown[] } }).where.and).toEqual(TITLE_BACKFILL_WHERE)
+    expect((p2.find.mock.calls[0]![0] as { where: { and: unknown[] } }).where.and).toEqual([
+      ...TITLE_BACKFILL_WHERE,
+      NOT_CONSENT_HELD,
+    ])
+  })
+
+  it('🔴 a row held for consent never reaches the model: query excludes it, and the per-row guard when a payload ignores the where', async () => {
+    const { client, sync, store, writes } = fakes(['Una madre pide intérprete de señas'])
+    const p = fakePayload([{ ...READY, consentHeld: true }, { ...HELD, consentHeld: true }])
+    const report = await backfillTestimonioTitles(p as never, () => client, { apply: true, store })
+    const args = p.find.mock.calls[0]![0] as { where: { and: unknown[] }; select: Record<string, unknown> }
+    expect(args.where.and).toContainEqual(NOT_CONSENT_HELD)
+    // The guard reads the column, so the select must bring it.
+    expect(args.select.consentHeld).toBe(true)
+    expect(sync).not.toHaveBeenCalled()
+    expect(writes).toHaveLength(0)
+    expect(report).toMatchObject({ candidates: 0, written: 0 })
+    // Control: the same row, not held, is titled.
+    const ok = fakes(['Una madre pide intérprete de señas'])
+    const r2 = await backfillTestimonioTitles(fakePayload([{ ...READY, consentHeld: false }]) as never, () => ok.client, {
+      apply: true,
+      store: ok.store,
+    })
+    expect(ok.sync).toHaveBeenCalled()
+    expect(r2.candidates).toBe(1)
   })
 
   it('🔴 also picks titled rows whose title predates their text: approved rows, and titles the current rules refuse', async () => {

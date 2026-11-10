@@ -83,7 +83,10 @@ const MONTHS = [
 const ISO_DATE =
   /(?<![A-Za-z0-9])(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?(?![A-Za-z0-9])/g
 
-/** `15/08/2026`, `15-08-2026`, `3/3/26` → `08/2026`. Day-first: this is es-MX. */
+/**
+ * `15/08/2026`, `15-08-2026` → `08/2026`; `3/3/26` → `03/26`. Day-first: this
+ * is es-MX. The year stays as written, like {@link DOT_DATE}.
+ */
 const SLASH_DATE = /(?<![A-Za-z0-9])(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?![A-Za-z0-9])/g
 
 /**
@@ -133,6 +136,15 @@ const YMD_DATE = /(?<![A-Za-z0-9]|\d[./-])((?:19|20)\d{2})([/.-])(\d{1,2})\2(\d{
  */
 const DOT_DATE = /(?<![A-Za-z0-9]|\d\.)(?:(\d{1,2})\.(\d{1,2})\.((?:19|20)\d{2})|(\d{2})\.(\d{2})\.(\d{2}))(?![A-Za-z0-9]|\.\d)/g
 
+/**
+ * `3-V-1990`, `3.v.90`, `03/XII/1990` → `V-1990`, `v.90`, `XII/1990` (ola 11,
+ * carril B). A Roman month, I to XII in either case, between a day and a 2- or
+ * 4-digit year with the same separator both times. With no day or no year it
+ * is not read: "Capítulo IV", "Carlos V", "art. 3-IV".
+ */
+const ROMAN_DATE =
+  /(?<![A-Za-z0-9]|\d[./-])(\d{1,2})([./-])(XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)\2(\d{4}|\d{2})(?![A-Za-z0-9]|\2\d)/gi
+
 const validDayMonth = (day: string, month: string): boolean =>
   Number(day) >= 1 && Number(day) <= 31 && Number(month) >= 1 && Number(month) <= 12
 
@@ -152,6 +164,45 @@ const validDayMonth = (day: string, month: string): boolean =>
  */
 const DAY_MONTH = new RegExp(
   String.raw`(?<![\p{L}\p{M}\p{N}])${DAY_RANGE}(?:\d{1,2}(?:[º°ª]|o(?=\s))?|primero)\s+(?:de\s+)?(?=(?:${MONTHS.join('|')})(?![\p{L}\p{M}]))`,
+  'giu',
+)
+
+/*
+ * ── OLA 11 (carril B, 2026-11-10): MORE FORMS OF THE SAME DATE ──────────────
+ *
+ * Same policy: the DAY goes, month and year stay as written; glued into an
+ * identifier by `-`/`_`, the date goes whole (D2). ⚠ AN ABBREVIATION IS ALSO A
+ * WORD ("el mar", "may" in English, "dic." alone), so an abbreviated month is
+ * read only in a whole date: a day before it AND a year after it.
+ */
+const MONTH_ABBREVIATIONS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'sep', 'set', 'oct', 'nov', 'dic']
+const ANY_MONTH = `(?:${[...MONTHS, ...MONTH_ABBREVIATIONS].join('|')})`
+const ABBREVIATION = `(?:${MONTH_ABBREVIATIONS.join('|')})`
+
+/**
+ * `3-mayo-1990`, `03/MAY/1990`, `3.sept.90`, `3-mayo` → `mayo-1990`,
+ * `MAY/1990`, `sept.90`, `mayo`. A month in words between a day and a year,
+ * the same separator both times. With no year only a whole month name counts
+ * (`3-mar` is not read).
+ */
+const SEP_MONTH_DATE = new RegExp(
+  String.raw`(?<![A-Za-z0-9]|\d[./-])(\d{1,2})([./-])(${ANY_MONTH})(?:\2(\d{4}|\d{2}))?(?![\p{L}\p{M}0-9]|[./-]\d)`,
+  'giu',
+)
+
+/** `3 may 1990`, `3 de sept. de 1990` → `may 1990`, `sept. de 1990`. Day and year both required. */
+const DAY_ABBREVIATION = new RegExp(
+  String.raw`(?<![\p{L}\p{M}\p{N}])(\d{1,2})\s+(?:de\s+)?(?=${ABBREVIATION}\.?\s+(?:de[l]?\s+)?(?:\d{4}|\d{2})(?![\p{L}\p{M}\p{N}]))`,
+  'giu',
+)
+
+/**
+ * `mayo 3, 1990`, `may. 3 1990`, `mayo 3 de 1990` → `mayo 1990`, `may. 1990`,
+ * `mayo de 1990`. Month first, then the day, then a FOUR-digit year: "mayo 3,
+ * 90 personas" is not read.
+ */
+const MONTH_DAY_YEAR = new RegExp(
+  String.raw`(?<![\p{L}\p{M}])(${ANY_MONTH}\.?)\s+(\d{1,2})(?:\s*,)?(\s+)(?=(?:de[l]?\s+)?\d{4}(?![\p{L}\p{M}\p{N}]))`,
   'giu',
 )
 /** The word right before a day, with its abbreviation dot if it has one. */
@@ -183,6 +234,20 @@ export const LABEL_CURP = 'curp'
  * edges are `[A-Za-z0-9]`, like the dates (D2).
  */
 const CURP = /(?<![A-Za-z0-9])[A-Za-z]{4}\d{6}[HhMm][A-Za-z]{5}[A-Za-z0-9]\d(?![A-Za-z0-9])/g
+
+/**
+ * A CURP split into its blocks by spaces or hyphens (ola 11, carril B):
+ * `GOMA 900503 HDFRRN 09`, `GOMA-900503-HDFRRN-09`. Runs after {@link CURP}.
+ * A separator widens what can match, so this form is narrower: the six digits
+ * must be a YYMMDD date (checked in the replace) and the three letters after
+ * the state code consonants, as in a real CURP. "PAGO 200101 HOTELS 12" is not one.
+ */
+const CURP_SEP = String.raw`(?:[ \t]*-[ \t]*|[ \t]+)?`
+const CURP_CONSONANT = '[B-DF-HJ-NP-TV-Zb-df-hj-np-tv-z]'
+const CURP_SPLIT = new RegExp(
+  String.raw`(?<![A-Za-z0-9])[A-Za-z]{4}${CURP_SEP}(\d{6})${CURP_SEP}[HhMm][A-Za-z]{2}${CURP_CONSONANT}{3}${CURP_SEP}[A-Za-z0-9]\d(?![A-Za-z0-9])`,
+  'g',
+)
 
 /**
  * A UUID in any casing, with or without dashes in the canonical positions.
@@ -638,6 +703,11 @@ export function structuralPass(
     curps += 1
     return OMITTED_PLACEHOLDER
   })
+  out = out.replace(CURP_SPLIT, (m: string, yymmdd: string) => {
+    if (!validDayMonth(yymmdd.slice(4, 6), yymmdd.slice(2, 4))) return m
+    curps += 1
+    return OMITTED_PLACEHOLDER
+  })
 
   out = out.replace(ISO_DATE, (m: string, year: string, month: string, _day: string, at: number, whole: string) => {
     dates += 1
@@ -655,12 +725,28 @@ export function structuralPass(
   out = out.replace(SLASH_DATE, (m: string, _day: string, month: string, year: string, at: number, whole: string) => {
     dates += 1
     if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
-    // Two-digit years are read as 20xx. A testimony about 1998 written `3/3/98`
-    // would come out `03/2098`, which is wrong but NOT a leak — and inventing a
-    // century cutoff here would be a guess dressed as precision.
-    const yyyy = year.length === 4 ? year : `20${year.padStart(2, '0')}`
-    return `${month.padStart(2, '0')}/${yyyy}`
+    // 🔴 The year stays as written (ola 11): `3/3/98` used to become `03/2098`,
+    // a century guessed, and a wrong one. `DOT_DATE` already kept `05.90`.
+    return `${month.padStart(2, '0')}/${year}`
   })
+
+  out = out.replace(ROMAN_DATE, (m: string, day: string, sep: string, month: string, year: string, at: number, whole: string) => {
+    if (!validDayMonth(day, '1')) return m
+    dates += 1
+    if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
+    return `${month}${sep}${year}`
+  })
+
+  out = out.replace(
+    SEP_MONTH_DATE,
+    (m: string, day: string, sep: string, month: string, year: string | undefined, at: number, whole: string) => {
+      const abbreviation = !MONTHS.includes(month.toLowerCase() as (typeof MONTHS)[number])
+      if (!validDayMonth(day, '1') || (abbreviation && year === undefined)) return m
+      dates += 1
+      if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
+      return year === undefined ? month : `${month}${sep}${year}`
+    },
+  )
 
   out = out.replace(
     DOT_DATE,
@@ -689,6 +775,18 @@ export function structuralPass(
     if (month === month.toUpperCase() && place && !year) return m
     dates += 1
     return ''
+  })
+
+  out = out.replace(DAY_ABBREVIATION, (m: string, day: string) => {
+    if (!validDayMonth(day, '1')) return m
+    dates += 1
+    return ''
+  })
+
+  out = out.replace(MONTH_DAY_YEAR, (m: string, month: string, day: string, space: string) => {
+    if (!validDayMonth(day, '1')) return m
+    dates += 1
+    return `${month}${space}`
   })
 
   out = out.replace(UUID, () => {

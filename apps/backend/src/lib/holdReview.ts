@@ -371,7 +371,7 @@ export async function listHeldDocuments(args: {
  * every third-party name in it. Its text is never shown and it is never
  * approved, with or without an "edit": the only way out is to reject it.
  */
-const MODEL_NEVER_RAN = 'La revisión automática no pudo terminar'
+export const MODEL_NEVER_RAN = 'La revisión automática no pudo terminar'
 function modelNeverRan(stage: string | null, reason: string | null): boolean {
   return stage === 'content' && typeof reason === 'string' && reason.startsWith(MODEL_NEVER_RAN)
 }
@@ -388,9 +388,21 @@ function verifyNeverFinished(stage: string | null, reason: string | null): boole
   return stage === 'verify' && typeof reason === 'string' && reason.startsWith(VERIFY_NEVER_FINISHED)
 }
 
+/**
+ * 🔴 A `verify` hold where the model reported a name it could not place in the
+ * text (`gate.ts` `unlocatableSentence`, ola 11 item 5): nothing says where, or
+ * whether, that name is still in `heldText`. Like an unfinished verify: approved
+ * only with a real edit. Matched on the exact wording `gate.ts` writes (singular
+ * and plural); kept in step with `apps/web/src/lib/holds.ts`.
+ */
+const VERIFY_UNLOCATED = /^La revisión automática señaló (?:un dato que no se pudo|\d+ datos que no se pudieron) ubicar en el texto\./
+function verifyUnlocated(stage: string | null, reason: string | null): boolean {
+  return stage === 'verify' && typeof reason === 'string' && VERIFY_UNLOCATED.test(reason)
+}
+
 /** True when this hold may only leave with an edited text (or a rejection). */
 function mustEditToApprove(stage: string | null, reason: string | null): boolean {
-  return stage === 'content' || verifyNeverFinished(stage, reason)
+  return stage === 'content' || verifyNeverFinished(stage, reason) || verifyUnlocated(stage, reason)
 }
 
 /**

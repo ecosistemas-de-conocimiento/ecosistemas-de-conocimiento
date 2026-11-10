@@ -62,6 +62,8 @@ export type AutoPublishSkip =
   | 'graph-pending'
   | 'busy'
   | 'withdrawn'
+  /** 🔴 The note or its revision is held for consent (`lib/consentHold.ts`): nothing sent, nothing written. */
+  | 'consent-held'
 
 export type AutoPublishOutcome = { published: true } | { published: false; reason: AutoPublishSkip }
 
