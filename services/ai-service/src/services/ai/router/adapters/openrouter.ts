@@ -20,19 +20,38 @@ import { priceForUsage } from '../task-profiles.js';
 /**
  * Inactivity/stall backstop for the streaming read loop. A provider that stops
  * sending frames mid-stream (but holds the socket open) is the realistic hang
- * the total wall-clock cap is too coarse to catch quickly. We arm a per-read
- * timer; if no frame arrives within `LLM_STREAM_STALL_TIMEOUT_MS`, we abort an
+ * the total wall-clock cap is too coarse to catch quickly. We arm a timer that
+ * only MODEL OUTPUT resets (a `delta.content` or `delta.reasoning` chunk); if
+ * none arrives within `LLM_STREAM_STALL_TIMEOUT_MS`, we abort an
  * internal controller chained (via `AbortSignal.any`) onto the caller's signal,
  * which unblocks `reader.read()`. `streamingCallOpenRouter` wraps it in
  * `OpenRouterAbortError` with the `TimeoutError` DOMException as `cause`, and
  * the router ends the call as an UNBILLED `ProviderTimeout` (504) — a stall is
  * our timeout, not a disconnect (decision, see provider-timeout.ts).
  *
+ * 🔴 KEEPALIVES DO NOT RESET IT. OpenRouter holds a slow call open with SSE
+ * comment lines (`: OPENROUTER PROCESSING`), and an empty-delta chunk carries
+ * no text either. Measured on dev 2026-11-10: streams that sent only those
+ * waited 58 s, because every byte re-armed the timer. Now the window counts
+ * from the response head (or the last output chunk), not from the last byte.
+ *
  * Read at call time (not module load) so tests can vary it per case and so a
  * config reload would take effect without a restart.
  */
 function stallTimeoutMs(): number {
   return env.LLM_STREAM_STALL_TIMEOUT_MS;
+}
+
+/**
+ * The window BEFORE the first output chunk, when it is longer than the stall
+ * window. A slow provider holds the socket with keepalives and only then
+ * starts: on dev 2026-11-10 one answer's first token came at 58.3 s and it
+ * still finished (measured), which a 45 s stall window from the response head
+ * would have cut. 0 or unset = the stall window alone.
+ */
+function firstOutputTimeoutMs(): number {
+  const ms = (env as { LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS?: number }).LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS;
+  return Number.isFinite(ms) && (ms as number) > 0 ? (ms as number) : 0;
 }
 
 // Config-driven like `EMBEDDINGS_URL`. Read once at module load from the
@@ -180,6 +199,25 @@ interface OpenRouterApiResponse {
     cost?: number;
   };
   error?: { message?: string; code?: string | number };
+}
+
+/**
+ * An error reported INSIDE a 200 stream: a frame carrying `error`, or a chunk
+ * whose `finish_reason` is `error`. OpenRouter sends the first when the
+ * upstream fails after the response head is out (its docs, "Streaming", error
+ * handling). Both become a status-bearing `error` event, so
+ * `streamingCallOpenRouter` raises an `OpenRouterHttpError` the retry ladder
+ * can judge. A numeric `error.code` in the HTTP range is that status; anything
+ * else is a 502, which the ladder treats as transient — the router still never
+ * retries once text has reached the client.
+ */
+function inStreamError(evt: OpenRouterApiResponse): { message: string; status: number } | undefined {
+  const finishedWithError = evt.choices?.[0]?.finish_reason === 'error';
+  if (!evt.error && !finishedWithError) return undefined;
+  const code = evt.error?.code;
+  const status = typeof code === 'number' && code >= 400 && code <= 599 ? code : 502;
+  const msg = evt.error?.message ?? 'finish_reason=error';
+  return { message: `OpenRouter stream error (${code ?? status}): ${msg}`, status };
 }
 
 /** Typed error thrown for non-OK HTTP / OpenRouter error envelopes. */
@@ -364,6 +402,16 @@ export async function callOpenRouter(
   }
 
   const choice = parsed.choices?.[0];
+  // Same rule as the stream (`inStreamError`): a 200 whose choice finished with
+  // `error` is a failed generation, not an answer. An EMPTY answer is checked
+  // once for every adapter, in the router (`empty-completion.ts`).
+  if (choice?.finish_reason === 'error') {
+    throw new OpenRouterHttpError({
+      status: 502,
+      message: 'OpenRouter error (502): finish_reason=error',
+      bodySnippet: text.slice(0, 200),
+    });
+  }
   const contentText = choice?.message?.content?.toString() ?? '';
   const promptTokens = parsed.usage?.prompt_tokens ?? 0;
   const completionTokens = parsed.usage?.completion_tokens ?? 0;
@@ -446,17 +494,17 @@ export async function* callOpenRouterStream(
       : stallCtrl.signal
     : opts.signal;
   let stallTimer: ReturnType<typeof setTimeout> | undefined;
-  const armStallTimer = (): void => {
+  const armStallTimer = (ms: number = stallMs): void => {
     if (!stallEnabled) return;
     if (stallTimer) clearTimeout(stallTimer);
     stallTimer = setTimeout(() => {
       stallCtrl.abort(
         new DOMException(
-          `OpenRouter stream stalled: no frame for ${stallMs}ms`,
+          `OpenRouter stream stalled: no model output for ${ms}ms`,
           'TimeoutError',
         ),
       );
-    }, stallMs);
+    }, ms);
     (stallTimer as { unref?: () => void }).unref?.();
   };
   const clearStallTimer = (): void => {
@@ -492,12 +540,14 @@ export async function* callOpenRouterStream(
   let finishReason: string | null = null;
   let generationId: string | undefined;
 
+  let streamError: { message: string; status: number } | undefined;
+
   try {
-  armStallTimer();
-  while (true) {
+  // Until the first output chunk the window is the longer of the two.
+  armStallTimer(Math.max(stallMs, firstOutputTimeoutMs()));
+  read: while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    armStallTimer(); // saw a frame — reset the inactivity window
     buffer += decoder.decode(value, { stream: true });
 
     // SSE frames are `data: …\n\n`.
@@ -509,29 +559,45 @@ export async function* callOpenRouterStream(
         if (!line.startsWith('data:')) continue;
         const payload = line.slice(5).trim();
         if (!payload || payload === '[DONE]') continue;
+        let evt: OpenRouterApiResponse;
         try {
-          const evt = JSON.parse(payload) as OpenRouterApiResponse;
-          if (generationId === undefined && typeof evt.id === 'string' && evt.id.length > 0) {
-            generationId = evt.id;
-            yield { type: 'meta', generationId };
-          }
-          if (evt.usage) {
-            promptTokens = evt.usage.prompt_tokens ?? promptTokens;
-            completionTokens = evt.usage.completion_tokens ?? completionTokens;
-            if (typeof evt.usage.cost === 'number') reportedCost = evt.usage.cost;
-          }
-          if (evt.model) model = evt.model;
-          const choice = evt.choices?.[0];
-          if (choice?.finish_reason) finishReason = choice.finish_reason;
-          // In stream chunks, content lives at choices[0].delta.content (not message.content).
-          const delta = (choice as unknown as { delta?: { content?: string } } | undefined)?.delta;
-          if (delta?.content) yield { type: 'delta', text: delta.content };
+          evt = JSON.parse(payload) as OpenRouterApiResponse;
         } catch {
           // TODO(M3.6): wire to fastify logger
           // skip malformed frame
+          continue;
         }
+        streamError = inStreamError(evt);
+        if (streamError) break read;
+        if (generationId === undefined && typeof evt.id === 'string' && evt.id.length > 0) {
+          generationId = evt.id;
+          yield { type: 'meta', generationId };
+        }
+        if (evt.usage) {
+          promptTokens = evt.usage.prompt_tokens ?? promptTokens;
+          completionTokens = evt.usage.completion_tokens ?? completionTokens;
+          if (typeof evt.usage.cost === 'number') reportedCost = evt.usage.cost;
+        }
+        if (evt.model) model = evt.model;
+        const choice = evt.choices?.[0];
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
+        // In stream chunks, content lives at choices[0].delta.content (not message.content).
+        const delta = (
+          choice as unknown as { delta?: { content?: string; reasoning?: string } } | undefined
+        )?.delta;
+        // Model output — text or reasoning — is the only thing that proves
+        // progress, so it is the only thing that resets the stall window.
+        if (delta?.content || delta?.reasoning) armStallTimer();
+        if (delta?.content) yield { type: 'delta', text: delta.content };
       }
     }
+  }
+
+  if (streamError) {
+    // Stop reading: the provider has said this generation failed.
+    await reader.cancel().catch(() => undefined);
+    yield { type: 'error', ...streamError };
+    return;
   }
 
   let costUsd: number;

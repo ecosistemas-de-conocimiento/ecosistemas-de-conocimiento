@@ -355,6 +355,14 @@ export const ROUTES: readonly RouteRow[] = [
       ),
       402: BUDGET_402,
       499: CLIENT_CLOSED_499,
+      502: {
+        description:
+          'The provider answered with no text on every attempt of the bounded ' +
+          'retry ladder. Not billed, not cached. `code: ERR_EMPTY_COMPLETION`; ' +
+          'on `/v1/generate/stream` the same failure is the error frame ' +
+          '`code: EmptyCompletion`.',
+        schema: C.EmptyCompletionBody,
+      },
       503: PROVIDER_UNAVAILABLE_503,
       504: {
         description:

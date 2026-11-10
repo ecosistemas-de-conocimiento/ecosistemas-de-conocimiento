@@ -497,13 +497,21 @@ const envSchema = z.object({
   WORKER_LOCK_DURATION_MS: z.coerce.number().int().positive().optional(),
 
   /**
-   * Inactivity/stall backstop on a streaming provider call: if no delta (or any
-   * SSE frame) arrives for this many ms, abort the stream. A stalled stream is
+   * Inactivity/stall backstop on a streaming provider call: if no model output
+   * (a text or reasoning delta) arrives for this many ms, abort the stream.
+   * Keepalive comments and empty chunks do NOT reset it. A stalled stream is
    * the more realistic hang than a slow-but-progressing one, so this default
    * (45s) is much tighter than the total cap above. Only applies to the
    * streaming adapter's read loop. Set to 0 to disable.
    */
   LLM_STREAM_STALL_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(45_000),
+  /**
+   * Stream window before the FIRST output chunk, when longer than the stall
+   * window (`adapters/openrouter.ts`). 120 000 ms is inferred: twice the slowest
+   * first token that still produced an answer on dev on 2026-11-10 (58.3 s,
+   * measured). 0 = the stall window alone. Still under LLM_REQUEST_TIMEOUT_MS.
+   */
+  LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(120_000),
 
   /**
    * Callback SSRF guard — local/docker-network escape hatch. OFF by default.

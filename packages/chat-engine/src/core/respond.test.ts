@@ -6,6 +6,7 @@ import { retrieveContext } from './retrieve.js';
 import { syncEntity, backfillScope, CorpusSyncError } from './corpus-sync.js';
 import { generateThreadTitle } from './title.js';
 import { DEFAULT_ENGINE_CONFIG } from './config.js';
+import { EMPTY_ANSWER_CODE, EmptyAnswerError } from './generation.js';
 import type {
   AIClient,
   RetrieveRequest,
@@ -601,6 +602,18 @@ describe('respond() orchestrator', () => {
       expect(res.summaryText).toBe('');
     } finally {
       warnings.restore();
+    }
+  });
+
+  it('an empty or whitespace-only answer throws EmptyAnswerError, never a successful empty message', async () => {
+    for (const text of ['', '  \n\t ']) {
+      const ai = fakeAIClient({
+        generateSync: async () => ({ text, modelUsed: 'unknown', provider: 'p', costUsd: 0, traceId: 't', finishReason: 'stop' }),
+      });
+      const err = await respond({ ...baseArgs(), aiClient: ai }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(EmptyAnswerError);
+      expect((err as EmptyAnswerError).code).toBe(EMPTY_ANSWER_CODE);
+      expect((err as EmptyAnswerError).finishReason).toBe('stop');
     }
   });
 

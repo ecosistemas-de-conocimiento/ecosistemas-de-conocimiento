@@ -51,10 +51,48 @@ import { stampDraftProvenance } from '$lib/publication';
 import { citedBrowserProvenance, toBrowserMessage } from '$lib/server/citationProvenance';
 import { backendTitleFetcher, testimonioDocIds, withTestimonioTitles } from '$lib/server/testimonioTitles';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
-import { parseCitedOrdinals, prepareTurn, type ContextRef, type ContextScope, type Provenance } from '@edc/chat-engine/core';
+import {
+  assertAnswer,
+  EMPTY_ANSWER_CODE,
+  EmptyAnswerError,
+  isEmptyAnswerCode,
+  parseCitedOrdinals,
+  prepareTurn,
+  streamOutcome,
+  type ContextRef,
+  type ContextScope,
+  type Provenance,
+} from '@edc/chat-engine/core';
 
 /** The turn was refused because the session row could not be read (no kind). */
 const SESSION_UNAVAILABLE_CODE = 'session_unavailable';
+
+/**
+ * 🔴 The model answered with no visible text (dev 2026-11-10: 3 of 6 turns,
+ * model `unknown`, 0 tokens). Never saved: the backend refuses an empty
+ * `content`, and that refusal was the ANSWER_NOT_SAVED the person got after
+ * 18–58 s. The turn fails with `EMPTY_ANSWER_CODE` instead, which the browser
+ * shows as a failed answer with "Reintentar". The user's own message, saved
+ * by the browser before the turn, stays.
+ */
+const EMPTY_ANSWER_MESSAGE = 'ai-service returned an empty answer; nothing was saved.';
+
+/**
+ * An ai-service failure that means an empty completion: the engine's
+ * `EmptyAnswerError`, or an upstream code in any spelling (`isEmptyAnswerCode`)
+ * — on the tag, the flat `code`, or the nested `{ error: { code } }`.
+ */
+function isEmptyAnswerFailure(err: unknown): boolean {
+  if (err instanceof EmptyAnswerError) return true;
+  const e = err as { bodyError?: unknown; body?: unknown } | null;
+  const body = (e?.body && typeof e.body === 'object' ? e.body : {}) as { code?: unknown; error?: unknown };
+  const nested = body.error && typeof body.error === 'object' ? (body.error as { code?: unknown }).code : undefined;
+  return [e?.bodyError, body.code, body.error, nested].some(isEmptyAnswerCode);
+}
+
+function logEmptyAnswer(sessionId: string, transport: 'sync' | 'stream'): void {
+  console.error(`[generate] empty answer for session ${sessionId} (${transport}); not saved, the turn fails with ${EMPTY_ANSWER_CODE}.`);
+}
 
 /** Max characters of each chunk's passage persisted on the provenance. */
 const PASSAGE_TEXT_CAP = 1200;
@@ -314,6 +352,8 @@ function streamGenerate(
   const out = new ReadableStream<Uint8Array>({
     async start(controller) {
       let buffer = '';
+      // The deltas so far: the answer when a `done` frame carries no text.
+      let streamed = '';
       const emit = (frame: unknown): void => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`));
       };
@@ -363,7 +403,14 @@ function streamGenerate(
                 emit({ type: 'done', ...savedTurnResult(already) });
                 continue;
               }
-              const provenance = provenanceFor(evt.text ?? '');
+              const outcome = streamOutcome(evt, streamed);
+              if (!outcome.ok) {
+                logEmptyAnswer(sessionId, 'stream');
+                emit({ type: 'error', code: outcome.code, message: EMPTY_ANSWER_MESSAGE });
+                continue;
+              }
+              evt.text = outcome.text;
+              const provenance = provenanceFor(evt.text);
               // Titles on the browser copy only; the saved one never carries
               // them. Read alongside the save, not after it.
               const titledP = withTestimonioTitles(
@@ -374,7 +421,7 @@ function streamGenerate(
               const messageId = await persistAssistantMessage(
                 token,
                 sessionId,
-                evt.text ?? '',
+                evt.text,
                 {
                   traceId: evt.traceId,
                   modelUsed: evt.modelUsed,
@@ -397,10 +444,18 @@ function streamGenerate(
                 ...(warnings ? { warnings } : {}),
               });
             } else if (evt.type === 'error') {
+              if (isEmptyAnswerCode(evt.code)) {
+                // ai-service's own empty-completion frame, before or after
+                // partial text: the same failure as an empty `done`.
+                logEmptyAnswer(sessionId, 'stream');
+                emit({ type: 'error', code: EMPTY_ANSWER_CODE, message: EMPTY_ANSWER_MESSAGE });
+                continue;
+              }
               // Budget failures arrive HERE on the streaming transport, not as
               // an HTTP status — see `sanitizeStreamErrorFrame`.
               emit(sanitizeStreamErrorFrame(evt, { requesterOrgKey: REQUESTER_ORG_KEY }));
             } else {
+              if (evt.type === 'delta' && typeof evt.text === 'string') streamed += evt.text;
               emit(evt);
             }
           }
@@ -976,6 +1031,10 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
       // Reached only when the upstream fails BEFORE the SSE headers are out
       // (e.g. the enqueue 402). Once streaming has begun, budget failures come
       // back as an `error` frame instead — `sanitizeStreamErrorFrame`.
+      if (isEmptyAnswerFailure(err)) {
+        logEmptyAnswer(body.sessionId, 'stream');
+        throw error(502, { code: EMPTY_ANSWER_CODE, message: EMPTY_ANSWER_MESSAGE });
+      }
       logBudgetFailure(err, 'generate:stream:open');
       const { status, message, code } = httpStatusFor(err, {
         requesterOrgKey: REQUESTER_ORG_KEY,
@@ -997,15 +1056,19 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     // The evals runner only (`$lib/server/evals`): the numbered sources the
     // model is about to see. No browser request sets `locals.evalTap`.
     locals.evalTap?.({ matches: prepared.matches, provenance: prepared.provenance });
-    const generation = await answerAI.generateSync({
-      surface: turnConfig.surface,
-      orgId: engineTurnArgs.orgId,
-      scopeId: engineTurnArgs.scopeId,
-      userId: engineTurnArgs.userId,
-      messages: prepared.messages,
-      effort: turnConfig.chatEffort,
-      maxTokens: turnConfig.chatMaxTokens,
-    });
+    // An answer with no visible text throws `EmptyAnswerError` before
+    // anything is saved (see `EMPTY_ANSWER_MESSAGE`).
+    const generation = assertAnswer(
+      await answerAI.generateSync({
+        surface: turnConfig.surface,
+        orgId: engineTurnArgs.orgId,
+        scopeId: engineTurnArgs.scopeId,
+        userId: engineTurnArgs.userId,
+        messages: prepared.messages,
+        effort: turnConfig.chatEffort,
+        maxTokens: turnConfig.chatMaxTokens,
+      }),
+    );
     const rawProvenance = prepared.provenance;
     // See the streaming branch: stamp the caller's own drafts before
     // persisting, keep the cited sources only, then the browser allowlist.
@@ -1045,6 +1108,10 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   } catch (err) {
     if ((err as Error)?.name === 'AbortError' || request.signal.aborted) {
       return new Response(null, { status: 499 });
+    }
+    if (isEmptyAnswerFailure(err)) {
+      logEmptyAnswer(body.sessionId, 'sync');
+      throw error(502, { code: EMPTY_ANSWER_CODE, message: EMPTY_ANSWER_MESSAGE });
     }
     logBudgetFailure(err, 'generate:sync');
     const { status, message, code } = httpStatusFor(err, {

@@ -118,6 +118,7 @@ vi.hoisted(() => {
 import { AiServiceError, CodedEnvelopeError } from './base.js';
 import { classifyStreamError, mapGenerateError } from './generate-map.js';
 import { ProviderUnavailable } from '../services/ai/router/router.js';
+import { EmptyCompletion } from '../services/ai/router/empty-completion.js';
 import {
   BudgetExceeded,
   BudgetMisconfigured,
@@ -254,6 +255,19 @@ describe('golden: mapGenerateError (JSON transports)', () => {
     });
   });
 
+  it('EmptyCompletion → 502 EmptyCompletion + code + traceId', () => {
+    const err = new EmptyCompletion({ traceId: 'trace-1' });
+    const mapped = mapGenerateError(err);
+    expect(mapped?.status).toBe(502);
+    expect(mapped?.headers).toBeUndefined();
+    expect(overWire(mapped?.body)).toEqual({
+      error: 'EmptyCompletion',
+      code: 'ERR_EMPTY_COMPLETION',
+      traceId: 'trace-1',
+      message: 'The LLM provider returned an empty answer.',
+    });
+  });
+
   it('an unmapped error returns undefined so Fastify produces the generic 500', () => {
     expect(mapGenerateError(new Error('internal detail: db password rejected'))).toBeUndefined();
     expect(mapGenerateError('not an error at all')).toBeUndefined();
@@ -277,6 +291,15 @@ describe('golden: classifyStreamError (SSE transport)', () => {
       errorCode: 'ERR_PROVIDER_UNAVAILABLE',
       retryAfterMs: 30_000,
       message: err.message,
+    });
+  });
+
+  it('EmptyCompletion → typed code + errorCode + traceId', () => {
+    expect(classifyStreamError(new EmptyCompletion({ traceId: 'trace-1' }))).toEqual({
+      code: 'EmptyCompletion',
+      errorCode: 'ERR_EMPTY_COMPLETION',
+      traceId: 'trace-1',
+      message: 'The LLM provider returned an empty answer.',
     });
   });
 

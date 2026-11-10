@@ -76,6 +76,7 @@ const SERVER_ERR_CODES = [
   'ERR_DOCUMENT_NOT_FOUND',
   'ERR_EMBEDDING_DIMENSION_MISMATCH',
   'ERR_EMBEDDING_MODEL_LOCKED',
+  'ERR_EMPTY_COMPLETION',
   'ERR_IDEMPOTENCY_CONFLICT',
   'ERR_INGEST_NOT_FOUND',
   'ERR_INVALID_TEXT_SEARCH_CONFIG',
@@ -168,12 +169,13 @@ describe('reachability — spelling parity is not the same as working', () => {
     }
   });
 
-  it('the tally is 25 typed / 0 flattened / 3 unverified', () => {
+  it('the tally is 25 typed / 0 flattened / 4 unverified', () => {
     // +2 unverified in 0.24.0: CallbackSecretMissingError and IngestNotFoundError
     // are route-tested server side but not yet measured against a deploy.
+    // +1 on 2026-11-10: EmptyCompletion (ai-service sends it; no typed class yet).
     const tally = { typed: 0, flattened: 0, unverified: 0 };
     for (const e of Object.values(WIRE_ERRORS)) tally[e.reachable] += 1;
-    expect(tally).toEqual({ typed: 25, flattened: 0, unverified: 3 });
+    expect(tally).toEqual({ typed: 25, flattened: 0, unverified: 4 });
   });
 
   it('every entry states its reachability', () => {

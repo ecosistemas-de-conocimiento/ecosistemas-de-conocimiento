@@ -132,7 +132,17 @@ export class RouterCache {
     return this.lru.get(key);
   }
 
+  /**
+   * 🔴 AN EMPTY ANSWER IS NEVER STORED. Measured on dev 2026-11-10: a cached
+   * empty completion was re-served to a later identical request in 0 ms. The
+   * router raises `EmptyCompletion` before it gets here; this is the second
+   * lock, for any other caller of the cache.
+   *
+   * Entries live in this process only (an LRU, `ttlMs` default 5 min), so a
+   * restart — every deploy — drops whatever an older build stored.
+   */
   set(key: string, entry: CacheEntry): void {
+    if (entry.contentText.trim() === '') return;
     this.lru.set(key, entry);
   }
 

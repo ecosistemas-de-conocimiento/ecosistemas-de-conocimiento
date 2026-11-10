@@ -909,3 +909,226 @@ describe('Zero Data Retention', () => {
     expect(err).not.toBeInstanceOf(OpenRouterNoZdrEndpointError);
   });
 });
+
+describe('streamingCallOpenRouter — errors inside a 200 stream', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    priceForUsageMock.mockReset();
+    priceForUsageMock.mockReturnValue(0.001);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const call = (onDelta?: (t: string) => void) =>
+    streamingCallOpenRouter({
+      model: 'm',
+      messages: baseMessages,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+      ...(onDelta ? { onDelta } : {}),
+    }).catch((e: unknown) => e);
+
+  it('an `error` frame after some text raises OpenRouterHttpError (502), not a short answer', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([
+        'data: {"choices":[{"delta":{"content":"Hola"}}]}\n\n',
+        'data: {"error":{"code":"server_error","message":"upstream died"}}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    );
+    const deltas: string[] = [];
+    const err = await call((t) => deltas.push(t));
+    expect(err).toBeInstanceOf(OpenRouterHttpError);
+    expect((err as InstanceType<typeof OpenRouterHttpError>).status).toBe(502);
+    expect((err as Error).message).toContain('upstream died');
+    expect(deltas).toEqual(['Hola']);
+  });
+
+  it('a numeric HTTP code in the frame is kept as the status (429 stays retryable as a 429)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse(['data: {"error":{"code":429,"message":"rate limited"}}\n\n']),
+    );
+    const err = await call();
+    expect((err as InstanceType<typeof OpenRouterHttpError>).status).toBe(429);
+  });
+
+  it('finish_reason "error" raises OpenRouterHttpError', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([
+        'data: {"choices":[{"delta":{"content":"Ho"}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"error"}]}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    );
+    const err = await call();
+    expect(err).toBeInstanceOf(OpenRouterHttpError);
+    expect((err as InstanceType<typeof OpenRouterHttpError>).status).toBe(502);
+  });
+
+  it('non-streaming: finish_reason "error" in a 200 raises OpenRouterHttpError', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeResponse({
+        ok: true,
+        status: 200,
+        body: { model: 'm', choices: [{ message: { content: '' }, finish_reason: 'error' }] },
+      }),
+    );
+    const err = await callOpenRouter({
+      model: 'm',
+      messages: baseMessages,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenRouterHttpError);
+    expect((err as InstanceType<typeof OpenRouterHttpError>).status).toBe(502);
+  });
+});
+
+describe('streamingCallOpenRouter — only model output resets the stall window', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    priceForUsageMock.mockReset();
+    priceForUsageMock.mockReturnValue(0.001);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A body that sends `frame` every `everyMs` for `count` ticks, then a real
+   * answer and `[DONE]`. Aborting the fetch signal errors the body with the
+   * signal's reason, as undici does.
+   */
+  function tickingResponse(signal: AbortSignal, frame: string, everyMs: number, count: number): Response {
+    const encoder = new TextEncoder();
+    let ticks = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        return new Promise<void>((resolve) => {
+          const t = setTimeout(() => {
+            signal.removeEventListener('abort', onAbort);
+            if (ticks++ < count) {
+              controller.enqueue(encoder.encode(frame));
+            } else {
+              controller.enqueue(
+                encoder.encode(
+                  'data: {"choices":[{"delta":{"content":"fin"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+                ),
+              );
+              controller.close();
+            }
+            resolve();
+          }, everyMs);
+          const onAbort = (): void => {
+            clearTimeout(t);
+            controller.error(signal.reason);
+            resolve();
+          };
+          if (signal.aborted) onAbort();
+          else signal.addEventListener('abort', onAbort, { once: true });
+        });
+      },
+    });
+    return { ok: true, status: 200, body } as unknown as Response;
+  }
+
+  async function withStall<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+    const { env } = (await import('../../../../config/env.js')) as unknown as {
+      env: { LLM_STREAM_STALL_TIMEOUT_MS?: number };
+    };
+    const prev = env.LLM_STREAM_STALL_TIMEOUT_MS;
+    env.LLM_STREAM_STALL_TIMEOUT_MS = ms;
+    try {
+      return await fn();
+    } finally {
+      env.LLM_STREAM_STALL_TIMEOUT_MS = prev;
+    }
+  }
+
+  const call = () =>
+    streamingCallOpenRouter({
+      model: 'm',
+      messages: baseMessages,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+    }).catch((e: unknown) => e);
+
+  // Measured on dev 2026-11-10: streams that sent only keepalives waited 58 s.
+  it.each([
+    ['SSE comment keepalives', ': OPENROUTER PROCESSING\n\n'],
+    ['empty-delta chunks', 'data: {"choices":[{"delta":{"content":""}}]}\n\n'],
+  ])('%s alone end the call as a stall', async (_label, frame) => {
+    fetchMock.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) =>
+      // 5 ms ticks for 60 ticks (≈300 ms) against a 40 ms window.
+      Promise.resolve(tickingResponse(init.signal, frame, 5, 60)),
+    );
+    const err = await withStall(40, call);
+    expect(err).toBeInstanceOf(OpenRouterAbortError);
+    expect(((err as { cause?: Error }).cause as Error)?.name).toBe('TimeoutError');
+  });
+
+  it('text chunks keep resetting it', async () => {
+    fetchMock.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) =>
+      Promise.resolve(
+        tickingResponse(init.signal, 'data: {"choices":[{"delta":{"content":"a"}}]}\n\n', 5, 30),
+      ),
+    );
+    const out = await withStall(40, call);
+    expect((out as { contentText: string }).contentText).toBe(`${'a'.repeat(30)}fin`);
+  });
+
+  async function withWindows<T>(stall: number, first: number, fn: () => Promise<T>): Promise<T> {
+    const { env } = (await import('../../../../config/env.js')) as unknown as {
+      env: { LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS?: number };
+    };
+    const prev = env.LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS;
+    env.LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS = first;
+    try {
+      return await withStall(stall, fn);
+    } finally {
+      env.LLM_STREAM_FIRST_OUTPUT_TIMEOUT_MS = prev;
+    }
+  }
+
+  // Measured on dev 2026-11-10: one answer's first token came at 58.3 s and it finished.
+  it('keepalives before the first output get the longer first-output window', async () => {
+    fetchMock.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) =>
+      // ≈100 ms of keepalives against a 40 ms stall window and a 300 ms first-output window.
+      Promise.resolve(tickingResponse(init.signal, ': OPENROUTER PROCESSING\n\n', 5, 20)),
+    );
+    const out = await withWindows(40, 300, call);
+    expect((out as { contentText: string }).contentText).toBe('fin');
+  });
+
+  it('keepalives past the first-output window still end as a stall', async () => {
+    fetchMock.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) =>
+      Promise.resolve(tickingResponse(init.signal, ': OPENROUTER PROCESSING\n\n', 5, 60)),
+    );
+    const err = await withWindows(40, 100, call);
+    expect(err).toBeInstanceOf(OpenRouterAbortError);
+    expect(((err as { cause?: Error }).cause as Error)?.name).toBe('TimeoutError');
+  });
+
+  it('reasoning chunks keep resetting it too: they are model output', async () => {
+    fetchMock.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) =>
+      Promise.resolve(
+        tickingResponse(init.signal, 'data: {"choices":[{"delta":{"reasoning":"r"}}]}\n\n', 5, 30),
+      ),
+    );
+    const out = await withStall(40, call);
+    expect((out as { contentText: string }).contentText).toBe('fin');
+  });
+});

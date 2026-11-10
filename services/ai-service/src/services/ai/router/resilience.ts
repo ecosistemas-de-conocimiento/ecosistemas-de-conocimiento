@@ -130,6 +130,7 @@ import {
   OpenRouterHttpError,
   OpenRouterNoZdrEndpointError,
 } from './adapters/openrouter.js';
+import { EmptyCompletion } from './empty-completion.js';
 
 /** Total attempts = 1 + this. Matches the task spec (`maxAttempts: 2`). */
 export const DEFAULT_MAX_RETRY_ATTEMPTS = 2;
@@ -241,6 +242,9 @@ export function isTransientProviderError(
   // No Zero Data Retention endpoint: asking again cannot help, and the call is
   // never re-sent without `provider.zdr` (fail-closed).
   if (err instanceof OpenRouterNoZdrEndpointError) return false;
+  // A 200 with no text (`empty-completion.ts`). Measured on dev 2026-11-10: 3
+  // of 6 chat answers; the same prompt asked again is the realistic recovery.
+  if (err instanceof EmptyCompletion) return true;
 
   if (err instanceof OpenRouterHttpError) {
     const after = retryAfterMsFromError(err);
@@ -377,7 +381,14 @@ export function createProviderResilience(opts: ResilienceOptions = {}): Provider
     maxAttempts,
     backoff: new RetryAfterAwareBackoff(baseDelayMs, maxDelayMs, 0, random),
   });
-  const breakerPolicy = circuitBreaker(transient, {
+  // ⚠ An empty answer is retried but does NOT count toward the breaker. The
+  // breaker is per PROVIDER and says "it is down"; an empty answer is one
+  // model's bad reply, and at 3 attempts a call, two unlucky requests would
+  // otherwise open the circuit for every model and every tenant.
+  const breakerCounts = handleWhen(
+    (err) => !(err instanceof EmptyCompletion) && isTransientProviderError(err, maxDelayMs),
+  );
+  const breakerPolicy = circuitBreaker(breakerCounts, {
     halfOpenAfter: halfOpenAfterMs,
     breaker: new ConsecutiveBreaker(breakerThreshold),
   });

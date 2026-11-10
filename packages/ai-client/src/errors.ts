@@ -733,6 +733,9 @@ export const WIRE_ERRORS: Readonly<Record<string, WireErrorEntry>> = {
     ctor: ProviderUnavailableError,
     reachable: 'typed',
   },
+  // A 200 with no text, after ai-service's own bounded retries. 502 on /sync,
+  // a terminal frame on /stream; both carry `traceId`.
+  EmptyCompletion: { code: 'ERR_EMPTY_COMPLETION', reachable: 'unverified' },
 
   // ── flat envelope, message-only ────────────────────────────────────────
   RenderError: { code: 'ERR_RENDER', ctor: RenderError, reachable: 'typed' },

@@ -208,6 +208,22 @@ describe.skipIf(!dockerOk)('documents: a gated documento name over REST (real Po
     }
   })
 
+  it("keepDocumentAuthor in the stored verdict shows colleagues the contributor, never the file name", async () => {
+    const report = (v: boolean) =>
+      pg.db.execute(sql.raw(`UPDATE documents SET anonymisation_report = '{"settings":{"keepDocumentAuthor":${v}}}'::jsonb WHERE id = ${GATED}`))
+    try {
+      await report(true)
+      const on = JSON.parse(await (await rest('GET', `/api/documents/${GATED}?depth=0`, tokens.ben)).text()) as Row
+      expect(on.uploadedBy).toBe(ANA)
+      expect(on.name).toBe('Documento')
+      await report(false)
+      const off = (await (await rest('GET', `/api/documents/${GATED}?depth=0`, tokens.ben)).json()) as Row
+      expect(off.uploadedBy).toBeUndefined()
+    } finally {
+      await pg.db.execute(sql.raw(`UPDATE documents SET anonymisation_report = NULL WHERE id = ${GATED}`))
+    }
+  })
+
   it('the uploader and a platform admin read the file name', async () => {
     for (const who of ['ana', 'platform']) {
       const row = (await (await rest('GET', `/api/documents/${GATED}?depth=0`, tokens[who])).json()) as Row
