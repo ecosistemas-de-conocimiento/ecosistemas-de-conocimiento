@@ -2941,6 +2941,9 @@ only because pre-§4c spend is booked to it; nothing spends from `demo` any more
    The dumps hold raw text: run `umask 077` before `mkdir /root/backups/...` and `pg_dump` on the box, and
    again before the `scp` on the receiving machine, so files land 600 and folders 700 (the runbook is
    `docs/05-infraestructura/despliegue-y-runbook.md` §6.3).
+7. Retención de volcados: se quedan los 7 más recientes de cada entorno, en `/root/backups/` y en la
+   copia fuera del servidor; los anteriores se borran. Un sello con los dos entornos cuenta en cada uno
+   (`docs/05-infraestructura/respaldos-y-recuperacion.md` §2.2, paso 7).
 
 ### Smoke check (what was verified on 2026-10-17)
 

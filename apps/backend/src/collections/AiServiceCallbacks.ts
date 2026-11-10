@@ -10,13 +10,12 @@ import { isPlatformAdmin } from '../access'
  * "return 200, we already did this". ai-service retries on 5xx and timeouts, so
  * without this table every retry would re-apply the same `documents` update.
  *
- * 🔴 THE UNIQUE INDEX DOES NOT EXIST YET, SO DEDUPE IS CURRENTLY INERT.
- * It lived in a baseline migration, and this repo has none — see
- * `src/migrations/README.md`, which lists it as one of three indexes the first
- * baseline must add. Until then a retried callback inserts a second row and
- * runs its dispatch again. The dispatch is a status update on a `documents`
- * row and is idempotent in practice, so the consequence today is duplicate
- * rows here rather than corruption — but this is a REAL gap, not a nicety.
+ * The unique index is `ai_service_callbacks_natural_key_unq`, added by the
+ * baseline migration (`20260908_092211_baseline.ts`).
+ *
+ * 🔴 THE ROW IS KEPT; ONLY ITS BODY EXPIRES. `lib/callbackRetention.ts` sets
+ * `rawBody` to NULL after `CALLBACK_RETENTION_DAYS` (default 30). Deleting the
+ * row would let a late retry run its dispatch again.
  *
  * Shape (only the ingest path is used today):
  *   - `correlationKey` — `ingestId` for ingest events.
@@ -70,6 +69,13 @@ export const AiServiceCallbacks: CollectionConfig = {
       required: true,
       defaultValue: '',
       index: true,
+      /**
+       * 🔴 `required` ALONE REFUSES THE EMPTY STRING. Payload's text validator
+       * reads `''` as missing, so every batch-level event (and a transcription
+       * callback with no `externalId`) failed the dedupe insert and was answered
+       * 500, forever. The column stays NOT NULL; any string passes.
+       */
+      validate: (value: unknown) => typeof value === 'string' || 'eventKey must be a string',
       admin: {
         description:
           'docId for per-doc events; empty string for batch-level events (ingest.progress).',
@@ -100,14 +106,12 @@ export const AiServiceCallbacks: CollectionConfig = {
       maxLength: 100_000,
       admin: {
         description:
-          'JSON body as received, except a transcript: its text is replaced by its length and SHA-256 (audit 2026-10-28). Retained for debugging payload drift.',
+          'JSON body as received, except a transcript: its text is replaced by its length and SHA-256 (audit 2026-10-28). Set to NULL after CALLBACK_RETENTION_DAYS (default 30).',
       },
     },
   ],
   /**
-   * 🔴 UNIQUE (correlation_key, event_key, event) MUST be added by the first
-   * baseline migration. Payload's collection config has no composite-unique
-   * helper, and this collection's entire purpose depends on that constraint —
-   * see the header and `src/migrations/README.md`.
+   * UNIQUE (correlation_key, event_key, event) lives in the baseline migration:
+   * Payload's collection config has no composite-unique helper.
    */
 }

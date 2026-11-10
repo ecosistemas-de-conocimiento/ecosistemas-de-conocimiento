@@ -194,7 +194,8 @@ function naturalKeyFor(envelope: CallbackEnvelope): NaturalKey | null {
  * `transcribe.completed` body carries the raw, pre-anonymisation text. Keeping
  * it here outlived the document, its redaction and its deletion. The text is
  * replaced by its length and SHA-256: enough to tell two deliveries apart while
- * debugging, nothing to read.
+ * debugging, nothing to read. What is left is NULLed after 30 days
+ * (`lib/callbackRetention.ts`); the row itself stays, as the dedupe key.
  *
  * 🔴 Nor a name (audit 2026-11-10, C-11). audio-service echoes the `title` and
  * `audio.filename` it was sent in `transcribe.completed` and `transcribe.failed`,
