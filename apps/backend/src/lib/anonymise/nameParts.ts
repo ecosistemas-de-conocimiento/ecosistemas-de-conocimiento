@@ -73,12 +73,43 @@ export const NOT_A_PART: ReadonlySet<string> = new Set(
 
 const WORD = /[\p{L}\p{M}]+/gu
 
+const EDGE_CHAR = /^[\s\p{P}]$/u
+
+/**
+ * `s.replace(/[\s\p{P}]+$/u, '')`, exactly, in linear time.
+ *
+ * 🔴 WHY NOT THE REGEX (audit 5, 2026-10-28): an end-anchored `+$` is tried
+ * at every position, and inside a long run of spaces that is NOT at the end
+ * each try reads the whole run before failing: N². A byline name with 60k
+ * spaces inside took seconds in the gate.
+ */
+export function trimEdgeEnd(s: string): string {
+  let end = s.length
+  while (end > 0) {
+    const low = s.charCodeAt(end - 1)
+    const width = end >= 2 && low >= 0xdc00 && low <= 0xdfff ? 2 : 1 // one code point
+    if (!EDGE_CHAR.test(s.slice(end - width, end))) break
+    end -= width
+  }
+  return s.slice(0, end)
+}
+
+/** `s.replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, '')`, exactly, in linear time ({@link trimEdgeEnd}). */
+export function trimEdges(s: string): string {
+  let start = 0
+  for (const c of s) {
+    if (!EDGE_CHAR.test(c)) break
+    start += c.length
+  }
+  return trimEdgeEnd(s.slice(start))
+}
+
 /** The name parts of one person span, as written. */
 export function namePartsOf(raw: string): string[] {
   // 🔴 Trailing punctuation off first (audit 2026-10-27): "Fausto Arellano."
   // read "Arellano" as an abbreviation and never spread it. An abbreviation
   // INSIDE the span ("Pbro. Juan Soto") is still skipped.
-  const span = raw.replace(/[\s\p{P}]+$/u, '')
+  const span = trimEdgeEnd(raw)
   const inPlaceholder = [...span.matchAll(PLACEHOLDER_PATTERN)].map((m) => [m.index, m.index + m[0].length])
   const parts: string[] = []
   for (const m of span.matchAll(WORD)) {
@@ -134,8 +165,13 @@ export function gluedToAnotherName(
  * document, never persisted (a part → label table is a re-identification map).
  */
 export interface NamePartRegistry {
-  /** Record a person span that was redacted with a label. */
-  add(span: string): void
+  /**
+   * Record a person span that was redacted with a label. `single` lets a
+   * one-word span own its part: a byline author written as one word
+   * ("Autores: Colectivo Norte y Ruiz") IS that person, and without it a bare
+   * "Ruiz" in the body was never redacted (byline audit, 2026-10-28).
+   */
+  add(span: string, options?: { single?: boolean }): void
   /** Every registered part, longest first, each with the folded parts of its owners. */
   parts(): Array<{ part: string; siblings: ReadonlySet<string> }>
   /**
@@ -153,11 +189,12 @@ export function createNamePartRegistry(): NamePartRegistry {
   const spelling = new Map<string, string>()
   const siblings = new Map<string, Set<string>>()
   return {
-    add(span) {
+    add(span, options) {
       const parts = namePartsOf(span)
       // A one-word span is not an owner: "Fausto" would make "Fausto" ambiguous
       // with "Fausto Arellano". It takes its owner's label through `ownerOf`.
-      if (parts.length === 0 || (span.match(WORD) ?? []).length < 2) return
+      // ⚠ Except a byline author (`single`): there the one word IS the person.
+      if (parts.length === 0 || (!options?.single && (span.match(WORD) ?? []).length < 2)) return
       const folded = new Set(parts.map(normaliseName))
       for (const part of parts) {
         const key = normaliseName(part)
