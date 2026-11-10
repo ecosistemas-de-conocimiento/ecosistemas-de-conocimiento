@@ -50,6 +50,12 @@ export const RATE_LIMIT_WINDOW_MS = 60_000
  */
 export const LOGIN_FAIL_WINDOW_MS = 60 * 60_000
 
+/**
+ * Conversations one account opens are counted over an hour: the limit guards a
+ * table's size, not a request rate (`rateLimits.sessionCreatePerUser`).
+ */
+export const SESSION_CREATE_WINDOW_MS = 60 * 60_000
+
 /** Answer for one bucket. `resetAt` is epoch ms. */
 export interface RateLimitDecision {
   allowed: boolean
@@ -433,6 +439,23 @@ export const rateLimits = {
    * browsing at once never notices it.
    */
   graphPerOrganization: (): number => envInt('GRAPH_RATELIMIT_ORG_MAX', 600),
+
+  // --- conversations ---------------------------------------------------------
+
+  /**
+   * Conversations one account opens per HOUR ({@link SESSION_CREATE_WINDOW_MS}),
+   * through REST (audit 2026-11-10, D1: a member who opened 20 000 made every
+   * filter through `session.*` read 20 000 ids; `relationFilterLimits` now
+   * bounds that, and this bounds the table).
+   *
+   * 60, one a minute. The web opens one only when a send, an upload or the mic
+   * needs it, and reuses an empty one (`openNewSession` in
+   * `apps/web/src/lib/stores/app.svelte.ts`), so it is one per conversation
+   * that holds a turn; a person writing turns opens far fewer an hour
+   * (inferred, not measured). Eval runs and seeds create theirs as the server
+   * (`overrideAccess`) and are not counted. At 60, 20 000 takes two weeks.
+   */
+  sessionCreatePerUser: (): number => envInt('SESSION_RATELIMIT_CREATE_USER_MAX', 60),
 }
 
 // --- checking ----------------------------------------------------------------

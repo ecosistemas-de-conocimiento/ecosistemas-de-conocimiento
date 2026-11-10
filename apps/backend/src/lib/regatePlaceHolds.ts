@@ -28,6 +28,7 @@ import type { Payload } from 'payload'
 import { isTownLevelPlace } from './anonymise/townPlaces'
 import type { DetectorFinding } from './anonymise/types'
 import { rowMustPassGate } from './anonymiseDocument'
+import { isConsentHeld, NOT_CONSENT_HELD, readConsentHeld } from './consentHold'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { relationId } from './permissions'
 
@@ -41,6 +42,8 @@ interface Row {
   anonymisationError?: unknown
   anonymisationSurvivors?: unknown
   heldText?: unknown
+  /** 🔴 `lib/consentHold.ts`: a held row is never reset or re-gated. */
+  consentHeld?: unknown
 }
 
 export function isPlaceOnlyHold(row: Row): boolean {
@@ -96,7 +99,10 @@ export async function regatePlaceOnlyHolds(
   const log = opts.log ?? (() => undefined)
   const found = (await payload.find({
     collection: 'documents',
-    where: { and: [{ anonymisationStatus: { equals: 'held' } }, { publicationStatus: { equals: 'draft' } }] },
+    // 🔴 Never a row held for consent: the reset below ends in the gate's model calls.
+    where: {
+      and: [{ anonymisationStatus: { equals: 'held' } }, { publicationStatus: { equals: 'draft' } }, NOT_CONSENT_HELD],
+    },
     limit: opts.limit ?? 1000,
     depth: 0,
     overrideAccess: true,
@@ -105,7 +111,7 @@ export async function regatePlaceOnlyHolds(
   const report: PlaceHoldsReport = { examined: rows.length, placeOnly: 0, matched: 0, regated: 0, ids: [], kept: [] }
 
   for (const row of rows) {
-    if (row.id == null || !isPlaceOnlyHold(row)) continue
+    if (row.id == null || isConsentHeld(row) || !isPlaceOnlyHold(row)) continue
     report.placeOnly += 1
     const id = String(row.id)
     if (!everySurvivorIsTown(row)) {
@@ -124,6 +130,12 @@ export async function regatePlaceOnlyHolds(
       continue
     }
 
+    // 🔴 Read again right before the reset: a hold placed while this ran wins.
+    // (`updateDocumentColumns` cannot guard on `consentHeld`: not in its allowlist.)
+    if (await readConsentHeld(payload, row.id)) {
+      log(`doc ${id}: held for consent — left alone`)
+      continue
+    }
     const changed = await updateDocumentColumns(payload, {
       id: row.id,
       where: [{ anonymisationStatus: { equals: 'held' } }, { publicationStatus: { equals: 'draft' } }],

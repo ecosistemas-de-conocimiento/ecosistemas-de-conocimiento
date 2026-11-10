@@ -26,6 +26,7 @@
 
 import type { Payload, Where } from 'payload'
 
+import { isConsentHeld, NOT_CONSENT_HELD } from './consentHold'
 import { featureEnabled } from './features'
 import { relationId } from './permissions'
 import {
@@ -123,6 +124,8 @@ export async function backfillTestimonioTitles(
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const where: Where[] = [
     ...TITLE_BACKFILL_WHERE,
+    // 🔴 A row held for consent never goes to a model (`lib/consentHold.ts`).
+    NOT_CONSENT_HELD,
     ...(opts.organizationId !== undefined ? [{ organization: { equals: opts.organizationId } } as Where] : []),
     ...(opts.afterId !== undefined ? [{ id: { greater_than: opts.afterId } } as Where] : []),
   ]
@@ -142,6 +145,7 @@ export async function backfillTestimonioTitles(
       contentKind: true,
       anonymisationStatus: true,
       testimonioTitle: true,
+      consentHeld: true,
     },
   } as never)
   const report: TitleBackfillReport = {
@@ -157,6 +161,8 @@ export async function backfillTestimonioTitles(
   }
   const store = opts.store ?? payloadTitleStore(payload as never)
   for (const raw of res.docs as unknown as Array<Record<string, unknown>>) {
+    // 🔴 Again per row: a payload that ignores the where still sends nothing.
+    if (isConsentHeld(raw)) continue
     const picked = titleSourceOf(raw)
     const org = relationId(raw.organization as never)
     if (!picked || org === null) continue

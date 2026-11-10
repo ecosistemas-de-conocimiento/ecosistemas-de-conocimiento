@@ -47,6 +47,7 @@ import type { Payload } from 'payload'
 
 import type { CorpusEntry } from './corpusSource'
 import { readCorpusManifest, readCorpusText, resolveCorpusDir } from './corpusSource'
+import { isConsentHeld } from '../lib/consentHold'
 import { safeErrMessage } from '../lib/errorSummary'
 
 /**
@@ -659,6 +660,8 @@ async function runIngestSeededDocuments(
     extractedText?: unknown
     publicationStatus?: unknown
     anonymisationStatus?: unknown
+    /** 🔴 `lib/consentHold.ts`: read with the row (no `select`). */
+    consentHeld?: unknown
   }>
 
   const concurrency =
@@ -705,8 +708,11 @@ async function runIngestSeededDocuments(
   // `corpusTextFor`. Touching it here would only add noise to the log.
   // ⚠ A row whose gate could not RUN is not held: it sits at `n/a` with a
   // `gate_unavailable` error, so it is in `todo` and is gated again here.
+  // 🔴 A ROW HELD FOR CONSENT IS LEFT ALONE TOO: the gate-then-publish branch
+  // below calls the detector directly, with no hook in between (ola 11, A3).
   const todo = rows.filter(
     (row) =>
+      !isConsentHeld(row) &&
       row.anonymisationStatus !== 'held' &&
       row.anonymisationStatus !== 'rejected' &&
       (!opts.onlyIds || opts.onlyIds.has(String(row.id))),

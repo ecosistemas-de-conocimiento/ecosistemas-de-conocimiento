@@ -22,3 +22,20 @@ describe('a verify hold whose verification never finished', () => {
     expect(substantivelyEdited(t.replace('Ana Ruiz', '[Persona A]'), t)).toBe(true);
   });
 });
+
+/** Ola 11, item 5: mirrors `apps/backend/src/lib/holdReview.verifyUnlocated.test.ts` (gate.ts `unlocatableSentence`). */
+describe('a verify hold with a name the model could not place', () => {
+  const ONE =
+    'La revisión automática señaló un dato que no se pudo ubicar en el texto. Una persona tiene que revisarlo. Todavía no se agregó a la búsqueda.';
+  const TWO =
+    'La revisión automática señaló 2 datos que no se pudieron ubicar en el texto. Una persona tiene que revisarlo. Todavía no se agregó a la búsqueda.';
+
+  it('must be edited to be approved, singular and plural', () => {
+    expect(mustEditToApprove('verify', ONE)).toBe(true);
+    expect(mustEditToApprove('verify', TWO)).toBe(true);
+  });
+
+  it('control: a verify hold with located survivors need not be', () => {
+    expect(mustEditToApprove('verify', 'Quedó 1 dato que podría identificar a alguien. Todavía no se agregó a la búsqueda.')).toBe(false);
+  });
+});

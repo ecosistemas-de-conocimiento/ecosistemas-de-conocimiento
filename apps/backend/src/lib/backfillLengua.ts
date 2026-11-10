@@ -38,6 +38,7 @@
 import type { Payload, Where } from 'payload'
 
 import { corpusTextFor } from './anonymiseDocument'
+import { isConsentHeld, NOT_CONSENT_HELD } from './consentHold'
 import { chunkMetadata, contentKindOf, documentTitleFor } from './contentKind'
 import { publishedCorpus } from './corpus'
 import { relationId } from './permissions'
@@ -63,6 +64,8 @@ export interface BackfillCandidate {
   anonymisationReport?: unknown
   lengua?: string | null
   organization?: unknown
+  /** 🔴 `lib/consentHold.ts`: a held row is never re-embedded. */
+  consentHeld?: unknown
 }
 
 export interface LenguaIngester {
@@ -112,7 +115,8 @@ export async function backfillLengua(
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)))
   const log = opts.log ?? (() => {})
 
-  const where: Where[] = [...BACKFILL_WHERE]
+  // 🔴 A row held for consent is never re-embedded (`lib/consentHold.ts`).
+  const where: Where[] = [...BACKFILL_WHERE, NOT_CONSENT_HELD]
   if (opts.organizationId != null) where.push({ organization: { equals: opts.organizationId } })
   if (opts.afterId != null) where.push({ id: { greater_than: opts.afterId } })
 
@@ -144,6 +148,13 @@ export async function backfillLengua(
     report.lastId = id
     const lengua = typeof doc.lengua === 'string' ? doc.lengua.trim() : ''
     const org = relationId(doc.organization)
+    // 🔴 Again per row: a payload that ignores the where still sends nothing.
+    if (isConsentHeld(doc)) {
+      report.skipped += 1
+      report.skippedIds.push(id)
+      log(`skip ${id}: consent held`)
+      continue
+    }
     const selected = corpusTextFor(doc)
     if (!lengua || org == null || contentKindOf(doc) !== 'documento' || !selected.ok) {
       report.skipped += 1

@@ -1,6 +1,9 @@
 import type {
   Access,
+  CollectionAfterErrorHook,
+  CollectionAfterOperationHook,
   CollectionBeforeDeleteHook,
+  CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
   Endpoint,
@@ -8,7 +11,7 @@ import type {
   PayloadRequest,
   Where,
 } from 'payload'
-import { Forbidden, ValidationError } from 'payload'
+import { APIError, Forbidden, ValidationError } from 'payload'
 
 import { isActiveUser } from '../access'
 import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
@@ -23,6 +26,7 @@ import {
 } from '../lib/conversationUploads'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
 import type { CorpusMover } from '../lib/publishDocument'
+import { rateLimits, reserveRateLimits, SESSION_CREATE_WINDOW_MS } from '../lib/rateLimit'
 
 /**
  * Per-user chat sessions over the knowledgebase.
@@ -485,6 +489,72 @@ const cascadeConversationDelete: CollectionBeforeDeleteHook = async ({ context, 
   })
 }
 
+/** Where `reserveSessionCreate` leaves the reservation's `release`, on `req.context`. */
+const CREATE_RELEASE = 'sessionCreateRateLimitRelease'
+
+/** Our own 429. Thrown before a slot is held, so `afterError` finds nothing to settle. */
+export class SessionCreateRateLimited extends APIError {
+  constructor(public readonly retryAfterSeconds: number) {
+    super(`Too many new conversations. Retry in ${retryAfterSeconds}s.`, 429, undefined, true)
+  }
+}
+
+function takeCreateRelease(context: Record<string, unknown> | undefined): (() => Promise<void>) | null {
+  const release = context?.[CREATE_RELEASE]
+  if (!context || typeof release !== 'function') return null
+  delete context[CREATE_RELEASE]
+  return release as () => Promise<void>
+}
+
+/**
+ * 🔴 ONE ACCOUNT OPENS AT MOST `rateLimits.sessionCreatePerUser()` CONVERSATIONS
+ * AN HOUR (audit 2026-11-10, D1). Nothing bounded the table: a member opened
+ * 20 000 and every filter through `session.*` read them all.
+ *
+ * Reserve, then settle, as `lib/loginRateLimit.ts` does: the slot is counted
+ * BEFORE the create runs, so concurrent creates cannot all pass a check none
+ * of them has counted; a create that fails (validation, access, a server
+ * error) gives it back in `afterError`. Only a create as a signed-in caller
+ * with access applied counts: eval runs and seeds create as the server.
+ *
+ * ⚠ Only the REST route reaches `afterError`. A failed local-API create with
+ * a user and access applied stays counted. Per backend process, like every
+ * limit in `lib/rateLimit.ts`.
+ */
+const reserveSessionCreate: CollectionBeforeOperationHook = async ({ args, operation, req }) => {
+  if (operation !== 'create') return args
+  const user = req.user
+  if ((args as { overrideAccess?: boolean }).overrideAccess === true || !user) return args
+  const reservation = await reserveRateLimits([
+    {
+      scope: 'session:create:user',
+      key: `session:create:user:${user.id}`,
+      limit: rateLimits.sessionCreatePerUser(),
+      windowMs: SESSION_CREATE_WINDOW_MS,
+    },
+  ])
+  if (reservation.allowed) {
+    req.context[CREATE_RELEASE] = reservation.release
+    return args
+  }
+  const retryAfterSeconds = reservation.decision?.retryAfterSeconds ?? SESSION_CREATE_WINDOW_MS / 1000
+  req.payload?.logger?.warn(`[sessions/rateLimit] 429 on scope "${reservation.rule?.scope ?? 'session:create'}"`)
+  // `routeError` merges these into the error response.
+  req.responseHeaders = new Headers({ 'Retry-After': String(retryAfterSeconds), 'Cache-Control': 'no-store' })
+  throw new SessionCreateRateLimited(retryAfterSeconds)
+}
+
+/** A create that failed was not a conversation: its slot goes back. */
+const refundFailedSessionCreate: CollectionAfterErrorHook = async ({ context }) => {
+  await takeCreateRelease(context)?.()
+}
+
+/** A create that succeeded keeps its slot. */
+const keepSessionCreate: CollectionAfterOperationHook = async ({ operation, req, result }) => {
+  if (operation === 'create') takeCreateRelease(req.context)
+  return result
+}
+
 export const Sessions: CollectionConfig = {
   slug: 'sessions',
   admin: {
@@ -598,6 +668,9 @@ export const Sessions: CollectionConfig = {
     },
   ],
   hooks: {
+    beforeOperation: [reserveSessionCreate],
+    afterOperation: [keepSessionCreate],
+    afterError: [refundFailedSessionCreate],
     beforeValidate: [stampOwnerAndEcosystem],
     /**
      * 🔴 DELETING A SESSION MUST NOT TOUCH ANY CORPUS. There used to be an
