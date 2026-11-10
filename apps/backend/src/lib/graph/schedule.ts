@@ -22,6 +22,7 @@
 
 import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate, rowMustPassGate } from '@/lib/anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/documentColumns'
+import { errSummary, isDatabaseError } from '@/lib/errorSummary'
 
 import { extractGraph, type GraphGenerateClient } from './extract'
 import { GRAPH_PROMPT_VERSION } from './prompt'
@@ -217,7 +218,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     // returning early without deleting would leave the OLD version's entities
     // and snippets attached to a document that no longer says any of it.
     await clearGraphRows(payload, docId, organizationId).catch((err) => {
-      console.warn('[graph] could not clear rows for skipped doc', docId, err)
+      console.warn('[graph] could not clear rows for skipped doc', docId, errSummary(err))
     })
     await setGraphStatus(payload, docId, {
       graphStatus: 'skipped',
@@ -306,7 +307,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
       graphPromptVersion: extraction.promptVersion,
       graphExtractedAt: new Date().toISOString(),
     }).catch((err) => {
-      console.error('[graph] rows written for doc', docId, 'but the status write failed', err)
+      console.error('[graph] rows written for doc', docId, 'but the status write failed', errSummary(err))
     })
 
     console.log(
@@ -351,10 +352,13 @@ async function recordFailure(
   const gated = mustPassAnonymisationGate(contentKind, args.anonymise)
   if (gated) {
     await clearGraphRows(payload, docId, organizationId).catch((clearErr) => {
-      console.error('[graph] could not clear rows for failed gated doc', docId, clearErr)
+      console.error('[graph] could not clear rows for failed gated doc', docId, errSummary(clearErr))
     })
   }
-  const message = err instanceof Error ? err.message : String(err)
+  // 🔴 A DATABASE error's message is the failed query with its params (P-07):
+  // a mention's label or snippet. Its summary goes to the log AND to
+  // `graphError`, which the frontend shows.
+  const message = isDatabaseError(err) ? errSummary(err) : err instanceof Error ? err.message : String(err)
   // 🔴 PRIVACY. A gated kind logs safe metadata only: a downstream error (a
   // Postgres unique violation, a client error) can quote a label or the reply.
   if (gated) {
@@ -371,7 +375,7 @@ async function recordFailure(
     ...(gated ? wikiLinksColumn(args.organizationId, null) : {}),
     graphPromptVersion: GRAPH_PROMPT_VERSION,
   }).catch((updateErr) => {
-    console.error('[graph] could not record the failure on doc', docId, updateErr)
+    console.error('[graph] could not record the failure on doc', docId, errSummary(updateErr))
   })
 }
 
@@ -470,7 +474,7 @@ async function abortIfStale(
     const reason = then.ok ? staleReason(then, now) : 'the row was not graphable when queued'
     if (reason == null) return null
     await clearGraphRows(payload, docId, organizationId).catch((err) => {
-      console.error('[graph] could not clear rows for aborted doc', docId, err)
+      console.error('[graph] could not clear rows for aborted doc', docId, errSummary(err))
     })
     // Safe metadata only: the reasons are fixed strings, never row text.
     console.warn('[graph] doc', docId, 'changed since its job was queued — run aborted:', reason)
@@ -484,7 +488,7 @@ async function abortIfStale(
   }
 
   await clearGraphRows(payload, docId, organizationId).catch((err) => {
-    console.error('[graph] could not clear rows for aborted doc', docId, err)
+    console.error('[graph] could not clear rows for aborted doc', docId, errSummary(err))
   })
   console.warn('[graph] doc', docId, 'no longer graphable — run aborted')
   await setGraphStatus(payload, docId, {
@@ -535,7 +539,7 @@ function pump(): void {
       .catch((err) => {
         // `runGraphExtraction` already swallows everything it can name. Anything
         // arriving here is a bug in the recording path itself.
-        console.error('[graph] background extraction crashed for doc', next.docId, err)
+        console.error('[graph] background extraction crashed for doc', next.docId, errSummary(err))
       })
       .then(() => {
         // A "Publicar cambios" revision waits for its graph (`lib/studentNotes.ts`).
