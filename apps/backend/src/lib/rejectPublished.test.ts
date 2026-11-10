@@ -236,13 +236,13 @@ describe('listPublishedTestimonios', () => {
     expect((await listPublishedTestimonios({ payload: p2, organizationId: 1, user: reviewer }))[0]!.title).toBe('Testimonio')
   })
 
-  it('🔴 queries gated documentos too, titled by their own name', async () => {
+  it('🔴 queries gated documentos too, titled by the gate (R4-01), never their `name`', async () => {
     const { payload } = fakePayload(
       published({ contentKind: 'documento', anonymise: true, name: 'informe.pdf', testimonioTitle: null }),
     )
     const out = await listPublishedTestimonios({ payload, organizationId: 1, user: reviewer })
     expect(out).toEqual([
-      { id: '7', title: 'informe.pdf', updatedAt: '2026-10-24T10:00:00.000Z', contentKind: 'documento' },
+      { id: '7', title: 'Documento', updatedAt: '2026-10-24T10:00:00.000Z', contentKind: 'documento' },
     ])
     const where = JSON.stringify((payload as unknown as { find: { mock: { calls: Array<[{ where: unknown }]> } } })
       .find.mock.calls.find((c) => JSON.stringify(c[0].where).includes('publicationStatus'))![0].where)

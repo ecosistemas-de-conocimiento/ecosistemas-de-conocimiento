@@ -32,6 +32,7 @@
 import type { Payload } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
+import { documentTitleFor } from './contentKind'
 import { HoldNotVisibleError } from './holdReview'
 import { organizationIdsForUserWithPermission, PERMISSIONS, relationId } from './permissions'
 import { draftCorpus, publishedCorpus } from './corpus'
@@ -61,8 +62,11 @@ export interface PublishedSummary {
   id: string
   /**
    * 🔴 Testimonio: `testimonioTitle` (made from redacted text) or a neutral
-   * label, never `name`. Gated documento: its own `name` (owner ruling
-   * 2026-10-26: it keeps its title).
+   * label, never `name`. Gated documento: {@link documentTitleFor} (the gate's
+   * redacted title, or "Documento"), never `name` — R4-01 (audit 2026-11-10)
+   * replaced the 2026-10-26 rule that it keeps its title. Its `name` only for
+   * a caller `mayReadGatedOriginal(…, 'identity')` lets read it: the uploader,
+   * a platform admin.
    */
   title: string
   updatedAt: string | null
@@ -100,9 +104,16 @@ export async function listPublishedTestimonios(args: {
     })
     .catch(() => null)
   if (!found) throw new HoldNotVisibleError()
+  // Lazy, as in `anonymisationControls.ts`: loading the collection is slow, and only this listing needs it.
+  const { mayReadGatedOriginal } = await import('@/collections/Documents')
   return (found.docs as unknown as Array<Record<string, unknown>>).filter(isReviewable).map((row) => {
     const documento = row.contentKind === 'documento'
-    const own = documento ? row.name : row.testimonioTitle
+    // 🔴 The raw `name` only for whoever may read it; every row here is gated.
+    const own = documento
+      ? mayReadGatedOriginal(args.user, row, 'identity')
+        ? row.name
+        : documentTitleFor(row)
+      : row.testimonioTitle
     return {
       id: String(row.id),
       title: typeof own === 'string' && own.trim() ? own.trim() : documento ? 'Documento' : 'Testimonio',
