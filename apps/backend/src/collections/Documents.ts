@@ -178,7 +178,7 @@ const PUBLICATION_LABELS: Record<PublicationState, string> = {
  *
  * ── THE HOLE THIS CLOSES ─────────────────────────────────────────────────────
  *
- * `documents.update` is `uploaderOnly`, so the person who uploaded a testimony
+ * `documents.update` is `uploaderWithWriteSeat`, so the person who uploaded a testimony
  * may PATCH their own row. `admin: { readOnly: true }` on these fields is an
  * ADMIN-PANEL hint and enforces nothing over REST. So without this, the uploader
  * of a HELD Voz could send:
@@ -494,7 +494,7 @@ function narrowedToReadable(where: unknown, prefix: string, userId: unknown): bo
  * ⚠ `where[uploadedBy][equals]=<me>` IS ALREADY NARROWED, so "Mis documentos"
  * passes through untouched. A `session` filter on the caller's own
  * conversation is narrowed but loses nothing: only the uploader can attach a
- * document to a session (`uploaderOnly`, `bindDocumentToEcosystem`).
+ * document to a session (`uploaderWithWriteSeat`, `bindDocumentToEcosystem`).
  *
  * `prefix` is the relationship path from another collection (`'document.'` on
  * `anonymisation-reviews`), whose where/sort reach the same column.
@@ -553,6 +553,30 @@ const uploaderOnly: Access = ({ req: { user } }) => {
   if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
   return { uploadedBy: { equals: user.id } } satisfies Where
+}
+
+/**
+ * 🔴 A PATCH NEEDS THE SAME SEAT AS PUBLISH AND RETRY (audit 2026-11-10, A-02):
+ * the uploader, in an ecosistema where they hold `documents:write`
+ * ({@link hasWriteSeatInDocumentEcosystem}). Uploader alone let someone who was
+ * removed PATCH their draft with new `extractedText` and `ingestStatus:
+ * 'pending'`, and even a rename re-runs the ingest of a `failed` row with no
+ * `ingestId` (`runExtractAndIngest`; measured 2026-11-10 against a real
+ * Postgres: `failed` → `embedding`): both on the ecosistema's budget.
+ * `Documents.removedMemberPatch.pg.test.ts`.
+ *
+ * ⚠ Every user update, not only the ones that touch text: a rename is enough,
+ * see above. Delete keeps `uploaderOnly` (open owner question).
+ */
+const uploaderWithWriteSeat: Access = async ({ req }) => {
+  const { user } = req
+  if (!user || !isActiveUser(user)) return false
+  if (isPlatformAdminUser(user)) return true
+  const seats = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.documentsWrite)
+  if (seats.length === 0) return false
+  const own: Where = { uploadedBy: { equals: user.id } }
+  const seated: Where = { organization: { in: seats } }
+  return { and: [own, seated] }
 }
 
 /**
@@ -2538,10 +2562,34 @@ export async function enqueueIngestForDoc(args: {
 // Audio → transcript
 // ---------------------------------------------------------------------------
 
-/** `audio.<ext>` from an uploaded filename's extension, or `audio` without one. */
-export function neutralAudioFilename(filename: string | null | undefined): string {
-  const ext = /\.([A-Za-z0-9]{1,8})$/.exec(filename ?? '')?.[1]
-  return ext ? `audio.${ext.toLowerCase()}` : 'audio'
+/**
+ * The extensions audio-service accepts (`services/audio-service/app/audio/formats.py`
+ * `ACCEPTED_EXTENSIONS`). Anything else after the last dot is part of the name:
+ * "Testimonio de M.Lopez" must not leave as `audio.lopez`.
+ */
+const AUDIO_EXTENSIONS = new Set([
+  'mp3', 'm4a', 'mp4', 'm4b', 'aac', 'wav', 'wave', 'ogg', 'oga', 'opus',
+  'webm', 'flac', 'mkv', 'mov', 'amr', '3gp', 'wma', 'aiff', 'aif',
+])
+
+/** The extension for a mime type when the filename carries none audio-service knows. */
+const AUDIO_EXTENSION_FOR_MIME: Record<string, string> = {
+  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/m4a': 'm4a',
+  'audio/aac': 'aac', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav', 'audio/vnd.wave': 'wav',
+  'audio/ogg': 'ogg', 'audio/opus': 'opus', 'audio/webm': 'webm', 'audio/flac': 'flac', 'audio/x-flac': 'flac',
+  'audio/amr': 'amr', 'audio/3gpp': '3gp', 'audio/x-ms-wma': 'wma', 'audio/aiff': 'aiff', 'audio/x-aiff': 'aiff',
+  'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm', 'video/x-matroska': 'mkv', 'video/3gpp': '3gp',
+}
+
+/**
+ * `audio.<ext>`: the filename's extension if audio-service knows it, else the
+ * mime type's, else `audio`. ffmpeg sniffs the container either way.
+ */
+export function neutralAudioFilename(filename: string | null | undefined, mimeType?: string | null): string {
+  const fromName = /\.([A-Za-z0-9]{1,8})$/.exec(filename ?? '')?.[1]?.toLowerCase()
+  const fromMime = AUDIO_EXTENSION_FOR_MIME[(mimeType ?? '').split(';')[0]!.trim().toLowerCase()]
+  const ext = fromName && AUDIO_EXTENSIONS.has(fromName) ? fromName : fromMime
+  return ext ? `audio.${ext}` : 'audio'
 }
 
 /**
@@ -2643,7 +2691,7 @@ export async function startTranscription(args: {
       // 🔴 NO NAME LEAVES FOR audio-service. It keeps both (24 h, quoted from
       // its `config.py`) and echoes them in every callback; an upload's name is
       // often the speaker's. It only reads the extension, so that is all it gets.
-      filename: neutralAudioFilename(media.filename),
+      filename: neutralAudioFilename(media.filename, media.contentType),
       contentType: media.contentType,
       // The join key back to this row. The callback echoes it as `externalId`.
       externalId: String(docId),
@@ -2888,7 +2936,7 @@ export const Documents: CollectionConfig = {
   },
   access: {
     read: hideRevisions(visibleToCaller),
-    update: hideRevisions(uploaderOnly),
+    update: hideRevisions(uploaderWithWriteSeat),
     delete: hideRevisions(uploaderOnly),
     create: ({ req: { user } }) => isActiveUser(user),
   },

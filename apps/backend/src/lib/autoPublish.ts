@@ -103,6 +103,9 @@ export function isParticipantRole(role: OrgRole | null): boolean {
  *
  * ⚠ Unknown resolves to "no": a missing user or membership leaves the draft
  * with its uploader, which is the private direction.
+ *
+ * 🔴 A DEACTIVATED (OR NULL) ACCOUNT IS NOT A PARTICIPANT. Its upload still in
+ * flight when the account was switched off stays a draft (audit 2026-11-10).
  */
 export async function isParticipantUpload(
   payload: Payload,
@@ -112,7 +115,7 @@ export async function isParticipantUpload(
   const user = await payload
     .findByID({ collection: 'users', id: uploaderId as never, depth: 0, overrideAccess: true })
     .catch(() => null)
-  if (!user || isPlatformAdminUser(user)) return false
+  if (!user || user.isActive !== true || isPlatformAdminUser(user)) return false
   return isParticipantRole(await roleInOrganization(payload, uploaderId, organizationId))
 }
 

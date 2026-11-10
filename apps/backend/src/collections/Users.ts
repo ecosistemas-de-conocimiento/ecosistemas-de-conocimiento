@@ -1,12 +1,15 @@
+import { sql } from '@payloadcms/db-postgres'
 import type { CollectionAfterMeHook, CollectionBeforeChangeHook, CollectionBeforeLoginHook, CollectionConfig } from 'payload'
 import { AuthenticationError, ValidationError } from 'payload'
 
 import {
   canAccessAdminPanel,
   isPlatformAdmin,
+  isPlatformAdminUser,
   isSelfOrPlatformAdmin,
   platformAdminFieldAccess,
 } from '../access'
+import { transactionHandle } from '../lib/conversationUploads'
 import { loginRateLimitHooks } from '../lib/loginRateLimit'
 import { sessionMemberships } from '../lib/roles'
 
@@ -44,7 +47,8 @@ import { sessionMemberships } from '../lib/roles'
  *   · `isPlatformAdmin` / `isActive` — `isActive` is
  *     the revoke switch the resolver checks (`lib/permissions.ts`); Payload's
  *     own auth knows nothing about it, so it is enforced in `access/`, at
- *     login (`refuseInactiveLogin`) and on the open sessions (`dropSessionsOnDeactivate`).
+ *     login (`refuseInactiveLogin`), on the open sessions (`dropSessionsOnDeactivate`)
+ *     and against stale writes (`pinIsActiveForOthers`).
  *
  *   · `email` — only a platform admin changes it. See the field.
  *
@@ -76,14 +80,69 @@ export const attachMemberships: CollectionAfterMeHook = async ({ req, response }
  * 🔴 A DEACTIVATED ACCOUNT DOES NOT SIGN IN. Runs after the password check, so
  * it answers exactly what a wrong password answers: same error, same 401, no
  * hint that the address exists or was switched off. Payload revokes the
- * session it just added when this throws. The row is read from the database,
- * so anything but `true` (a NULL included) is off.
+ * session it just added when this throws. Anything but `true` (a NULL
+ * included) is off.
+ *
+ * 🔴 IT READS THE COMMITTED ROW, NOT THE `user` IT IS HANDED. Payload 3.88's
+ * login reads the row before the password check, then `addSessionToUser`
+ * writes that WHOLE copy back (`payload.db.updateOne({ data: user })`,
+ * `dist/auth/sessions.js`) before this hook runs (`dist/auth/operations/login.js`).
+ * A deactivation that committed in between was overwritten with
+ * `isActive: true`, and the stale copy passed this check (audit 2026-11-10,
+ * reproduced 3 of 3 runs). So the read goes through the adapter WITHOUT `req`,
+ * on another connection: it sees what is committed, not the login's own
+ * uncommitted write. The throw rolls that write back.
+ *
+ * ⚠ LOCK ORDER. The login's `updateOne` holds the row lock until it commits.
+ * A deactivation that committed before it is what this read sees. One that had
+ * the lock first made the login's `updateOne` wait for its commit, so it is
+ * seen too. One that comes later waits on the login's lock and writes after
+ * it, sessions included (`dropSessionsOnDeactivate`): the row ends off with no
+ * session. `Users.loginRace.pg.test.ts`.
  */
-export const refuseInactiveLogin: CollectionBeforeLoginHook = ({ req, user }) => {
-  if ((user as { isActive?: unknown }).isActive !== true) {
+export const refuseInactiveLogin: CollectionBeforeLoginHook = async ({ req, user }) => {
+  const committed = await req.payload.db
+    .findOne({
+      collection: 'users',
+      where: { id: { equals: (user as { id: number | string }).id } },
+      select: { isActive: true },
+    })
+    .catch(() => null)
+  if ((committed as { isActive?: unknown } | null)?.isActive !== true) {
     throw new AuthenticationError(req.t)
   }
   return user
+}
+
+/**
+ * 🔴 ONLY A PLATFORM ADMIN MOVES `isActive`, AND A STALE WRITE CANNOT MOVE IT
+ * BACK. Payload's update writes the whole row it read (`originalDoc` merged
+ * with the body), and field access only keeps the body's `isActive` out. A
+ * self-PATCH that read the row before a deactivation committed wrote
+ * `isActive: true` back on top of it.
+ *
+ * So any other signed-in write takes the committed value under `SELECT … FOR UPDATE`, in
+ * the update's own transaction: a deactivation that committed first is what it
+ * reads, and one that comes later waits for this write and lands after it.
+ * Without a transaction handle it reads committed, which narrows the window
+ * instead of closing it. `Users.loginRace.pg.test.ts`.
+ */
+export const pinIsActiveForOthers: CollectionBeforeChangeHook = async ({ data, operation, originalDoc, req }) => {
+  if (operation !== 'update' || !data || !req.user || isPlatformAdminUser(req.user)) return data
+  const id = (originalDoc as { id?: number | string } | undefined)?.id
+  if (id === undefined || id === null) return data
+  const tx = await transactionHandle(req)
+  let committed: unknown
+  if (tx) {
+    const res = (await tx.execute(sql`SELECT is_active FROM users WHERE id = ${Number(id)} FOR UPDATE`)) as {
+      rows?: Array<{ is_active: unknown }>
+    }
+    committed = res.rows?.[0]?.is_active
+  } else {
+    const row = await req.payload.db.findOne({ collection: 'users', where: { id: { equals: id } }, select: { isActive: true } })
+    committed = (row as { isActive?: unknown } | null)?.isActive
+  }
+  return { ...data, isActive: committed === true }
 }
 
 /**
@@ -143,7 +202,7 @@ export const Users: CollectionConfig = {
     afterMe: [attachMemberships],
     ...loginRateLimitHooks,
     beforeLogin: [refuseInactiveLogin],
-    beforeChange: [dropSessionsOnDeactivate],
+    beforeChange: [pinIsActiveForOthers, dropSessionsOnDeactivate],
     beforeValidate: [
       ({ data, operation, req }) => {
         const next = { ...(data ?? {}) } as Record<string, unknown>

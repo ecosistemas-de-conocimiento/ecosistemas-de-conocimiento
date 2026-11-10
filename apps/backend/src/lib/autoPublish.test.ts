@@ -67,11 +67,16 @@ describe('fileParticipantAudioAsTestimonio — a participant’s recording goes 
   })
 })
 
-function fakePayload(row: Row | null, opts: { role?: string | null; platformAdmin?: boolean } = {}) {
+function fakePayload(
+  row: Row | null,
+  opts: { role?: string | null; platformAdmin?: boolean; isActive?: boolean | null } = {},
+) {
   const store = row ? { ...row } : null
   const role = opts.role === undefined ? 'member' : opts.role
   const findByID = vi.fn(async (args: { collection: string }) => {
-    if (args.collection === 'users') return { id: 2, isPlatformAdmin: opts.platformAdmin === true }
+    if (args.collection === 'users') {
+      return { id: 2, isPlatformAdmin: opts.platformAdmin === true, isActive: opts.isActive === undefined ? true : opts.isActive }
+    }
     if (!store) throw Object.assign(new Error('not found'), { status: 404 })
     return { ...store }
   })
@@ -133,6 +138,8 @@ describe('autoPublishParticipantDocument', () => {
     ['owner', { role: 'owner' }],
     ['platform admin', { role: 'member', platformAdmin: true }],
     ['no longer a member', { role: null }],
+    ['a deactivated account (audit 2026-11-10)', { isActive: false }],
+    ['a NULL isActive', { isActive: null }],
   ])('leaves an upload by %s to its uploader', async (_case, opts) => {
     const { payload } = fakePayload(draft(), opts)
     const { client, enqueue } = fakeClient()

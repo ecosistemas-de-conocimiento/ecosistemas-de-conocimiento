@@ -69,7 +69,20 @@ describe('neutralAudioFilename', () => {
     ['', 'audio'],
     [null, 'audio'],
     ['x.not-an-ext', 'audio'],
+    // A dot inside the name is not an extension (audit 2026-11-10).
+    ['Testimonio de M.Lopez', 'audio'],
+    ['Entrevista J.Perez', 'audio'],
   ])('%s → %s', (input, out) => {
     expect(neutralAudioFilename(input)).toBe(out)
+  })
+
+  it.each([
+    ['Testimonio de M.Lopez', 'audio/mpeg', 'audio.mp3'],
+    ['voz', 'audio/webm;codecs=opus', 'audio.webm'],
+    ['grabacion.M4A', 'audio/mpeg', 'audio.m4a'],
+    ['Testimonio de M.Lopez', 'application/octet-stream', 'audio'],
+    ['clip.Lopez', 'video/quicktime', 'audio.mov'],
+  ])('%s (%s) → %s', (input, mime, out) => {
+    expect(neutralAudioFilename(input, mime)).toBe(out)
   })
 })
