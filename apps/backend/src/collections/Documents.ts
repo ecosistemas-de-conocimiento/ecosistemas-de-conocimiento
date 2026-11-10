@@ -246,9 +246,6 @@ const ingestMovesWithTextEdit: FieldAccess = ({ data, doc }) => {
   return incoming !== undefined && asText(incoming) !== asText((doc as Record<string, unknown> | undefined)?.extractedText)
 }
 
-/** A field only a platform admin may write (`keepPublicFigures`). */
-const platformAdminOnly: FieldAccess = ({ req }) => isPlatformAdminUser(req.user)
-
 /**
  * 🔴 `lengua` IS READABLE ONLY ON A `documento`. The read-side half of the same
  * rule the write hook enforces — see `enforceLenguaDocumentoOnly`.
@@ -3146,14 +3143,18 @@ export const Documents: CollectionConfig = {
        * a conversation never keeps a name, whatever this says.
        *
        * ⚠ NO DEFAULT, on purpose: a default would store `false` and silently
-       * override the ecosistema. Writable by a platform admin only — it decides
-       * which names reach the corpus.
+       * override the ecosistema. It decides which names reach the corpus, so
+       * like `keepDocumentAuthor` NO CALLER WRITES IT THROUGH THE API, not even
+       * a platform admin (review 2026-11-10, R-01: a collection write left no
+       * audit row and no re-gate). Its writer is `PATCH …/anonimizacion`,
+       * which allows a platform admin only.
        */
       name: 'keepPublicFigures',
       type: 'checkbox',
-      access: { create: platformAdminOnly, update: platformAdminOnly },
+      access: { create: gateWritesOnly, update: gateWritesOnly },
       admin: {
         position: 'sidebar',
+        readOnly: true,
         description:
           'Conservar los nombres de figuras públicas en este documento. Vacío: lo que diga el ecosistema.',
       },
