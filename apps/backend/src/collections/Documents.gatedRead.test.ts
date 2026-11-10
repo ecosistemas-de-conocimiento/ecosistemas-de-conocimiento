@@ -16,6 +16,7 @@ import {
   bindDocumentToEcosystem,
   constrainGatedQueries,
   constrainGatedQueriesAt,
+  contributorReadable,
   Documents,
   storageErrorReason,
   gatedQueryableReadable,
@@ -416,8 +417,12 @@ describe('🔴 the collection config actually wires the gate', () => {
     expect(field(name)?.access?.read).toBe(gatedOriginalReadable)
   })
 
-  it.each(['uploadedBy', 'session'])('%s reads through gatedQueryableReadable', (name) => {
-    expect(field(name)?.access?.read).toBe(gatedQueryableReadable)
+  it('session reads through gatedQueryableReadable', () => {
+    expect(field('session')?.access?.read).toBe(gatedQueryableReadable)
+  })
+
+  it('uploadedBy reads through contributorReadable', () => {
+    expect(field('uploadedBy')?.access?.read).toBe(contributorReadable)
   })
 
   it('name is replaced on read by neutralNameForCaller', () => {
