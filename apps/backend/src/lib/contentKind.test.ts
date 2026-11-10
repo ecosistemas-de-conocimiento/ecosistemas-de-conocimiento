@@ -48,6 +48,7 @@ import {
   DEFAULT_CONTENT_KIND,
   chunkMetadata,
   contentKindOf,
+  documentTitleFor,
   isContentKind,
   titleFor,
 } from './contentKind'
@@ -72,6 +73,49 @@ describe('🔴 titleFor fails CLOSED — only a documento carries its own name',
       expect(title).toBe('Documento')
     },
   )
+})
+
+describe('🔴 a gated documento carries its REDACTED title, never its name (P-13/I-07/C-10)', () => {
+  const NAME = 'Entrevista a Juan Pérez.pdf'
+  const report = { stages: [], pseudonyms: 1, redactedTitle: 'Entrevista a [Persona A].pdf' }
+
+  it('the gate\'s redacted title, once the row has one', () => {
+    expect(titleFor('documento', NAME, { anonymise: true, anonymisationReport: report })).toBe(
+      'Entrevista a [Persona A].pdf',
+    )
+    expect(documentTitleFor({ contentKind: 'documento', name: NAME, anonymise: true, anonymisationReport: report })).toBe(
+      'Entrevista a [Persona A].pdf',
+    )
+  })
+
+  it.each([[null], [{}], [{ redactedTitle: '  ' }], [{ redactedTitle: 42 }], ['x'], [[]]])(
+    '🔴 gated with no redacted title (%j) → "Documento", never the name',
+    (anonymisationReport) => {
+      expect(titleFor('documento', NAME, { anonymise: true, anonymisationReport })).toBe('Documento')
+    },
+  )
+
+  it.each([[false], [null], [undefined]])('ungated (anonymise=%j) → the name, as before', (anonymise) => {
+    expect(titleFor('documento', NAME, { anonymise, anonymisationReport: report })).toBe(NAME)
+    expect(documentTitleFor({ contentKind: 'documento', name: NAME, anonymise })).toBe(NAME)
+  })
+
+  it('a testimonio stays "Testimonio", redacted title or not', () => {
+    expect(documentTitleFor({ contentKind: 'testimonio', name: NAME, anonymise: true, anonymisationReport: report })).toBe(
+      'Testimonio',
+    )
+  })
+
+  it('🔴 chunkMetadata.title follows the gate columns too', () => {
+    const base = { docId: '9', organizationId: 1, contentKind: 'documento' as const, publication: 'published' as const }
+    expect(chunkMetadata({ ...base, title: NAME, gate: { anonymise: true, anonymisationReport: report } }).title).toBe(
+      'Entrevista a [Persona A].pdf',
+    )
+    expect(chunkMetadata({ ...base, title: NAME, gate: { anonymise: true, anonymisationReport: null } }).title).toBe(
+      'Documento',
+    )
+    expect(chunkMetadata({ ...base, title: NAME, gate: { anonymise: false } }).title).toBe(NAME)
+  })
 })
 
 // ---------------------------------------------------------------------------

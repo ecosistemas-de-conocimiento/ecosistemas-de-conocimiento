@@ -447,6 +447,8 @@ export async function promoteRevision(args: {
     const { chunkMetadata, contentKindOf, knownContentKind, titleFor } = await import('./contentKind')
     const { publishedCorpus } = await import('./corpus')
     const { withRateLimitRetry } = await import('./aiRetry')
+    // A revision is always gated (the swap below sets `anonymise = true`).
+    const revisionGate = { anonymise: true, anonymisationReport: revision.anonymisationReport }
     const result = await withRateLimitRetry(
       () =>
         client.ingest.enqueue({
@@ -455,7 +457,8 @@ export async function promoteRevision(args: {
             {
               id: String(note.id),
               text: cleared.text,
-              title: titleFor(knownContentKind(note as never), note.name as string),
+              // 🔴 P-13: the REVISION's redacted title (its report replaces the note's below).
+              title: titleFor(knownContentKind(note as never), note.name as string, revisionGate),
               metadata: chunkMetadata({
                 docId: String(note.id),
                 organizationId,
@@ -463,6 +466,7 @@ export async function promoteRevision(args: {
                 format: note.kind as string,
                 publication: 'published',
                 title: note.name as string,
+                gate: revisionGate,
                 lengua: (note.lengua as string | null | undefined) ?? null,
               }),
             },

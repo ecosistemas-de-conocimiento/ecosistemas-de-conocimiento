@@ -1144,13 +1144,15 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
              r.type AS relation_type,
              d.id AS document_id,
              d.name AS name,
-             d.content_kind AS content_kind
+             d.content_kind AS content_kind,
+             d.anonymise AS anonymise,
+             d.anonymisation_report->>'redactedTitle' AS redacted_title
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
       ${relationEndsPublicPersonaOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
-      GROUP BY 1, 2, d.id, d.name, d.content_kind
+      GROUP BY 1, 2, d.id, d.name, d.content_kind, d.anonymise, d.anonymisation_report->>'redactedTitle'
     ),
     ranked AS (
       SELECT ev.neighbour_id AS neighbour_id,
@@ -1158,6 +1160,8 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
              ev.document_id AS document_id,
              ev.name AS name,
              ev.content_kind AS content_kind,
+             ev.anonymise AS anonymise,
+             ev.redacted_title AS redacted_title,
              ROW_NUMBER() OVER (
                PARTITION BY ev.neighbour_id, ev.relation_type
                ORDER BY ev.document_id DESC
@@ -1174,7 +1178,9 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
            ranked.relation_type AS relation_type,
            ranked.document_id AS id,
            ranked.name AS name,
-           ranked.content_kind AS content_kind
+           ranked.content_kind AS content_kind,
+           ranked.anonymise AS anonymise,
+           ranked.redacted_title AS redacted_title
     FROM ranked
     WHERE ranked.rn <= ${perEdge}
     ORDER BY ranked.neighbour_id ASC, ranked.relation_type ASC, ranked.document_id DESC
@@ -1211,6 +1217,8 @@ export function entityDocumentsQuery(args: EntityDetailArgs): GraphSql {
     SELECT d.id AS id,
            d.name AS name,
            d.content_kind AS content_kind,
+           d.anonymise AS anonymise,
+           d.anonymisation_report->>'redactedTitle' AS redacted_title,
            CASE WHEN d.content_kind = 'documento' THEN m.snippet ELSE NULL END AS snippet
     FROM graph_mentions m
     ${joinPublishedDocuments('m', organizationId)}
@@ -1234,7 +1242,11 @@ export function mapDocumentRow(row: Row, withSnippet: boolean): GraphDocumentRef
   const contentKind = contentKindOf({ contentKind: row.content_kind })
   const ref: GraphDocumentRef = {
     id: toId(row.id),
-    title: titleFor(contentKind, typeof row.name === 'string' ? row.name : null),
+    // 🔴 P-13: a gated documento's redacted title, never `name`.
+    title: titleFor(contentKind, typeof row.name === 'string' ? row.name : null, {
+      anonymise: row.anonymise,
+      anonymisationReport: { redactedTitle: row.redacted_title },
+    }),
     contentKind,
   }
   if (withSnippet) {
@@ -1837,6 +1849,8 @@ export function retrieveDocumentsQuery(
     SELECT d.id AS id,
            d.name AS name,
            d.content_kind AS content_kind,
+           d.anonymise AS anonymise,
+           d.anonymisation_report->>'redactedTitle' AS redacted_title,
            COUNT(DISTINCT m.entity_id)::int AS matched_entities,
            SUM(m.occurrences)::int AS occurrences
     FROM graph_mentions m
@@ -1845,7 +1859,7 @@ export function retrieveDocumentsQuery(
     JOIN graph_entities ce ON ce.id = m.entity_id AND ce.organization_id = ${organizationId}
     WHERE m.organization_id = ${organizationId}
       AND m.entity_id = ANY(${intArray(ids)})${publicPersonaOnly('ce')}
-    GROUP BY d.id, d.name, d.content_kind
+    GROUP BY d.id, d.name, d.content_kind, d.anonymise, d.anonymisation_report->>'redactedTitle'
     ORDER BY matched_entities DESC, occurrences DESC, d.id DESC
     LIMIT ${clampLimit(limit, MAX_RETRIEVE_DOCUMENTS, MAX_RETRIEVE_DOCUMENTS)}`
 }

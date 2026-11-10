@@ -41,7 +41,7 @@
 
 import { randomUUID } from 'node:crypto'
 
-import type { ContentKind } from './contentKind'
+import { anonymiseRequested, documentTitleFor, type ContentKind } from './contentKind'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { gatedTextHash } from './gatedTextHash'
 import type { GateReport, PersonDetector } from './anonymise/types'
@@ -131,9 +131,7 @@ export function mustPassAnonymisationGate(rawContentKind: unknown, rawAnonymise?
  * (`payload@3.88.0`), so a projected row can lack the column; read access
  * (`mayReadGatedOriginal`) requires `anonymise === false` instead.
  */
-export function anonymiseRequested(rawAnonymise: unknown): boolean {
-  return rawAnonymise !== undefined && rawAnonymise !== null && rawAnonymise !== false
-}
+export { anonymiseRequested }
 
 /** {@link mustPassAnonymisationGate} over a row. */
 export function rowMustPassGate(row: { contentKind?: unknown; anonymise?: unknown }): boolean {
@@ -165,7 +163,18 @@ export const ANONYMISATION_STATES = [
 export type AnonymisationState = (typeof ANONYMISATION_STATES)[number]
 
 export type AnonymiseOutcome =
-  | { ok: true; text: string; report: GateReport | null }
+  | {
+      ok: true
+      text: string
+      report: GateReport | null
+      /**
+       * 🔴 THE TITLE THIS INGEST CARRIES (P-13/I-07/C-10): `name` for an
+       * ungated `documento`; for a gated one, the gate's redacted title, or the
+       * neutral one (`titleFor`). The caller uses it for `title` and
+       * `chunkMetadata`, never `documents.name`.
+       */
+      title: string
+    }
   /**
    * 🔴 The caller MUST NOT ingest. Not a soft failure, not a retry hint.
    */
@@ -242,6 +251,16 @@ export async function anonymiseDocumentText(args: {
   contentKind: unknown
   /** 🔴 THE RAW `documents.anonymise`. A `documento` with it set is gated. */
   anonymise?: unknown
+  /**
+   * 🔴 THE RAW `documents.name`. A gated `documento`'s title is redacted with
+   * the body (P-13, `gate.ts`); absent → the neutral title, never the name.
+   */
+  name?: unknown
+  /**
+   * The STORED `documents.anonymisationReport`, read only with
+   * {@link approvedText}: an approved row keeps the title its gate run made.
+   */
+  anonymisationReport?: unknown
   /** The unredacted text. Never leaves this process except through `detector`. */
   text: string
   detector?: PersonDetector
@@ -303,13 +322,16 @@ export async function anonymiseDocumentText(args: {
    */
   const write = (data: Record<string, unknown>): Promise<unknown> =>
     updateDocumentColumns(payload, { id: docId, data })
+  /** The ingest's title (`AnonymiseOutcome.title`) under a given report. */
+  const titleUnder = (anonymisationReport: unknown): string =>
+    documentTitleFor({ contentKind, name: args.name, anonymise: args.anonymise, anonymisationReport })
 
   if (!mustPassAnonymisationGate(contentKind, args.anonymise)) {
     // Recorded explicitly rather than left null. "This was never gated" and
     // "the gate has not run yet" are different facts, and an operator reading
     // the row should not have to infer which one they are looking at.
     await write({ anonymisationStatus: 'n/a', anonymisationError: null })
-    return { ok: true, text, report: null }
+    return { ok: true, text, report: null, title: titleUnder(null) }
   }
 
   if (typeof args.approvedText === 'string') {
@@ -317,7 +339,7 @@ export async function anonymiseDocumentText(args: {
     // `lib/holdReview.ts` already stored the text, flipped the status and wrote
     // the audit row, in that order and in one place. This branch exists so the
     // ingest path can carry that decision without a second opinion about it.
-    return { ok: true, text: args.approvedText, report: null }
+    return { ok: true, text: args.approvedText, report: null, title: titleUnder(args.anonymisationReport) }
   }
 
   // 🔴 CLAIM, OR DO NOTHING. See `GATE_CLAIM_GUARD`.
@@ -367,7 +389,8 @@ export async function anonymiseDocumentText(args: {
   // 🔴 The one builder, shared with `/admin/evals` (I-06): `testimonio` is the
   // default kind, and the gate itself ignores `keepPublicFigures` for anything
   // but a documento (`gate.ts`, one check, tested there).
-  const input = documentGateInput(contentKind, text, args)
+  // 🔴 The title only for a documento: every other kind's title is neutral.
+  const input = documentGateInput(contentKind, text, contentKind === 'documento' ? { ...args, title: args.name } : args)
   let result: Awaited<ReturnType<typeof runAnonymisationGate>>
   try {
     result = await runAnonymisationGate(
@@ -408,6 +431,17 @@ export async function anonymiseDocumentText(args: {
     // from `publicFiguresKept` (P-04/I-13).
     keepPublicFigures: input.keepPublicFigures && input.contentKind === 'documento',
   }
+  /**
+   * 🔴 The gate's redacted title (P-13), kept in the report: the one JSON
+   * column the gate already writes (`collections/Documents.ts` is edc-1's).
+   * Redacted text, like `redactedText`, never a removed string. Absent →
+   * `titleFor` gives the neutral title.
+   */
+  const gateReport = {
+    ...result.report,
+    settings,
+    ...(typeof result.redactedTitle === 'string' ? { redactedTitle: result.redactedTitle } : {}),
+  }
 
   if (result.status === 'hold' && result.retryable) {
     /**
@@ -420,7 +454,7 @@ export async function anonymiseDocumentText(args: {
     if (!(await finish({
       anonymisationStatus: 'n/a',
       anonymisationError: `${GATE_UNAVAILABLE_CODE}: ${result.stage}: ${result.reason}`.slice(0, 500),
-      anonymisationReport: { ...result.report, settings },
+      anonymisationReport: gateReport,
       redactedText: null,
       heldText: null,
       anonymisationSurvivors: null,
@@ -444,7 +478,7 @@ export async function anonymiseDocumentText(args: {
       // text that triggered it. An error column that quoted the name it found
       // would be a re-identification map with a different name on the door.
       anonymisationError: `${result.stage}: ${result.reason}`.slice(0, 500),
-      anonymisationReport: { ...result.report, settings },
+      anonymisationReport: gateReport,
       /**
        * 🔴 CLEARED, AND THIS IS A REAL REACHABLE BUG, NOT TIDINESS.
        *
@@ -512,7 +546,7 @@ export async function anonymiseDocumentText(args: {
     redactedText: result.redactedText,
     anonymisationStatus: 'ready',
     anonymisationError: null,
-    anonymisationReport: { ...result.report, settings },
+    anonymisationReport: gateReport,
     // A clean run has nothing held. Clearing keeps a stale review from an
     // earlier attempt off a row that has since passed.
     heldText: null,
@@ -525,7 +559,7 @@ export async function anonymiseDocumentText(args: {
     citedAuthorsKept: authorsLog(result.keptCited, result.report.model),
   }))) return superseded()
 
-  return { ok: true, text: result.redactedText, report: result.report }
+  return { ok: true, text: result.redactedText, report: result.report, title: titleUnder(gateReport) }
 }
 
 /**

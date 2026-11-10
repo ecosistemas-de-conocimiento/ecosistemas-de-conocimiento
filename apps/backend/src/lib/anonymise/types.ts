@@ -188,8 +188,18 @@ export interface KeptPublicFigure {
   motivo: string
 }
 
+/**
+ * 🔴 The gate's verdict on {@link GateInput.title}: the redacted title, or
+ * `null` when the title could not be cleared (the detector failed, or left a
+ * name it could not place). Absent when no title was given. `null` means the
+ * neutral title, never the original (`lib/contentKind.ts`, `titleFor`).
+ */
+export interface GateTitleVerdict {
+  redactedTitle?: string | null
+}
+
 export type GateResult =
-  | {
+  | ({
       status: 'ready'
       redactedText: string
       report: GateReport
@@ -204,8 +214,8 @@ export type GateResult =
        * (`citedAuthorRestore.ts`), each once. Not a removal record either.
        */
       keptCited?: string[]
-    }
-  | GateHold
+    } & GateTitleVerdict)
+  | (GateHold & GateTitleVerdict)
 
 /**
  * What the gate is being asked to anonymise.
@@ -258,6 +268,15 @@ export interface GateInput {
    * a hold shows it redacted.
    */
   keepCitedAuthors?: boolean
+  /**
+   * 🔴 THE TITLE OF A GATED `documento` (P-13/I-07/C-10, owner decision
+   * 2026-11-10): `documents.name`, usually the filename. Redacted AFTER the
+   * body, with the body's allocator, so a person named in both gets the same
+   * `[Persona X]` (`gate.ts`, `redactTitle`). The body's output does not
+   * change with or without it. Ignored for any other kind (their titles are
+   * neutral, `lib/contentKind.ts`).
+   */
+  title?: string
 }
 
 /** One finding from the detector: a literal string that identifies someone. */

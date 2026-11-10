@@ -37,7 +37,8 @@ import {
   isGatedContent,
   kindFilterWhere,
   libraryKindOf,
-  libraryTitleFor,
+  isGatedDocumento,
+  libraryTitleOf,
   normalizeSearch,
   parseSkipIntro,
   testimonyHeading,
@@ -91,6 +92,9 @@ export const LIBRARY_LIST_FIELDS = [
   // 🔴 A documento filed for anonymisation is gated too — see `hasGatedText`.
   // (Backend `forceSelect` returns it anyway; named here so the dependency shows.)
   'anonymise',
+  // 🔴 A gated documento's title is the gate's (`redactedTitle`, P-13); the
+  // report is counts plus that title. Dropped before the row leaves.
+  'anonymisationReport',
 ] as const;
 
 /**
@@ -154,6 +158,13 @@ const CLEARED_WHERE: Array<[string, string]> = [
   ['where[or][2][and][1][redactedText][exists]', 'true'],
 ];
 
+/** Not a `documento` filed for anonymisation (`anonymise` false or null), for the name search. */
+const NOT_GATED_DOCUMENTO_WHERE: Array<[string, string]> = [
+  ['where[and][1][or][0][contentKind][not_equals]', 'documento'],
+  ['where[and][1][or][1][anonymise][equals]', 'false'],
+  ['where[and][1][or][2][anonymise][exists]', 'false'],
+];
+
 /**
  * 🔴 IS THIS ROW'S TEXT GATED? A testimonio or conversación (`isGatedContent`),
  * or a `documento` filed for anonymisation (`anonymise`, backend
@@ -162,12 +173,13 @@ const CLEARED_WHERE: Array<[string, string]> = [
  * the library shows `redactedText` or nothing. Audit 2026-10-26: a published
  * gated documento showed an empty body.
  *
- * ⚠ Text only. A gated documento keeps its own title and contributor (owner
- * ruling 2026-10-26, backend `mayReadGatedOriginal` scope `identity`).
+ * ⚠ Text only. A gated documento keeps its contributor (owner ruling
+ * 2026-10-26); its title is the gate's redacted one (2026-11-10, P-13,
+ * `libraryTitleOf`).
  */
 export function hasGatedText(row: Record<string, unknown>): boolean {
   if (isGatedContent(row.contentKind)) return true;
-  return row.anonymise !== undefined && row.anonymise !== null && row.anonymise !== false;
+  return isGatedDocumento(row.anonymise);
 }
 
 /**
@@ -204,7 +216,13 @@ export function libraryListQuery(input: LibraryQueryInput): string {
   for (const [k, v] of kindFilterWhere(input.kind)) qs.set(k, v);
 
   const search = normalizeSearch(input.search);
-  if (search) qs.set('where[name][like]', search);
+  if (search) {
+    qs.set('where[and][0][name][like]', search);
+    // 🔴 NOT ON A GATED DOCUMENTO'S NAME (P-13): it shows the redacted title,
+    // so matching the raw filename would say who it names. Rows that are not a
+    // documento keep today's search.
+    for (const [k, v] of NOT_GATED_DOCUMENTO_WHERE) qs.set(k, v);
+  }
 
   if (input.documentIds && input.documentIds.length > 0) {
     qs.set('where[id][in]', input.documentIds.join(','));
@@ -294,7 +312,8 @@ export function toLibraryItem(
     id: String(row.id ?? ''),
     // 🔴 Never the uploader's filename on gated content, even when the backend
     // hands it over (it does, to the uploader and to a platform admin).
-    title: heading ? heading.title : libraryTitleFor(row.contentKind, row.name, null),
+    // A gated documento: the gate's redacted title (P-13), never `name`.
+    title: heading ? heading.title : libraryTitleOf(row),
     subtitle: heading ? heading.subtitle : null,
     kind,
     createdAt: epoch(row.createdAt),

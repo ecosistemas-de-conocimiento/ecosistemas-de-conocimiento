@@ -111,11 +111,43 @@ export function libraryKindOf(row: { kind?: unknown; contentKind?: unknown }): L
  * free text the uploader typed (usually the filename) and never went through
  * the anonymisation gate.
  */
-export function libraryTitleFor(contentKind: unknown, name: unknown, topic: string | null = null): string {
+export function libraryTitleFor(
+  contentKind: unknown,
+  name: unknown,
+  topic: string | null = null,
+  /**
+   * 🔴 The row's gate columns (P-13/I-07/C-10, owner decision 2026-11-10). A
+   * `documento` filed for anonymisation shows the gate's redacted title
+   * (`anonymisationReport.redactedTitle`), else "Documento" — never `name`.
+   * Absent = ungated, as the backend's `titleFor`.
+   */
+  gate?: { anonymise?: unknown; anonymisationReport?: unknown } | null,
+): string {
   if (contentKind === 'testimonio') return testimonyLabel(topic);
   if (contentKind === 'conversacion') return 'Conversación';
   if (isGatedContent(contentKind)) return 'Documento sin título';
+  if (gate && isGatedDocumento(gate.anonymise)) return redactedTitleOf(gate.anonymisationReport) ?? 'Documento';
   return typeof name === 'string' && name.trim() ? name.trim() : 'Documento sin título';
+}
+
+/** {@link libraryTitleFor} over a `documents` row (kind, name and gate columns). */
+export function libraryTitleOf(row: Record<string, unknown>, topic: string | null = null): string {
+  return libraryTitleFor(row.contentKind, row.name, topic, row);
+}
+
+/**
+ * A `documento` filed for anonymisation: backend `anonymiseRequested`,
+ * anything but missing/null/false.
+ */
+export function isGatedDocumento(anonymise: unknown): boolean {
+  return anonymise !== undefined && anonymise !== null && anonymise !== false;
+}
+
+/** The gate's redacted title on a report (backend `redactedTitleOf`), or null. */
+export function redactedTitleOf(report: unknown): string | null {
+  if (!report || typeof report !== 'object' || Array.isArray(report)) return null;
+  const t = (report as { redactedTitle?: unknown }).redactedTitle;
+  return typeof t === 'string' && t.trim() !== '' ? t.trim() : null;
 }
 
 // ── Testimonio label and excerpt (owner ruling 2026-10-23) ─────────────────

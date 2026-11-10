@@ -74,6 +74,7 @@
 
 import type { ContextRef } from '@edc/chat-engine/core';
 import { backendFetch } from '$lib/server/auth';
+import { libraryTitleOf } from '$lib/biblioteca';
 import { isClearedForLibrary } from '$lib/server/biblioteca';
 
 export const MIN_TITLE_WORDS = 2;
@@ -176,6 +177,8 @@ export function publishedTitlesQuery(organizationId: string): string {
   qs.set('select[uploadedBy]', 'true');
   qs.set('select[anonymisationStatus]', 'true');
   qs.set('select[anonymise]', 'true');
+  // 🔴 P-13: a gated documento is named by its report's redacted title.
+  qs.set('select[anonymisationReport]', 'true');
   qs.set('select[publicationStatus]', 'true');
   return qs.toString();
 }
@@ -213,7 +216,10 @@ export async function fetchPublishedTitleScan(
       .filter((r) => typeof r.name === 'string' && r.name.trim())
       .map((r) => ({
         id: String(r.id),
-        name: (r.name as string).trim(),
+        // 🔴 P-13: a documento by `libraryTitleOf` — a gated one by its redacted
+        // title (else "Documento", too short to match), so its raw filename is
+        // never matched, pinned or listed.
+        name: r.contentKind === 'documento' ? libraryTitleOf(r) : (r.name as string).trim(),
         contentKind: r.contentKind as 'documento' | 'testimonio',
       }));
     return { docs, truncated: rows.length >= TITLE_SCAN_LIMIT };

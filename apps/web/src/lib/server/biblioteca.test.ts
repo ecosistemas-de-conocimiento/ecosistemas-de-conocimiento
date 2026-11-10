@@ -81,11 +81,23 @@ describe('libraryListQuery — the two constraints', () => {
 
   it('searches on the title only, trimmed', () => {
     const qs = new URLSearchParams(libraryListQuery({ ...base, search: '  acta  ' }));
-    expect(qs.get('where[name][like]')).toBe('acta');
+    expect(qs.get('where[and][0][name][like]')).toBe('acta');
+  });
+
+  // 🔴 P-13: a gated documento shows its redacted title, so its raw filename
+  // must not answer a search ("Pérez" would find "Entrevista a Juan Pérez.pdf").
+  it('🔴 the name search skips a documento filed for anonymisation', () => {
+    const qs = new URLSearchParams(libraryListQuery({ ...base, search: 'Pérez' }));
+    expect(qs.get('where[and][1][or][0][contentKind][not_equals]')).toBe('documento');
+    expect(qs.get('where[and][1][or][1][anonymise][equals]')).toBe('false');
+    expect(qs.get('where[and][1][or][2][anonymise][exists]')).toBe('false');
+    expect(qs.get('where[name][like]')).toBeNull();
   });
 
   it('omits the search constraint when there is no term', () => {
-    expect(new URLSearchParams(libraryListQuery(base)).get('where[name][like]')).toBeNull();
+    const qs = new URLSearchParams(libraryListQuery(base));
+    expect(qs.get('where[and][0][name][like]')).toBeNull();
+    expect([...qs.keys()].some((k) => k.startsWith('where[and]'))).toBe(false);
   });
 
   it('pages, newest first', () => {
@@ -231,6 +243,43 @@ describe('toLibraryItem', () => {
       const item = toLibraryItem({ id: 1, kind: 'audio', contentKind, lengua: 'tsotsil' }, null);
       expect(item.lengua).toBeNull();
       expect(JSON.stringify(item)).not.toContain('tsotsil');
+    }
+  });
+
+  // 🔴 P-13 / I-07 / C-10 (owner decision 2026-11-10).
+  it('🔴 a gated documento shows the gate\'s redacted title, never its name', () => {
+    const row = {
+      id: 1,
+      name: 'Entrevista a Juan Pérez.pdf',
+      kind: 'pdf',
+      contentKind: 'documento',
+      anonymise: true,
+      anonymisationStatus: 'ready',
+      anonymisationReport: { stages: [], pseudonyms: 1, redactedTitle: 'Entrevista a [Persona A].pdf' },
+    };
+    const item = toLibraryItem(row, 'Ana');
+    expect(item.title).toBe('Entrevista a [Persona A].pdf');
+    expect(JSON.stringify(item)).not.toContain('Juan');
+    expect(JSON.stringify(item)).not.toContain('anonymisationReport');
+  });
+
+  it('🔴 a gated documento with no redacted title yet shows "Documento"', () => {
+    for (const anonymisationReport of [undefined, null, { stages: [] }]) {
+      const item = toLibraryItem(
+        { id: 1, name: 'Entrevista a Juan Pérez.pdf', contentKind: 'documento', anonymise: true, anonymisationReport },
+        null,
+      );
+      expect(item.title).toBe('Documento');
+    }
+  });
+
+  it('an ungated documento keeps its own name, a redacted title on its report or not', () => {
+    for (const anonymise of [false, null, undefined]) {
+      const item = toLibraryItem(
+        { id: 1, name: 'Informe de Juan Pérez.pdf', contentKind: 'documento', anonymise, anonymisationReport: { redactedTitle: 'x' } },
+        null,
+      );
+      expect(item.title).toBe('Informe de Juan Pérez.pdf');
     }
   });
 

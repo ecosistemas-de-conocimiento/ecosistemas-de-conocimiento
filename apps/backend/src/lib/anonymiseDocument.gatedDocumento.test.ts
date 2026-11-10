@@ -128,7 +128,7 @@ describe('anonymiseDocumentText — gated documento', () => {
   it('an ungated staff documento passes through untouched, as before', async () => {
     const fake = fakePayload()
     const out = await gate(fake, false)
-    expect(out).toEqual({ ok: true, text: NOTES, report: null })
+    expect(out).toEqual({ ok: true, text: NOTES, report: null, title: 'Documento sin título' })
     expect(fake.last('anonymisationStatus')).toBe('n/a')
   })
 })

@@ -19,6 +19,11 @@ export interface GateSwitchOptions {
   keepPublicFigures?: boolean
   authors?: readonly string[]
   keepCitedAuthors?: boolean
+  /**
+   * 🔴 A gated `documento`'s `name` (P-13): redacted after the body, with its
+   * labels (`gate.ts`). Not passed by `/admin/evals`, whose runs score the body.
+   */
+  title?: unknown
 }
 
 /**
@@ -41,5 +46,7 @@ export function documentGateInput(contentKind: unknown, text: string, options: G
     keepPublicFigures: options.keepPublicFigures === true,
     authors: options.authors ?? [],
     keepCitedAuthors: options.keepCitedAuthors === true,
+    // The gate ignores it for anything but a documento.
+    ...(typeof options.title === 'string' ? { title: options.title } : {}),
   }
 }

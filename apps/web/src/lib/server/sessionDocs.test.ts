@@ -109,6 +109,26 @@ describe('fetchSessionDocs', () => {
     expect(res.docs).toHaveLength(1);
   });
 
+  // 🔴 P-13: the generate route hands this list to the prompt summary.
+  it('names a gated documento by its redacted title, never its raw name', async () => {
+    mockedBackendFetch.mockResolvedValue(
+      jsonResponse({
+        docs: [
+          {
+            id: 1,
+            name: 'Entrevista a María López.pdf',
+            contentKind: 'documento',
+            anonymise: true,
+            anonymisationReport: { redactedTitle: 'Entrevista a [Persona A].pdf' },
+          },
+          { id: 2, name: 'Notas de María.pdf', contentKind: 'documento', anonymise: true },
+        ],
+      }),
+    );
+    const { docs } = await fetchSessionDocs('t', '42');
+    expect(docs.map((d) => d.name)).toEqual(['Entrevista a [Persona A].pdf', 'Documento']);
+  });
+
   it('does not call the backend at all without a session id', async () => {
     expect(await fetchSessionDocs('tok', '')).toEqual({ docs: [], ok: false });
     expect(mockedBackendFetch).not.toHaveBeenCalled();

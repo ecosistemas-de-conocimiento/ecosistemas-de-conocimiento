@@ -35,3 +35,24 @@ describe('driveTranscribedDocument — keepPublicFigures', () => {
     expect(args.fresh.keepPublicFigures).toBe(override)
   })
 })
+
+// 🔴 P-13: an approved gated documento keeps its redacted title on re-ingest.
+describe('driveTranscribedDocument — anonymisationReport', () => {
+  it('is carried to the ingest, so the redacted title survives', async () => {
+    enqueue.mockClear()
+    const report = { redactedTitle: 'Notas de [Persona A].m4a' }
+    await driveTranscribedDocument(payload as never, {
+      id: 7,
+      organization: 1,
+      uploadedBy: 2,
+      name: 'Notas de Ramiro.m4a',
+      kind: 'audio',
+      contentKind: 'documento',
+      anonymise: true,
+      anonymisationReport: report,
+      extractedText: 'Habló Ramiro.',
+    })
+    const args = (enqueue.mock.calls[0] as unknown as [{ fresh: { anonymisationReport?: unknown } }])[0]
+    expect(args.fresh.anonymisationReport).toEqual(report)
+  })
+})

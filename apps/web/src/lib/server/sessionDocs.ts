@@ -25,7 +25,7 @@
  */
 
 import { backendFetch } from '$lib/server/auth';
-import { libraryTitleFor } from '$lib/biblioteca';
+import { libraryTitleOf } from '$lib/biblioteca';
 
 /**
  * 🔴 A GATED ROW'S `name` NEVER LEAVES THIS READ.
@@ -138,7 +138,8 @@ export async function fetchSessionDocs(
       if (r.id == null) continue;
       docs.push({
         id: r.id as number | string,
-        name: libraryTitleFor(r.contentKind, r.name),
+        // 🔴 P-13: a gated documento's redacted title, never `name`.
+        name: libraryTitleOf(r),
         kind: (r.kind as string | null | undefined) ?? null,
         contentKind: typeof r.contentKind === 'string' ? r.contentKind : null,
         ingestStatus: (r.ingestStatus as string | null | undefined) ?? null,

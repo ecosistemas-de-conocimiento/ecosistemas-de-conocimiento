@@ -603,6 +603,67 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
    *            82→81 relacionado_con (802), 83→81 afecta_a (803) — a persona
    *            end from a testimonio / conversacion: never counted.
    */
+  /**
+   * 🔴 P-13 (owner decision 2026-11-10): a documento filed for anonymisation is
+   * titled by its report's `redactedTitle` (else "Documento") on all three
+   * document lists — the entity panel, the edge evidence and the retrieval
+   * answer — never by its raw `name`.
+   */
+  describe('org 12 — 🔴 a gated documento is titled by its redacted title', () => {
+    const at1 = { organizationId: 12, minSupport: 1, minEdgeSupport: 1 }
+    beforeAll(async () => {
+      await db.execute(sql`
+        INSERT INTO organizations (id, name, slug) VALUES (12, 'Org doce', 'doce');
+        INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind,
+                               anonymise, anonymisation_report) VALUES
+          (1201, 12, 1, 'Entrevista a María López.pdf', 'published', 'documento', true,
+           '{"redactedTitle": "Entrevista a [Persona A].pdf"}'::jsonb),
+          (1202, 12, 1, 'Diario de Pedro Gómez.pdf', 'published', 'documento', true, NULL),
+          (1203, 12, 1, 'informe-represa.pdf', 'published', 'documento', false, NULL);
+        INSERT INTO graph_entities (id, organization_id, type, label, canonical_key) VALUES
+          (121, 12, 'tema',  'Represa',  'represa'),
+          (122, 12, 'lugar', 'Atoyac',   'atoyac');
+        INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences) VALUES
+          (12, 1201, 121, 3), (12, 1201, 122, 1), (12, 1202, 121, 2), (12, 1202, 122, 1), (12, 1203, 121, 1);
+        INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type) VALUES
+          (12, 1201, 121, 122, 'ocurre_en'), (12, 1202, 121, 122, 'ocurre_en');
+      `)
+    })
+    afterAll(async () => {
+      await db.execute(sql`
+        DELETE FROM graph_relations WHERE organization_id = 12;
+        DELETE FROM graph_mentions WHERE organization_id = 12;
+        DELETE FROM graph_entities WHERE organization_id = 12;
+        DELETE FROM documents WHERE organization_id = 12;
+        DELETE FROM organizations WHERE id = 12;
+      `)
+    })
+    const TITLES: Record<number, string> = {
+      1201: 'Entrevista a [Persona A].pdf',
+      1202: 'Documento',
+      1203: 'informe-represa.pdf',
+    }
+
+    it('🔴 the entity panel and its edge evidence', async () => {
+      const detail = await readEntityDetail(payload, { ...at1, entityId: 121 })
+      expect(detail?.documents.map((d) => [d.id, d.title])).toEqual(
+        detail?.documents.map((d) => [d.id, TITLES[d.id as number]]),
+      )
+      expect(detail?.documents).toHaveLength(3)
+      const evidence = detail?.neighbours.flatMap((n) => n.documents ?? []) ?? []
+      expect(evidence.map((d) => d.title).sort()).toEqual(['Documento', 'Entrevista a [Persona A].pdf'])
+      expect(JSON.stringify(detail)).not.toMatch(/María|Pedro/)
+    })
+
+    it('🔴 the retrieval answer', async () => {
+      const result = await readGraphRetrieval(payload, { ...at1, query: '¿qué pasó con la represa?' })
+      expect(result.documents.map((d) => [d.id, d.title]).sort()).toEqual(
+        Object.entries(TITLES).map(([id, t]) => [Number(id), t]).sort(),
+      )
+      expect(JSON.stringify(result)).not.toMatch(/María|Pedro/)
+    })
+  })
+
   describe('org 8 — 🔴 gate 5 with the persona at the `to` end', () => {
     const at1 = { organizationId: 8, minSupport: 1, minEdgeSupport: 1 }
     beforeAll(async () => {

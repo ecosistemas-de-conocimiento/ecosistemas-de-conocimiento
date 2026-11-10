@@ -625,18 +625,112 @@ export async function runAnonymisationGate(
   deps: GateDeps,
 ): Promise<GateResult> {
   try {
-    return await runGate(input, deps)
+    // 🔴 ONE allocator for the whole document — body AND title — created here
+    // and dropped when this function returns. See `pseudonyms.ts`: its
+    // lifetime IS the safety property.
+    const ctx: DocumentContext = {
+      allocator: createPseudonymAllocator(),
+      // Same lifetime, same reason: name parts → people, for this document only.
+      names: createNamePartRegistry(),
+      evidence: { stage3: [], verify: [], unlocated: [] },
+    }
+    const result = await runGate(input, deps, ctx)
+    const title = typeof input.title === 'string' ? input.title.normalize('NFC').trim() : ''
+    // A model that never answered gets a re-run, title included: no title now.
+    if (input.contentKind !== 'documento' || title === '' || (result.status === 'hold' && result.retryable)) {
+      return result
+    }
+    return { ...result, redactedTitle: await redactTitle(title, input, deps, ctx) }
   } finally {
     clearFoldCache()
   }
 }
 
-async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
-  // 🔴 ONE allocator for the whole document, created here and dropped when this
-  // function returns. See `pseudonyms.ts`: its lifetime IS the safety property.
-  const allocator = createPseudonymAllocator()
-  // Same lifetime, same reason: name parts → people, for this document only.
-  const names = createNamePartRegistry()
+/** What the body and the title of ONE document share. Never persisted. */
+interface DocumentContext {
+  allocator: ReturnType<typeof createPseudonymAllocator>
+  names: NamePartRegistry
+  /** Everything the detector said about the body, for the restores and the title. */
+  evidence: { stage3: DetectorFinding[]; verify: DetectorFinding[]; unlocated: DetectorFinding[] }
+}
+
+/**
+ * 🔴 THE TITLE OF A GATED `documento` (P-13/I-07/C-10, owner decision
+ * 2026-11-10). Runs AFTER the body, so the body's output and its labels are
+ * exactly what they are without a title; the title only reuses them.
+ *
+ *   1-2  structural + deterministic, with the body's allocator (a roster
+ *        member keeps the body's label);
+ *   ⋯    every person and place the detector found in the BODY, and their name
+ *        parts: "Entrevista a Juan Pérez.pdf" → "Entrevista a [Persona A].pdf"
+ *        when the body calls him `[Persona A]`;
+ *   3    one detector call over what is left, for a name only the title has
+ *        (it takes the next free label).
+ *
+ * 🔴 FAILS CLOSED to `null` (the neutral title, `lib/contentKind.ts`): a
+ * detector that throws, a span it reports that is not in the title, or a
+ * finding still standing after the replace. Never a hold: the body's verdict
+ * is the body's, and a neutral title costs nothing but the name.
+ *
+ * ⚠ No verify round and no restores (public figures, the author, cited
+ * authors): a short string, one call. A name the body keeps visible is
+ * redacted in the title — over-redaction, the safe side.
+ */
+async function redactTitle(
+  title: string,
+  input: GateInput,
+  deps: GateDeps,
+  { allocator, names, evidence }: DocumentContext,
+): Promise<string | null> {
+  const allocate = (name: string) => allocator.labelFor(name)
+  const allocateAddress = (address: string) => allocator.addressLabelFor(address)
+  const peek = (name: string) => allocator.peekLabel(name)
+  const structural = structuralPass(title, {
+    person: (name) => {
+      names.add(name, { single: !isFieldLabel(name) })
+      return allocate(name)
+    },
+  })
+  const deterministic = deterministicPass({
+    text: structural.text,
+    roster: input.roster,
+    allocate,
+    allocateAddress,
+    ownLabel: (placeholder) => allocator.emitted(placeholder),
+  })
+  const known = applyFindings(
+    deterministic.text,
+    withoutGenericPlaces([...evidence.stage3, ...evidence.verify]),
+    allocate,
+    allocateAddress,
+    names,
+    peek,
+    true,
+  ).text
+  if (known.trim() === '') return null
+  let raw: DetectorFinding[]
+  try {
+    raw = await deps.detector.detect({ text: known, contentKind: input.contentKind })
+  } catch {
+    return null
+  }
+  const found = withoutGenericPlaces(raw)
+  const applied = applyFindings(known, found, allocate, allocateAddress, names, peek, true).text
+  if (unlocatable([known, applied, title], raw, unlocatedOf(raw)) > 0) return null
+  const spans = placeholderSpans(applied)
+  const standing = found.filter((f) => !coveredByPlaceholder(applied, spans, f.text) && !onlyPlaceholders(f.text))
+  if (standing.length > 0) return null
+  return applied.trim() === '' ? null : applied.trim()
+}
+
+/** The detector's own `unlocated` list on a result, when it sent one. */
+function unlocatedOf(found: unknown): DetectorFinding[] {
+  const u = (found as { unlocated?: unknown } | null)?.unlocated
+  return Array.isArray(u) ? u.filter((f): f is DetectorFinding => typeof (f as DetectorFinding)?.text === 'string') : []
+}
+
+async function runGate(input: GateInput, deps: GateDeps, ctx: DocumentContext): Promise<GateResult> {
+  const { allocator, names, evidence } = ctx
   const stages: GateStageReport[] = []
   // 🔴 `keepDocumentAuthor`: the document's actual author (its uploader), in a
   // documento or a testimonio, never a conversation. The caller passes names
@@ -669,12 +763,6 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     .filter((e) => !e.includes('@'))
     .map((e) => e.replace(/(^|[\s-])(\p{Ll})/gu, (_m, before: string, ch: string) => before + ch.toUpperCase()))
     .filter((e) => namePartsOf(e).length > 0)
-  /** Everything the detector said, for the restore's evidence. */
-  const evidence = { stage3: [] as DetectorFinding[], verify: [] as DetectorFinding[], unlocated: [] as DetectorFinding[] }
-  const unlocatedOf = (found: unknown): DetectorFinding[] => {
-    const u = (found as { unlocated?: unknown } | null)?.unlocated
-    return Array.isArray(u) ? u.filter((f): f is DetectorFinding => typeof (f as DetectorFinding)?.text === 'string') : []
-  }
 
   const report = (): GateReport => ({
     stages,

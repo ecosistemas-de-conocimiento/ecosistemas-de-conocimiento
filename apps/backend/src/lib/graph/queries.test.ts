@@ -378,6 +378,24 @@ describe('🔴 no document title reaches a graph surface as raw `documents.name`
   })
 })
 
+// 🔴 P-13 (owner decision 2026-11-10): a gated documento's title is gated too.
+describe('🔴 a documento filed for anonymisation is titled by its redacted title', () => {
+  it('on the entity panel, with or without a redacted title on the report', async () => {
+    const payload = fakePayload([
+      [{ id: ENTITY, type: 'tema', label: 'Tema', support: 3 }],
+      [],
+      [
+        { id: 1, name: 'Entrevista a María López.pdf', content_kind: 'documento', anonymise: true, redacted_title: 'Entrevista a [Persona A].pdf' },
+        { id: 2, name: 'Diario de María.pdf', content_kind: 'documento', anonymise: true, redacted_title: null },
+        { id: 3, name: 'informe-2019.pdf', content_kind: 'documento', anonymise: false, redacted_title: null },
+      ],
+    ])
+    const detail = await readEntityDetail(payload, { organizationId: ORG, entityId: ENTITY })
+    expect(detail?.documents.map((d) => d.title)).toEqual(['Entrevista a [Persona A].pdf', 'Documento', 'informe-2019.pdf'])
+    expect(JSON.stringify(detail)).not.toContain('María')
+  })
+})
+
 // ---------------------------------------------------------------------------
 // The two Postgres types that arrive as strings
 // ---------------------------------------------------------------------------

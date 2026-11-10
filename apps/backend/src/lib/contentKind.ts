@@ -109,15 +109,82 @@ export function knownContentKind(row: { contentKind?: unknown } | null | undefin
  * definition, a handle on which person it came from. `metadata.docId` still
  * identifies the row for anyone with access to it.
  */
-export function titleFor(contentKind: ContentKind | null | undefined, name?: string | null): string {
+export function titleFor(
+  contentKind: ContentKind | null | undefined,
+  name?: string | null,
+  /**
+   * 🔴 THE ROW'S GATE COLUMNS, for a `documento` (P-13/I-07/C-10, owner
+   * decision 2026-11-10). A `documento` with `anonymise` set is gated, and so
+   * is its TITLE: it carries the gate's redacted title
+   * (`anonymisationReport.redactedTitle`, {@link redactedTitleOf}), never
+   * `name`. No redacted title yet → the neutral {@link GATED_DOCUMENT_TITLE}.
+   *
+   * ⚠ Absent = ungated, like {@link anonymiseRequested}: a caller that does not
+   * pass the row keeps the old rule. Every path that ships a title passes it.
+   */
+  gate?: TitleGateColumns | null,
+): string {
   if (contentKind === 'testimonio') return 'Testimonio'
   if (contentKind === 'conversacion') return 'Conversación'
   // 🔴 FAILS CLOSED. Only a `documento` carries its own name. A kind this code
   // does not know yet — a new one added to `CONTENT_KINDS`, or a raw column
   // value nobody validated — gets a neutral title, not the filename.
   if (contentKind !== 'documento') return 'Documento'
+  if (gate && anonymiseRequested(gate.anonymise)) {
+    return redactedTitleOf(gate.anonymisationReport) ?? GATED_DOCUMENT_TITLE
+  }
   const trimmed = typeof name === 'string' ? name.trim() : ''
   return trimmed === '' ? 'Documento sin título' : trimmed
+}
+
+/**
+ * The title of a gated `documento` the gate has not titled (yet): a row gated
+ * before 2026-11-10, a title the gate could not clear, or a run that crashed.
+ * 🔴 Never the filename instead.
+ */
+export const GATED_DOCUMENT_TITLE = 'Documento'
+
+/** The columns {@link titleFor} reads to know a `documento`'s title is gated. */
+export interface TitleGateColumns {
+  /** The raw `documents.anonymise` ({@link anonymiseRequested}). */
+  anonymise?: unknown
+  /** The raw `documents.anonymisationReport`; the title is its `redactedTitle`. */
+  anonymisationReport?: unknown
+}
+
+/**
+ * 🔴 A `documento` FILED FOR ANONYMISATION (owner rulings 2026-10-26).
+ *
+ * ⚠ FAILS CLOSED ON A PRESENT VALUE: anything but `false`/`null`/absent gates.
+ * Absent is ungated so rows assembled in code keep today's documento rule.
+ * Lives here (re-exported by `anonymiseDocument.ts`, which documents it) so the
+ * title rule reads the same function as the gate without importing the gate.
+ */
+export function anonymiseRequested(rawAnonymise: unknown): boolean {
+  return rawAnonymise !== undefined && rawAnonymise !== null && rawAnonymise !== false
+}
+
+/**
+ * The gate's redacted title on a report, or null. Written by
+ * `anonymiseDocument.ts` from `GateResult.redactedTitle` (same allocator as
+ * the body: "Entrevista a [Persona A].pdf" when the body calls him
+ * `[Persona A]`).
+ */
+export function redactedTitleOf(report: unknown): string | null {
+  if (!report || typeof report !== 'object' || Array.isArray(report)) return null
+  const t = (report as { redactedTitle?: unknown }).redactedTitle
+  return typeof t === 'string' && t.trim() !== '' ? t.trim() : null
+}
+
+/**
+ * {@link titleFor} over a `documents` row: its known kind (no default), its
+ * `name`, and its gate columns. The one call every title that leaves the
+ * backend should make.
+ */
+export function documentTitleFor(
+  row: { contentKind?: unknown; name?: unknown } & TitleGateColumns,
+): string {
+  return titleFor(knownContentKind(row), typeof row.name === 'string' ? row.name : null, row)
 }
 
 export function chunkMetadata(args: {
@@ -140,6 +207,11 @@ export function chunkMetadata(args: {
    * {@link titleFor}.
    */
   title?: string | null
+  /**
+   * 🔴 The row's gate columns (`anonymise`, `anonymisationReport`). A gated
+   * `documento` then carries its redacted title, never `title` (P-13).
+   */
+  gate?: TitleGateColumns | null
   /**
    * Only set for `conversacion`. `assistant` marks a chunk that is a PREVIOUS
    * ANSWER rather than a source — see the header.
@@ -173,7 +245,7 @@ export function chunkMetadata(args: {
     kind: args.contentKind,
     format: args.format ?? 'unknown',
     publication: args.publication,
-    title: titleFor(args.contentKind, args.title),
+    title: titleFor(args.contentKind, args.title, args.gate),
     ...(args.authoredBy ? { authoredBy: args.authoredBy } : {}),
     ...(args.sessionId === undefined ? {} : { sessionId: String(args.sessionId) }),
     ...(args.userId === undefined ? {} : { userId: String(args.userId) }),
