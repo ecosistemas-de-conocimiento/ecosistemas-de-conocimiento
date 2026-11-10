@@ -29,8 +29,12 @@
  * `collections/Documents.ts`): crossings into `documents` are walked through
  * and judged by the gated-row allowlist instead.
  *
+ * Rule 1 reads the target once per crossing, so its cost is bounded per
+ * request ({@link relationFilterLimits}): past either cap the request is a 400.
+ *
  * A platform admin and a server read (`overrideAccess`) are not touched.
- * `relationFilters.pg.test.ts` probes each collection over REST.
+ * `relationFilters.pg.test.ts` probes each collection over REST;
+ * `relationFilters.bounds.pg.test.ts` the bounds.
  */
 
 import type {
@@ -40,7 +44,7 @@ import type {
   SanitizedConfig,
   Where,
 } from 'payload'
-import { Forbidden, QueryError } from 'payload'
+import { APIError, Forbidden, QueryError } from 'payload'
 
 import { isPlatformAdminUser } from './index'
 
@@ -72,6 +76,60 @@ export type QueryField = {
   custom?: { queryJudgedBy?: string }
   flattenedFields?: QueryField[]
   blocks?: { flattenedFields?: QueryField[] }[]
+}
+
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (typeof raw !== 'string' || raw.trim() === '') return fallback
+  const parsed = Number.parseInt(raw.trim(), 10)
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback
+}
+
+/**
+ * 🔴 THE COST OF RULE 1 IS BOUNDED PER REQUEST (audit 2026-11-10, D1). Each
+ * crossing reads the target's matching ids before the query runs. Unbounded,
+ * a member who owned 20 000 conversations sent `where[or][i][session.title]
+ * [like]=b` ten times: 9.0 s, the event loop stalled 4.1 s, another person's
+ * `/api/users/me` waited 7.1 s, then a 500; forty terms, 25 s. Bounded, both
+ * are a 400 in under 15 ms (measured on torre 2026-11-10 ~23:20 UTC, load
+ * ~17-21 on 16 cores, `relationFilters.bounds.pg.test.ts` with
+ * `EDC_MEASURE_RELATION_BOUNDS=1`). Read at call time; junk or `< 1` ⇒ the
+ * default.
+ *
+ * `maxTerms` 5 (`QUERY_RELATION_MAX_TERMS`): crossings resolved per request,
+ *   a deeper hop counting once per lookup (`message.session.title` is two).
+ *   The web sends none (grep of `apps/web/src`, 2026-11-10: every filter it
+ *   sends is on an id or a column of the row); the admin panel is platform
+ *   admins only, whom rule 1 skips.
+ * `maxIds` 5000 (`QUERY_RELATION_MAX_IDS`): ids read in all, across every
+ *   lookup of the request. The most a member can still ask, five lookups of
+ *   1000 ids each, answered in 319-745 ms with a 69-155 ms stall; one of 9999
+ *   ids, 444-1050 ms and 169-518 ms (measured, same runs). 65 000 ids broke
+ *   drizzle (below).
+ *   Real lists are far smaller (inferred: a member reads their own rows and
+ *   their ecosistemas' published files, hundreds to low thousands).
+ */
+export const relationFilterLimits = {
+  maxTerms: (): number => envInt('QUERY_RELATION_MAX_TERMS', 5),
+  maxIds: (): number => envInt('QUERY_RELATION_MAX_IDS', 5000),
+}
+
+/** A filter past {@link relationFilterLimits}. Public, so REST answers 400 with the message. */
+export class RelationFilterTooBroad extends APIError {
+  constructor(message: string) {
+    super(message, 400, undefined, true)
+  }
+}
+
+/** What one request has spent of {@link relationFilterLimits}. */
+export type CrossingBudget = { terms: number; ids: number; maxTerms: number; maxIds: number }
+
+export function crossingBudget(): CrossingBudget {
+  return { terms: 0, ids: 0, maxTerms: relationFilterLimits.maxTerms(), maxIds: relationFilterLimits.maxIds() }
+}
+
+function tooManyTerms(max: number): RelationFilterTooBroad {
+  return new RelationFilterTooBroad(`Too many filters through a relationship: at most ${max} per request.`)
 }
 
 /** A `where` that matches no row. */
@@ -203,16 +261,21 @@ function leafPaths(where: unknown, into: string[] = []): string[] {
  * Idempotent: what it writes (`<relation> in [...]`) never crosses again.
  * A target the caller may not read at all matches nothing. A value that is
  * not an operator object matches nothing.
+ *
+ * ⚠ ONE LOOKUP AT A TIME, each counted in `budget` before it runs: lookups
+ * in parallel held every list at once (D1, {@link relationFilterLimits}).
  */
 export async function resolveRelationCrossings(
   where: unknown,
   fields: QueryField[],
   req: PayloadRequest,
   follow: boolean,
+  budget: CrossingBudget,
 ): Promise<unknown> {
   if (!where || typeof where !== 'object') return where
   if (Array.isArray(where)) {
-    const out = await Promise.all(where.map((w) => resolveRelationCrossings(w, fields, req, follow)))
+    const out: unknown[] = []
+    for (const w of where) out.push(await resolveRelationCrossings(w, fields, req, follow, budget))
     return out.some((w, i) => w !== where[i]) ? out : where
   }
   const parts: Where[] = []
@@ -221,23 +284,29 @@ export async function resolveRelationCrossings(
     const lower = key.toLowerCase()
     if (lower === 'and' || lower === 'or') {
       const inner = value && typeof value === 'object' && !Array.isArray(value) ? Object.values(value) : value
-      const next = await resolveRelationCrossings(inner, fields, req, follow)
+      const next = await resolveRelationCrossings(inner, fields, req, follow, budget)
       if (next !== inner) changed = true
       parts.push({ [key]: next } as Where)
       continue
     }
     const leaves: [string, unknown][] = []
     leavesUnder(key, value, leaves)
-    const resolved = await Promise.all(
-      leaves.map(async ([path, op]): Promise<Where | null> => {
-        const crossing = relationCrossing(path, fields, req, follow)
-        if (!crossing) return null
-        if (!op || typeof op !== 'object' || Array.isArray(op)) return NO_ROWS
-        const inner = await resolveRelationCrossings({ [crossing.rest]: op }, fieldsOf(req, crossing.slug), req, false)
-        const ids = await readableIds(req, crossing.slug, inner as Where)
-        return ids.length === 0 ? NO_ROWS : { [crossing.at]: { in: ids } }
-      }),
-    )
+    const resolved: (Where | null)[] = []
+    for (const [path, op] of leaves) {
+      const crossing = relationCrossing(path, fields, req, follow)
+      if (!crossing) {
+        resolved.push(null)
+        continue
+      }
+      if (!op || typeof op !== 'object' || Array.isArray(op)) {
+        resolved.push(NO_ROWS)
+        continue
+      }
+      if (++budget.terms > budget.maxTerms) throw tooManyTerms(budget.maxTerms)
+      const inner = await resolveRelationCrossings({ [crossing.rest]: op }, fieldsOf(req, crossing.slug), req, false, budget)
+      const ids = await readableIds(req, crossing.slug, inner as Where, budget)
+      resolved.push(ids.length === 0 ? NO_ROWS : { [crossing.at]: { in: ids } })
+    }
     if (resolved.every((r) => r === null)) {
       parts.push({ [key]: value } as Where)
       continue
@@ -254,34 +323,51 @@ export async function resolveRelationCrossings(
  *
  * ⚠ `pagination: false` IS LOAD-BEARING: Payload's default page is 10 rows, and
  * a truncated list silently drops matches (`relationFilters.pg.test.ts` reads
- * more than 10). `select: { id: true }`: only the id column is read, not
- * `messages.content` or a document's text for every match.
+ * more than 10). `limit` is what is left of `budget.ids`, plus one: a list
+ * past it is refused (400), never cut. `select: { id: true }`: only the id
+ * column is read, not `messages.content` or a document's text for every match.
  *
- * ⚠ THE LIST IS MATERIALISED. `ratings/count?where[message.content][like]=…`
- * over one caller's own messages (2 KB each), measured on torre 2026-11-10,
- * load average ~2 on 16 cores: 20 000 matching ids answered in 0.8-1.4 s;
- * 65 000 failed with a 500 (`Maximum call stack size exceeded` in drizzle's
- * `mergeQueries`, building the `IN` list). Only the caller's own readable rows
- * count, so the failure says nothing new. Real lists are far smaller
- * (inferred: a member reads their own messages and their ecosistemas'
- * published files, hundreds to low thousands). A subquery instead of the list
- * is not a drop-in: the target's access `where` under the relation's prefix,
- * on a `hasMany` relation, may match on one related row and the filter on
- * another (a documento in two conversations, one of them the caller's, and
- * `session.title` matching the other; inferred, not measured).
+ * ⚠ THE LIST IS MATERIALISED, so its size is capped ({@link relationFilterLimits}).
+ * Unbounded, 20 000 ids answered in 0.8-1.4 s and 65 000 failed with a 500
+ * (`Maximum call stack size exceeded` in drizzle's `mergeQueries`, building
+ * the `IN` list; measured on torre 2026-11-10, load ~2 on 16 cores).
+ *
+ * A subquery instead of the list is not possible through Payload's `where`:
+ * it has no subquery operator. Its nearest form, the target's access `where`
+ * prefixed under the relation (`session.user equals me` beside `session.title
+ * like x`), joins `documents_rels` once and so keeps a `hasMany` relation's
+ * two conditions on one related row (measured 2026-11-10, a documento in two
+ * conversations: no match). It still drops the target's own `beforeOperation`
+ * hooks, which are part of what the caller may read there (the gated-row
+ * allowlist on `documents`, `limitQueriesOnUser` on `memberships`, this rule
+ * on a deeper hop), and an access function that answers `false` or a `where`
+ * with relations of its own does not prefix.
  */
-async function readableIds(req: PayloadRequest, slug: string, where: Where): Promise<(string | number)[]> {
+async function readableIds(
+  req: PayloadRequest,
+  slug: string,
+  where: Where,
+  budget: CrossingBudget,
+): Promise<(string | number)[]> {
+  const room = budget.maxIds - budget.ids
   try {
     const { docs } = await req.payload.find({
       collection: slug as never,
       where,
       depth: 0,
       pagination: false,
+      limit: room + 1,
       select: { id: true } as never,
       overrideAccess: false,
       user: req.user,
       req,
     })
+    if (docs.length > room) {
+      throw new RelationFilterTooBroad(
+        `A filter through a relationship matches too many rows (more than ${budget.maxIds} per request); narrow it.`,
+      )
+    }
+    budget.ids += docs.length
     return docs.map((d) => (d as { id: string | number }).id)
   } catch (err) {
     if (err instanceof Forbidden) return []
@@ -320,11 +406,15 @@ export function constrainRelationQueries(options: { follow: boolean; fieldRule: 
       const bad = unreadable(a.field)
       if (bad) throw new QueryError([{ path: bad }])
     }
-    const refused = leafPaths(a.where).map(unreadable).filter((p): p is string => p !== null)
+    const paths = leafPaths(a.where)
+    const refused = paths.map(unreadable).filter((p): p is string => p !== null)
     if (refused.length > 0) throw new QueryError([...new Set(refused)].map((path) => ({ path })))
+    // Refused before any lookup: a request past the cap reads nothing.
+    const budget = crossingBudget()
+    if (paths.filter(crosses).length > budget.maxTerms) throw tooManyTerms(budget.maxTerms)
 
     let next = args as typeof args & { where?: Where; sort?: unknown }
-    const where = await resolveRelationCrossings(a.where, fields, req, options.follow)
+    const where = await resolveRelationCrossings(a.where, fields, req, options.follow, budget)
     if (where !== a.where) next = { ...next, where: where as Where }
     const parts = sortParts(a.sort)
     const kept = parts.filter((p) => {
