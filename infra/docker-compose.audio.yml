@@ -3,7 +3,7 @@
 #
 # The three audio containers live in docker-compose.yml under the profile
 # `audio` (dev on edc-1 turns it on with COMPOSE_PROFILES=audio; see that file
-# and infra/fleet/edc-1.md §4x). Locally, turn the profile on and add this file:
+# and infra/fleet/edc-1.md §4y). Locally, turn the profile on and add this file:
 #
 #   docker compose --profile audio -f docker-compose.yml \
 #                  -f docker-compose.override.yml \
