@@ -63,8 +63,17 @@ export async function leerFuentes(page: Page): Promise<void> {
   const abrir = fuentes.getByTestId('citation-sources-toggle');
   if ((await abrir.count()) && (await abrir.getAttribute('aria-expanded')) !== 'true') await abrir.click();
   await fuentes.scrollIntoViewIfNeeded();
-  const enlace = fuentes.getByRole('link').first();
-  if (await enlace.isVisible()) await enlace.hover();
+  // Each source's title is a button that opens its card; the card holds the
+  // "Abrir documento" link (the list's own link is hidden: Message.svelte).
+  const fuente = fuentes.getByTestId('citation-source-link').first();
+  await expect(fuente).toBeVisible();
+  await fuente.hover();
+  const abrirDoc = page.getByTestId('citation-cards').last().getByTestId('citation-open').first();
+  console.log(
+    `[fuentes] ${await fuentes.getByTestId('citation-source').count()} fuentes, ` +
+      `${await page.getByTestId('citation-cards').last().getByTestId('citation-open').count()} con enlace`,
+  );
+  if (await abrirDoc.isVisible()) await abrirDoc.hover();
 }
 
 /** Chat, ratings, documents in a conversation, and Resonancias. */
@@ -309,6 +318,19 @@ export async function misDocumentos(page: Page): Promise<void> {
     await page.getByTestId(`download-${id}`).click();
     await descarga;
   });
+  // The document's own anonymisation screen. 🔴 Shown, not saved: no switch is
+  // toggled (a change re-runs the gate on the document).
+  await escena(page, 'C1.6', async () => {
+    await page.getByTestId(`anon-link-${id}`).click();
+    await page.waitForURL((u) => u.pathname === `/documentos/${id}/anonimizacion`);
+    await expect(page.getByTestId('anon-title')).toBeVisible();
+    await expect(page.getByTestId('anon-status')).toBeVisible();
+    const switches = page.getByTestId('anon-form').locator('[data-testid^="anon-switch-"]');
+    await expect(switches.first()).toBeVisible();
+    for (let i = 0; i < (await switches.count()); i++) await switches.nth(i).hover();
+    await page.goBack();
+    await page.waitForURL((u) => u.pathname === '/documentos');
+  });
 }
 
 export async function biblioteca(page: Page, busqueda: string): Promise<void> {
@@ -354,6 +376,7 @@ export async function conexiones(page: Page, busqueda: string): Promise<void> {
   const mapa = page.getByTestId('grafo-mapa');
   await abrirConexiones(page);
   // An ecosistema with no graph yet (or the switch off) shows its empty state; the rest needs a map.
+  console.log(`[grafo] mapa: ${await mapa.count()}, vacío: ${await page.getByTestId('grafo-vacio').count()}, apagado: ${await page.getByTestId('grafo-desactivado').count()}`);
   if (!(await mapa.count())) return;
   if (await page.getByTestId('grafo-3d').count()) {
     await escena(page, 'D2.2', async () => {
@@ -364,6 +387,7 @@ export async function conexiones(page: Page, busqueda: string): Promise<void> {
   }
   await escena(page, 'D2.3', () => page.getByTestId('grafo-busqueda').fill(busqueda));
   const entidad = page.locator('[data-testid^="grafo-entidad-"]').first();
+  console.log(`[grafo] entidades tras buscar "${busqueda}": ${await page.locator('[data-testid^="grafo-entidad-"]').count()}`);
   if (await entidad.count()) {
     await escena(page, 'D2.4', async () => {
       await entidad.click();
@@ -532,6 +556,7 @@ export async function cuidar(
     const cards = page.getByTestId('hold-queue').locator('a[href^="/revision/"]');
     for (let i = 0; i < Math.min(await cards.count(), 3); i++) await cards.nth(i).hover();
   };
+  console.log(`[revision] tarjetas en la cola: ${await page.getByTestId('hold-queue').locator('a[href^="/revision/"]').count()}`);
   if (await page.getByTestId('hold-queue').locator('a[href^="/revision/"]').count()) {
     await escena(page, 'F1.2', tarjetas);
   }
@@ -569,11 +594,21 @@ export async function cuidar(
     await page.getByTestId('miembros-list').locator('select').first().hover();
   });
 
+  // /ajustes is tabbed (routes/ajustes/secciones.ts): inactive panels are
+  // hidden, so each tab is opened first. Publicación holds the ecosistema's
+  // anonymisation defaults. Hovered, never toggled.
   await escena(page, 'F3.1', async () => {
     await ir(page, 'ajustes');
     await mostrar(page, 'ajustes-funciones');
-    const switches = page.getByTestId('ajustes-funciones').locator('input[type=checkbox]');
-    for (let i = 0; i < Math.min(await switches.count(), 4); i++) await switches.nth(i).hover();
+    for (const tabId of ['conversacion', 'grafo', 'publicacion', 'estudiantes']) {
+      const tab = page.getByTestId(`ajustes-tab-${tabId}`);
+      if (!(await tab.count())) continue;
+      await tab.click();
+      await expect(tab).toHaveAttribute('aria-selected', 'true');
+      const switches = page.locator(`#panel-${tabId} [data-testid^="ajustes-switch-"]`).filter({ visible: true });
+      await expect(switches.first()).toBeVisible();
+      for (let i = 0; i < Math.min(await switches.count(), 5); i++) await switches.nth(i).hover();
+    }
   });
   if (await page.getByTestId('ajustes-plataforma').count()) {
     await escena(page, 'F3.2', async () => {
