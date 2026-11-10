@@ -229,8 +229,11 @@ describe('🔴 the title the graph carries is neutral for gated content', () => 
   })
 
   it('keeps a documento own title, because it is the uploader own material', async () => {
+    // `anonymise: false` explicit: the re-read row carries the column, and a
+    // row without it titles as gated (fails closed, 2026-11-10).
     const { payload } = fakePayload({
       contentKind: 'documento',
+      anonymise: false,
       extractedText: 'texto',
       redactedText: null,
     })
