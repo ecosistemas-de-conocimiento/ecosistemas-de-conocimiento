@@ -340,3 +340,69 @@ describe('GET /api/documentos — degradation', () => {
     expect(mockedBackendFetch).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/documentos — every page, only the columns it sends (C-08)', () => {
+  function page(docs: unknown[], hasNextPage: boolean, totalDocs: number): Response {
+    return new Response(JSON.stringify({ docs, totalDocs, hasNextPage }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  it('reads past the first backend page instead of stopping at it', async () => {
+    // 🔴 Dev, 2026-11-10: 727 owned, the list showed 500 and said 500.
+    mockedBackendFetch
+      .mockResolvedValueOnce(page([doc(1), doc(2)], true, 3))
+      .mockResolvedValueOnce(page([doc(3)], false, 3));
+
+    const res = await GET(makeEvent({}));
+    const body = (await res.json()) as { docs: { id: number }[]; totalDocs: number; truncated?: boolean };
+
+    expect(body.docs.map((d) => d.id)).toEqual([1, 2, 3]);
+    expect(body.totalDocs).toBe(3);
+    expect(body.truncated).toBeUndefined();
+    expect(mockedBackendFetch).toHaveBeenCalledTimes(2);
+    expect(queryOf(0).get('page')).toBe('1');
+    expect(queryOf(1).get('page')).toBe('2');
+    // Every page keeps both constraints.
+    expect(queryOf(1).get('where[uploadedBy][equals]')).toBe('5');
+    expect(queryOf(1).get('where[organization][equals]')).toBe('3');
+  });
+
+  it('degrades the whole list when a later page fails, never half a list', async () => {
+    mockedBackendFetch
+      .mockResolvedValueOnce(page([doc(1)], true, 2))
+      .mockResolvedValueOnce(listResponse([], 500));
+
+    const body = (await (await GET(makeEvent({}))).json()) as Record<string, unknown>;
+
+    expect(body).toMatchObject({ docs: [], degraded: true, reason: 'unavailable' });
+  });
+
+  it('says `truncated` when it stops at the page ceiling', async () => {
+    mockedBackendFetch.mockImplementation(async () => page([doc(1)], true, 999_999));
+
+    const body = (await (await GET(makeEvent({}))).json()) as { truncated?: boolean };
+
+    expect(body.truncated).toBe(true);
+    expect(mockedBackendFetch.mock.calls.length).toBe(20);
+  });
+
+  it('selects the columns slimDoc reads, never extractedText, and populates titles only', async () => {
+    // ⚠ Without a select, depth=1 sent every column: 41 MB for 500 rows on dev.
+    mockedBackendFetch.mockResolvedValueOnce(listResponse([doc(10)]));
+
+    await GET(makeEvent({}));
+    const q = queryOf(0);
+    const selected = [...q.keys()].filter((k) => k.startsWith('select[')).map((k) => k.slice(7, -1));
+
+    expect(selected).not.toContain('extractedText');
+    expect(selected).not.toContain('redactedText');
+    // The backend's field rules read these off the projected row.
+    for (const f of ['contentKind', 'anonymise', 'uploadedBy', 'anonymisationStatus', 'session', 'name']) {
+      expect(selected).toContain(f);
+    }
+    expect(q.get('populate[sessions][title]')).toBe('true');
+    expect(q.get('depth')).toBe('1');
+  });
+});
