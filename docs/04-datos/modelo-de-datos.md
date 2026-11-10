@@ -218,7 +218,7 @@ Propósito: el panel de evaluaciones de calidad, solo para administradores de pl
 
 ### 3.14 `aiServiceCallbacks`: idempotencia de avisos
 
-Propósito: recordar qué avisos (webhooks) de ai-service ya se procesaron, para no procesar dos veces el mismo. Campos: `correlationKey`, `eventKey`, `event`, `receivedAt` y `rawBody` (máximo 100 000 caracteres). El nombre del índice único `ai_service_callbacks_natural_key_unq` forma parte del contrato: la ruta de recepción lo busca en el error del driver para detectar duplicados.
+Propósito: recordar qué avisos (webhooks) de ai-service ya se procesaron, para no procesar dos veces el mismo. Campos: `correlationKey`, `eventKey`, `event`, `receivedAt` y `rawBody` (máximo 100 000 caracteres). El nombre del índice único `ai_service_callbacks_natural_key_unq` forma parte del contrato: la ruta de recepción lo busca en el error del driver para detectar duplicados. `rawBody` se vacía a los 30 días (`lib/callbackRetention.ts`); la fila se queda.
 
 ### 3.15 Global `platform-settings`
 
