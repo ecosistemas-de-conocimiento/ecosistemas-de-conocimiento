@@ -128,9 +128,27 @@ export default buildConfig({
    * `generateFileData` reads the temp file back into a Buffer for every
    * non-image upload, and `unlinkTempFiles` runs only after a create that
    * SUCCEEDS, so every refused upload would leave its temp file behind.
+   *
+   * 🔴 Text fields are bounded too: without `fields` and `parts` busboy kept
+   * any number of 1 MiB fields. Peak RSS for 1000 MiB of them: 1189 MiB
+   * without these three keys, 222 MiB with them; for 400 MiB, 572 and 218
+   * (measured on torre, 2026-11-10, same socket method, load average 35-50).
+   * The app sends one `file` part (`apps/web/src/lib/server/uploadDocument.ts`);
+   * the admin panel sends `_payload` (the document as JSON) and at most a
+   * `file` string (quoted from `@payloadcms/ui` 3.88, `forms/Form`). So 8
+   * fields and 10 parts, at least four times what either sends.
+   * `fieldSize` stays at busboy's 1 MiB default, written out: a longer field is
+   * TRUNCATED, not refused, and a cut `_payload` fails Payload's `JSON.parse`.
+   * Past `fields` or `parts` busboy drops the rest without an error.
    */
   upload: {
-    limits: { fileSize: MAX_MEDIA_UPLOAD_BYTES + 1, files: 1 },
+    limits: {
+      fileSize: MAX_MEDIA_UPLOAD_BYTES + 1,
+      files: 1,
+      fields: 8,
+      fieldSize: 1024 * 1024,
+      parts: 10,
+    },
   },
   /**
    * 🔴 `withoutDuplicate` wraps EVERY collection: Payload's duplicate copies the

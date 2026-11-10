@@ -477,3 +477,54 @@ describe('POST /api/ai-service/callback — rejected', () => {
     expect(res.status).toBe(500)
   })
 })
+
+describe('🔴 the body is counted before the signature check (C-03)', () => {
+  const MiB = 1024 * 1024
+
+  /** A body of `total` bytes with no Content-Length, and whether it was read to the end. */
+  function chunked(total: number) {
+    const seen = { sent: 0 }
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (seen.sent >= total) return c.close()
+        const n = Math.min(64 * 1024, total - seen.sent)
+        seen.sent += n
+        c.enqueue(new Uint8Array(n).fill(0x61))
+      },
+    })
+    return { body, seen }
+  }
+
+  const raw = (body: ReadableStream<Uint8Array> | string, headers: Record<string, string>) =>
+    import('./route').then(({ POST }) =>
+      POST(
+        new Request('http://chat.test/api/ai-service/callback', {
+          method: 'POST',
+          body,
+          headers,
+          duplex: 'half',
+        } as RequestInit),
+      ),
+    )
+
+  it('🔴 a chunked body past 2 MiB is 413 and is not read to the end', async () => {
+    const { body, seen } = chunked(64 * MiB)
+    const res = await raw(body, { 'content-type': 'application/json' })
+    expect(res.status).toBe(413)
+    expect(seen.sent).toBeLessThan(3 * MiB)
+    expect(created).toHaveLength(0)
+  })
+
+  it('a declared Content-Length past 2 MiB is 413 even with a valid signature', async () => {
+    const big = envelope({ transcript: { text: 'a'.repeat(2 * MiB) } })
+    const res = await raw(big, { ...headersFor(big), 'content-length': String(big.length) })
+    expect(res.status).toBe(413)
+  })
+
+  it('a 200,000-character transcript, the largest audio-service inlines, still goes through', async () => {
+    // Four UTF-8 bytes per character: 800 KB of text.
+    const body = envelope({ event: 'transcribe.unknown', transcript: { text: '😀'.repeat(200_000) } })
+    const res = await raw(body, headersFor(body))
+    expect(res.status).toBe(200)
+  })
+})
