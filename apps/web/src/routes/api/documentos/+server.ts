@@ -43,8 +43,79 @@ import { uploadLooseDocument } from '$lib/server/uploadDocument';
  * `slimDoc` names the fields that go out; anything else stays on the server.
  */
 
-/** Payload list reads are capped; the same ceiling the sibling document lists use. */
-const LIST_LIMIT = '500';
+/** Rows per backend page. The list reads every page (C-08, audit 2026-11-10). */
+const LIST_LIMIT = 500;
+
+/**
+ * ⚠ A ceiling, not a cut: past it the reply says `truncated: true` and keeps
+ * the backend's real `totalDocs`. 20 pages = 10 000 documents; the largest
+ * owner on dev had 727 in one ecosistema (measured 2026-11-10, admin seed
+ * account, Semiosis práctica).
+ */
+const MAX_PAGES = 20;
+
+/**
+ * The columns `slimDoc` reads, and no others.
+ *
+ * ⚠ Without a `select`, `depth=1` sent every column and every populated
+ * relationship, `extractedText` included, for `slimDoc` to throw away. Measured
+ * 2026-11-10 against the dev backend from outside, 500 of 727 rows: 41 MB in
+ * 18.6 s; with this list, 580 KB in 0.56 s. Inside dev the old read made
+ * `GET /api/documentos` take 1.6–2.0 s (browser timing, 4 loads).
+ *
+ * 🔴 `contentKind`, `anonymise`, `uploadedBy` and `anonymisationStatus` are
+ * also what the backend's field rules read off the projected row
+ * (`mayReadGatedOriginal`, `mayReadTestimonioTitle`). Drop one and `name`,
+ * `bodyMarkdown` or `testimonioTitle` vanish with no error.
+ */
+const OWNED_DOC_FIELDS = [
+  'name',
+  'kind',
+  'contentKind',
+  'anonymise',
+  'testimonioTitle',
+  'ingestStatus',
+  'ingestError',
+  'anonymisationStatus',
+  'audioMeta',
+  'publicationStatus',
+  'publicationError',
+  'graphStatus',
+  'graphError',
+  'uploadedBy',
+  'isPinned',
+  'bodyMarkdown',
+  'mediaFile',
+  'processedBody',
+  'session',
+  'createdAt',
+  'updatedAt',
+] as const;
+
+/**
+ * What `depth=1` populates, per related collection. Conversation titles are
+ * the reason for the depth; the uploader and the file only need an id.
+ */
+const POPULATE: Array<[string, string]> = [
+  ['populate[sessions][title]', 'true'],
+  ['populate[users][displayName]', 'true'],
+  ['populate[media][filename]', 'true'],
+];
+
+function ownedDocsQuery(userId: string, organizationId: string, page: number): string {
+  const qs = new URLSearchParams({
+    'where[uploadedBy][equals]': userId,
+    'where[organization][equals]': organizationId,
+    sort: '-createdAt',
+    limit: String(LIST_LIMIT),
+    page: String(page),
+    // ⚠ `depth=1` so `session` arrives populated and we get conversation TITLES.
+    depth: '1',
+  });
+  for (const f of OWNED_DOC_FIELDS) qs.set(`select[${f}]`, 'true');
+  for (const [k, v] of POPULATE) qs.set(k, v);
+  return qs.toString();
+}
 
 /**
  * `?filter=` — `all` (default) or `sueltos`.
@@ -120,27 +191,33 @@ export const GET: RequestHandler = async ({ locals, cookies, url }) => {
     return json({ docs: [], totalDocs: 0 }, { status: 200 });
   }
 
-  // ⚠ `depth=1` so `session` arrives populated and we get conversation TITLES.
-  // It also populates the rest of the relationships; `slimDoc` drops them.
-  const qs = new URLSearchParams({
-    'where[uploadedBy][equals]': String(locals.user.id),
-    'where[organization][equals]': selected.id,
-    sort: '-createdAt',
-    limit: LIST_LIMIT,
-    depth: '1',
-  });
-  const res = await backendFetch(locals.token, `/api/documents?${qs.toString()}`, {
-    method: 'GET',
-  });
-  const body = await res.json().catch(() => ({}));
-  const out = degradeListResponse(res, body, 'documentos');
-  // 401 passes through as a real 401 so the browser's session layer can act on
-  // it; everything else is already the degraded empty list.
-  if (out.kind !== 'ok') return json(out.body, { status: out.status });
-
-  const rows = Array.isArray((out.body as { docs?: unknown }).docs)
-    ? ((out.body as { docs: unknown[] }).docs as Record<string, unknown>[])
-    : [];
+  // ⚠ EVERY PAGE, not the first 500 (C-08): a single read cut the list at 500
+  // and reported `totalDocs: 500`, so the oldest documents could not be opened,
+  // deleted or published from here. Measured on dev 2026-11-10: 727 owned.
+  const rows: Record<string, unknown>[] = [];
+  let truncated = false;
+  for (let page = 1; ; page++) {
+    const res = await backendFetch(
+      locals.token,
+      `/api/documents?${ownedDocsQuery(String(locals.user.id), selected.id, page)}`,
+      { method: 'GET' },
+    );
+    const body = await res.json().catch(() => ({}));
+    const out = degradeListResponse(res, body, 'documentos');
+    // 401 passes through as a real 401 so the browser's session layer can act on
+    // it; everything else is already the degraded empty list. ⚠ A later page
+    // failing degrades the whole list too: half a list with no flag reads as
+    // "the rest are gone".
+    if (out.kind !== 'ok') return json(out.body, { status: out.status });
+    const docs = (out.body as { docs?: unknown }).docs;
+    if (Array.isArray(docs)) rows.push(...(docs as Record<string, unknown>[]));
+    if ((out.body as { hasNextPage?: unknown }).hasNextPage !== true) break;
+    if (page >= MAX_PAGES) {
+      truncated = true;
+      console.warn(`[documentos] stopped after ${MAX_PAGES} pages of ${LIST_LIMIT}`);
+      break;
+    }
+  }
 
   // ⚠ The `sueltos` filter is applied HERE, not pushed into the Payload query.
   // "Attached to nothing" on a hasMany relationship has no `where` spelling we
@@ -151,7 +228,10 @@ export const GET: RequestHandler = async ({ locals, cookies, url }) => {
     .filter((row) => (filter === 'sueltos' ? relationIds(row.session).length === 0 : true))
     .map((row) => slimDoc(row, String(locals.user!.id)));
 
-  return json({ docs, totalDocs: docs.length, filter }, { status: 200 });
+  return json(
+    { docs, totalDocs: docs.length, filter, ...(truncated ? { truncated: true } : {}) },
+    { status: 200 },
+  );
 };
 
 /**
