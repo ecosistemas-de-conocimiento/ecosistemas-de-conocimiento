@@ -2784,6 +2784,78 @@ because the model ids are OpenRouter's. Staging embeddings still use OpenRouter 
 no `EMBEDDINGS_API_KEY` and would send the OpenRouter key to DeepInfra, so that change was reverted within
 minutes. It needs a staging deploy first.
 
+### 4zzzzzzz. Done 2026-11-10 05:34-05:51 UTC: dev only - two Payload migrations on start; OpenRouter ZDR; detector fails over to hosted
+
+Measured by the deploy agent from the owner's laptop and on edc-1. Box clock read 2026-11-10 UTC (2026-11-09 in
+Mexico). Staging untouched: web and backend "Up 3 weeks", ai-service "Up 3 days", image tag `97d5316a` (`docker ps`
+after). Range `11b0aa25` (the 2026-10-29 06:45 build) -> `3f14306b`: OpenRouter Zero Data Retention (`9b755298`),
+per-document anonymise switches (`3360cfcf`), invented names for the Semiosis demo students (`3f14306b`).
+
+**ZDR, real calls before the deploy** (dev's `OPENROUTER_API_KEY`, same value as the owner's `OPENROUTER_KEY`, compared
+without printing). Request shape read in `services/ai-service/src/services/ai/router/adapters/openrouter.ts`: every
+chat body carries `provider: {zdr: true}`, plus `require_parameters: true` with a `json_schema` response format. Dev's
+generation model is `deepseek/deepseek-chat-v3.1` (`EFFORT_PROFILES`, no `project_configs`, `registry_entries` or
+`llm_configs` rows in dev's `edc_ai`; `usage_logs`, 14 days: only that model on `router.route`).
+
+| call | result |
+|---|---|
+| chat, `deepseek/deepseek-chat-v3.1`, `zdr` | 200, provider DeepInfra, $0.00000415 |
+| same, `stream: true` | 200, provider CoreWeave |
+| same, strict `json_schema` + `require_parameters` | 200, provider DeepInfra, valid JSON |
+| `openai/gpt-4o-mini` (`ROUTER_DEFAULT_MODEL`), `zdr` | 200, provider Azure |
+| detector hosted shape: deepseek, `quick` (400 tokens, 0.3), system + user prompt, `zdr` | 200, provider DeepInfra, $0.0000555 |
+| no ZDR endpoint: `cohere/command-r7b-12-2024`, `zdr` | 404 `No endpoints found matching your data policy (Zero data retention). Configure: https://openrouter.ai/settings/privacy` |
+
+The 404 text matches `NO_ZDR_ENDPOINT_RE` (`/data policy|zero data retention|\bzdr\b/i`, hit on "data policy"), so
+it becomes `OpenRouterNoZdrEndpointError`. Embeddings were not tested with `zdr`: dev sends them to the Spark,
+with DeepInfra as fallback (§4zzzzzz), and `zdr` goes only to `openrouter.ai` hosts.
+
+**Detector fallback to hosted** (from 2026-11-09; reverses §4zzzzzz's `none`). Before: Coolify
+`ANONYMISE_DETECT_FALLBACK` = `none` (normal copy), `hosted` (preview copy); `platform_settings` had no row, so the env
+applied. Changed the normal copy to `hosted` with API PATCH (literal), before the deploy. `platform_settings` left
+empty (NULL = env). Generated `.env` backed up to `/root/edc-pehg.env.bak-detectfallback-20261110T0538Z`; the deploy
+rewrote it. After: backend `printenv ANONYMISE_DETECT_FALLBACK` = `hosted`; log "falls back to ai-service when
+unavailable". Same switch also lets testimonio titles use the hosted model (`lib/testimonioTitle.ts`).
+
+Backup `/root/backups/20261110T0538Z/` (`edc_ai` 299 MB, `edc_backend` 18 MB, plus `documents`, `organizations` and
+`platform_settings` alone, 17 MB; `pg_restore -l` 137 / 472 / 45 lines; `SHA256SUMS`). Off-box copy in the owner's
+`cide/backups/edc-1/20261110T0538Z/`, `sha256sum -c` passed. Pre-check: no active query, last gate 2026-11-06 23:55.
+
+| deploy | uuid | queued -> finished (UTC) |
+|---|---|---|
+| first | `9nscrihdbwa1hbpkxf7xjfwl` | 05:41:28 -> 05:47:46 |
+
+**Migrations** at start, 05:47:47: `20261104_075139_documents_authors_kept` (11ms), `20261108_001902_documents_anonymise_switches`
+(59ms), `Done.`, "Ready in 858ms". `payload_migrations` 21 -> 23, batch 15. `documents.authors_kept` jsonb,
+`cited_authors_kept` jsonb, `keep_document_author` boolean, `keep_cited_authors` boolean, table
+`anonymisation_setting_changes` exist. `edc_ai` `__drizzle_migrations` unchanged at 6. After: 9 dev containers up,
+web, backend and ai-service on tag `3f14306b`, healthy; 0 `error`/`fatal` lines in 8 of 9 (postgres: 1, the deploy
+agent's own bad query).
+
+**Smoke**
+
+| check | result |
+|---|---|
+| health | `dev.` and `api.dev.` `/api/health` 200 |
+| login, estudiante1, web `POST /api/auth/login` with `Origin` | 200 |
+| chat, org 8, "¿Qué es un signo según Peirce?" (`POST /api/generate`) | 200 in 9.1 s; 960 characters with `[1, 5, 6]` markers, 4 `provenance.chunks`; `deepseek/deepseek-chat-v3.1`, $0.004555 (+ $0.000118 routing); 0 ZDR errors in the ai-service log; session deleted (200) |
+| gate on the Spark: estudiante1 uploads a 3-line synthetic Markdown documento (invented names, 7 occurrences) | `ready` and `published` within 14 s; 0 names left, 6 placeholders; report `settings` `{keepDocumentAuthor: false, keepCitedAuthors: false}`; 4 `openai-compat` calls on the Spark |
+| failover: one-off `payload run` in the backend container, `ANONYMISE_DETECT_URL=http://127.0.0.1:9`, same text, live detector wiring | `ready` in 3.5 s, 0 names, 4 placeholders; log `WARN falling back to ai-service (hosted): self-hosted unavailable (network); skipping it for 60 s`; 2 `edc-eco-8` `router.route` deepseek rows, $0.001139. The Spark was not touched |
+| normal path again: a second upload | `ready`, `published`, 0 names; 4 Spark calls; 0 "falling back" lines in the server process |
+
+Both test documents deleted by the uploader (200); 0 rows left in `documents` or `graph_mentions`; the script was removed
+from the container.
+
+**Re-gate of documents kept with their author: nothing to do.** Before the deploy, among 358 gated rows in
+`ready`/`held`/`approved` (123 documentos, 235 testimonios), 0 had the uploader's membership `person_name` inside
+`redacted_text` (SQL `strpos`, no text printed). All 123 documentos were created before the 2026-10-29 build that
+carried the author-keeping rule. After the deploy, the rows `regateInheritors` would pick (verdict made with a switch on:
+`settings` true, or no `settings` and a non-empty `authors_kept` / `cited_authors_kept`): 0 and 0. So no ecosistema
+switch was turned on and off, and no row changed. Drafts made: 0 staff, 0 participant.
+
+Spend: `usage_logs` since 05:30 UTC, 11 rows, $0.007394, all from this run. Direct OpenRouter checks under $0.0001.
+No image cleanup; the earlier images stay for rollback. **Disk**, `df -h /` free: 49 GB before, 33 GB after.
+
 ---
 
 ## 5. Where secrets live (names only)
