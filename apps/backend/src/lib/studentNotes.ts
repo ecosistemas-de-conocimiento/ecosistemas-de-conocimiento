@@ -47,6 +47,7 @@ import type { Payload } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { autoPublishParticipantDocument, type AutoPublishSkip } from './autoPublish'
+import { isConsentHeld, readConsentHeld } from './consentHold'
 import { errSummary } from './errorSummary'
 import { featureEnabled } from './features'
 import { relationId, roleInOrganization } from './permissions'
@@ -254,6 +255,9 @@ export async function publishStudentNoteChanges(args: {
   const { payload, row } = args
   if (!isAppNote(row) || row.contentKind !== 'documento') return { status: 409, reason: 'not-a-note' }
   if (row.publicationStatus !== 'published') return { status: 409, reason: 'not-draft' }
+  // 🔴 A held note gets no revision, no extraction, no gate (the endpoint checks
+  // too; this holds for any other caller).
+  if (isConsentHeld(row) || (await readConsentHeld(payload, row.id as Id))) return { status: 409, reason: 'consent-held' }
   const body = typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : ''
   if (body === row.processedBody) return { status: 409, reason: 'unchanged' }
   const text = body.trim() ? await (args.extract ?? defaultExtract)(body.trim()) : ''
@@ -366,7 +370,23 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 /** Why a promotion did not happen now. `null` = promoted. */
-export type PromoteSkip = 'graph-pending' | 'busy' | 'not-cleared' | 'withdrawn'
+export type PromoteSkip = 'graph-pending' | 'busy' | 'not-cleared' | 'withdrawn' | 'consent-held'
+
+/**
+ * 🔴 IS THE NOTE OR ITS REVISION HELD FOR CONSENT? Both, read now from the
+ * table (`readConsentHeld` selects the column itself), plus the row in hand.
+ * A revision created before its note was held does not carry the flag
+ * (inheritance is the hold's job), so the NOTE is what decides.
+ */
+async function noteOrRevisionHeld(
+  payload: Payload,
+  revision: Record<string, unknown>,
+  noteId: Id | null,
+): Promise<boolean> {
+  if (isConsentHeld(revision)) return true
+  if (revision.id != null && (await readConsentHeld(payload, revision.id as Id))) return true
+  return noteId !== null && (await readConsentHeld(payload, noteId))
+}
 
 /** Graph states after which the revision's rows are final. */
 const GRAPH_SETTLED = new Set(['ready', 'skipped', 'failed'])
@@ -404,6 +424,10 @@ export async function promoteRevision(args: {
   callbackUrl?: string
 }): Promise<PromoteSkip | null> {
   const { payload, client } = args
+  // 🔴 RETENIDO POR CONSENTIMIENTO (audit, ola 11 A1): before the claim, the
+  // shared-corpus enqueue and the swap. Nothing is written: the revision stays
+  // as it is, the note keeps its published text.
+  if (await noteOrRevisionHeld(payload, args.revision, relationId(args.revision.revisionOf))) return 'consent-held'
   if (!GRAPH_SETTLED.has(String(args.revision.graphStatus))) return 'graph-pending'
   const revisionId = args.revision.id as Id
 

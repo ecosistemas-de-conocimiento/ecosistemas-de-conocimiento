@@ -597,6 +597,78 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
       await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published' WHERE id = ${NOTE}`)
     }, 60_000)
 
+    describe('🔴 retenido por consentimiento (ola 11, A1)', () => {
+      const hold = (id: number, on: boolean) =>
+        pg!.db.execute(sql`UPDATE documents SET consent_held = ${on} WHERE id = ${id}`)
+      const revisionRow = async (id: number) =>
+        (await rowsOf(pg!.db, sql`SELECT publication_status AS p, updated_at AS u FROM documents WHERE id = ${id}`))[0]
+
+      for (const which of ['note', 'revision'] as const) {
+        it(`the ${which} held: the cleared revision is not promoted — no ai-service call, no gate, no write; released, it is`, async () => {
+          const rev = await changeAndWait()
+          await pg!.db.execute(sql`UPDATE documents SET ingest_status = 'ready' WHERE id = ${rev}`)
+          await hold(which === 'note' ? NOTE : rev, true)
+          const before = await row(NOTE)
+          const revBefore = await revisionRow(rev)
+          aiCalls.length = 0
+          const gateBefore = detectorCalls
+          const graphBefore = graphRequests.length
+          try {
+            const out = await autoPublishParticipantDocument({
+              payload: payload!,
+              documentId: rev,
+              clientFor: (o) => getAdminAIClient(o) as never,
+            })
+            expect(out).toEqual({ published: false, reason: 'consent-held' })
+            expect(aiCalls).toHaveLength(0)
+            expect(detectorCalls).toBe(gateBefore)
+            expect(graphRequests.length).toBe(graphBefore)
+            // Nothing written: the revision is not claimed, the note keeps its text.
+            expect(await revisionRow(rev)).toEqual(revBefore)
+            expect(await row(NOTE)).toEqual(before)
+          } finally {
+            await hold(which === 'note' ? NOTE : rev, false)
+          }
+          // Control: the same revision, no longer held, is promoted.
+          expect(
+            await autoPublishParticipantDocument({ payload: payload!, documentId: rev, clientFor: (o) => getAdminAIClient(o) as never }),
+          ).toEqual({ published: true })
+          expect(sharedEnqueues()).toHaveLength(1)
+          expect(await revisionOf(NOTE)).toBeUndefined()
+        }, 60_000)
+      }
+
+      it('a held note: "Publicar cambios" starts nothing — endpoint (CONSENT_HELD_MESSAGE) and the lib for any other caller', async () => {
+        expect((await autosave(ANA, NOTE, { bodyMarkdown: nextBody() })).status).toBe(200)
+        await hold(NOTE, true)
+        const gateBefore = detectorCalls
+        aiCalls.length = 0
+        try {
+          const res = await publicar(ANA, NOTE)
+          expect(res.status).toBe(409)
+          expect(JSON.stringify(res.body)).toContain('retenido hasta tener el consentimiento')
+          const { publishStudentNoteChanges } = await import('./studentNotes')
+          const note = await payload!.findByID({ collection: 'documents', id: NOTE, depth: 0, overrideAccess: true })
+          const extract = vi.fn(async (b: string) => b)
+          const out = await publishStudentNoteChanges({
+            payload: payload!,
+            // The row as a caller might hold it: without the column.
+            row: { ...(note as unknown as Record<string, unknown>), consentHeld: undefined },
+            clientFor: (o) => getAdminAIClient(o) as never,
+            extract,
+          })
+          expect(out).toEqual({ status: 409, reason: 'consent-held' })
+          expect(extract).not.toHaveBeenCalled()
+          await new Promise((r) => setTimeout(r, 300))
+          expect(await revisionOf(NOTE)).toBeUndefined()
+          expect(detectorCalls).toBe(gateBefore)
+          expect(aiCalls).toHaveLength(0)
+        } finally {
+          await hold(NOTE, false)
+        }
+      }, 60_000)
+    })
+
     it('🔴 withdrawn DURING the re-index: taken back out of the shared corpus, nothing swapped', async () => {
       const rev = await changeAndWait()
       const before = await row(NOTE)

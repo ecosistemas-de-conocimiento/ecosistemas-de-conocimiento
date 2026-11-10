@@ -24,6 +24,8 @@ import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate } from '@/
 import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/documentColumns'
 import { errSummary, isDatabaseError } from '@/lib/errorSummary'
 
+import { isConsentHeld } from './consentHold'
+
 import { extractGraph, type GraphGenerateClient } from './extract'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 import type { GraphStatus } from './types'
@@ -206,6 +208,9 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     anonymise: anonymiseRequested(args.anonymise),
     publicationStatus: args.publicationStatus,
   }
+  // 🔴 RETENIDO POR CONSENTIMIENTO (audit, ola 11 A2): a job queued before the
+  // hold sends nothing to the model and writes nothing (`lib/consentHold.ts`).
+  if (isHeldRead(start)) return 'skipped'
   const startAbort = await abortIfStale(payload, docId, organizationId, queued, start)
   if (startAbort || !start.ok) return startAbort ?? 'skipped'
   // From here on, the ROW's values, never the queued ones.
@@ -266,6 +271,8 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     // 🔴 RE-READ RIGHT BEFORE WRITING. The deep calls above take minutes; a
     // reviewer can hold, reject, withdraw or re-gate the row in that window.
     const beforeWrite = await readGraphableRow(payload, docId, organizationId)
+    // 🔴 Held while the model ran: its output is dropped, nothing is written.
+    if (isHeldRead(beforeWrite)) return 'skipped'
     const writeAbort = await abortIfStale(payload, docId, organizationId, start, beforeWrite)
     if (writeAbort) return writeAbort
     // 🔴 THE SEEDS COME FROM THE ROW AS RE-READ HERE, merged by `canonicalKey`
@@ -404,7 +411,9 @@ type GraphableRow =
       /** The document author and cited authors left visible on the row: never a node (`dropKeptAuthors`). */
       authorNames?: string[]
     }
-  | { ok: false; reason: string }
+  | { ok: false; reason: string; consentHeld?: true }
+
+const isHeldRead = (r: GraphableRow): boolean => !r.ok && r.consentHeld === true
 
 async function readGraphableRow(
   payload: GraphSchedulerPayload,
@@ -421,6 +430,9 @@ async function readGraphableRow(
   })
   const row = found?.docs?.[0] as Record<string, unknown> | undefined
   if (!row) return { ok: false, reason: 'document not found' }
+  // ⚠ `find` with no `select`: the row carries `consentHeld` (pinned on a real
+  // Postgres, `schedule.consentHeld.pg.test.ts`).
+  if (isConsentHeld(row)) return { ok: false, reason: 'consent held', consentHeld: true }
   const corpus = corpusTextFor(row)
   if (!corpus.ok) return corpus
   return {

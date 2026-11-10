@@ -334,4 +334,17 @@ describe('onlyIds — the targeted re-gate of place-only holds', () => {
     expect(inside).toEqual({ enqueued: 1, failed: 0, held: 0 })
     expect(live.publicationStatus).toBe('publishing')
   })
+
+  it('🔴 a row held for consent, even named in onlyIds: no detector call, no write, no enqueue', async () => {
+    const model = clearsOnceThenHolds()
+    detector = model.detector
+    const { payload, live } = oneRow({ ...seededDraft(), consentHeld: true })
+    const before = { ...live }
+    enqueue.mockClear()
+    const out = await ingestSeededDocuments(payload, 1, { spacingMs: 0, onlyIds: new Set(['30']) })
+    expect(out).toEqual({ enqueued: 0, failed: 0, held: 0 })
+    expect(model.calls()).toBe(0)
+    expect(enqueue).not.toHaveBeenCalled()
+    expect(live).toEqual(before)
+  })
 })
