@@ -38,7 +38,7 @@
 
 import { safeErrMessage } from './errorSummary'
 
-/** Every limit in this app uses a one-minute window, except failed logins (below). */
+/** Every limit in this app uses a one-minute window, except failed logins, new conversations and added members (below). */
 export const RATE_LIMIT_WINDOW_MS = 60_000
 
 /**
@@ -55,6 +55,9 @@ export const LOGIN_FAIL_WINDOW_MS = 60 * 60_000
  * table's size, not a request rate (`rateLimits.sessionCreatePerUser`).
  */
 export const SESSION_CREATE_WINDOW_MS = 60 * 60_000
+
+/** People one manager adds through `/api/miembros` are counted over an hour (`rateLimits.memberAddPerUser`). */
+export const MEMBER_ADD_WINDOW_MS = 60 * 60_000
 
 /** Answer for one bucket. `resetAt` is epoch ms. */
 export interface RateLimitDecision {
@@ -456,6 +459,23 @@ export const rateLimits = {
    * (`overrideAccess`) and are not counted. At 60, 20 000 takes two weeks.
    */
   sessionCreatePerUser: (): number => envInt('SESSION_RATELIMIT_CREATE_USER_MAX', 60),
+
+  // --- people added by a manager ----------------------------------------------
+
+  /**
+   * People one manager adds through `POST /api/miembros` per HOUR
+   * ({@link MEMBER_ADD_WINDOW_MS}; audit 2026-11-10, D2 leftover). Every new
+   * account brings its own `relationReadPerUser`, relation-filter slots and
+   * `sessionCreatePerUser`, so unbounded adds multiplied one person's budget.
+   *
+   * 50: a responsable adding a class of ~30 in one sitting stays under it with
+   * 20 to spare for a mistyped email removed and added again (inferred from the
+   * screen, which adds one person per form send, `apps/web/src/routes/miembros`;
+   * no measured class size). An add that fails (400, 409, a refused role) is
+   * given back. Platform admins are not counted. At 50, one manager adds at
+   * most 1200 accounts a day.
+   */
+  memberAddPerUser: (): number => envInt('MIEMBROS_RATELIMIT_ADD_USER_MAX', 50),
 
   // --- filters through a relationship ----------------------------------------
 

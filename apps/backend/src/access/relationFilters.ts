@@ -40,6 +40,8 @@
  */
 
 import type {
+  AfterErrorHook,
+  CollectionAfterOperationHook,
   CollectionBeforeOperationHook,
   PayloadRequest,
   SanitizedCollectionConfig,
@@ -117,17 +119,24 @@ export const relationFilterLimits = {
   maxIds: (): number => envInt('QUERY_RELATION_MAX_IDS', 5000),
   /**
    * 🔴 `maxInFlight` 2 (`QUERY_RELATION_MAX_CONCURRENT_PER_USER`): requests
-   * with a crossing one person has resolving at once, per backend process
-   * (audit 2026-11-10, D2). The caps above are per request; nothing bounded
-   * how many ran together. Twenty at the caps at once held another person's
-   * `/api/users/me` for 3.5 s with a 543 ms stall; twenty over the id cap,
-   * 2.3 s and 1.3 s (measured on torre 2026-11-10 23:35 UTC, load ~13-16 on
-   * 16 cores, the burst probe in `relationFilters.bounds.pg.test.ts`). A third
-   * is a 429 at once, `Retry-After` {@link RELATION_BUSY_RETRY_AFTER_SECONDS};
-   * no queue, so nothing waits or piles up. 2, as uploads
-   * (`lib/uploadSlots.ts`): the web sends no crossing term (grep of
-   * `apps/web/src`, 2026-11-10), so one person needs none at once; 2 leaves a
-   * retry room to overlap (inferred).
+   * with a crossing one person has running at once (lookups and the query),
+   * per backend process (audit 2026-11-10, D2). The caps above are per
+   * request; nothing bounded how many ran together. Twenty at the caps at once
+   * held another person's `/api/users/me` for 3.5 s with a 543 ms stall;
+   * twenty over the id cap, 2.3 s and 1.3 s (measured on torre 2026-11-10
+   * 23:35 UTC, load ~13-16 on 16 cores, the burst probe in
+   * `relationFilters.bounds.pg.test.ts`). A third is a 429 at once,
+   * `Retry-After` {@link RELATION_BUSY_RETRY_AFTER_SECONDS}; no queue, so
+   * nothing waits or piles up. Held through the query too since the D2
+   * leftover: one member resending every 429 at once, 30 at the caps, held
+   * another person's `/me` at a median 112-118 ms (max 257-311) with the slot
+   * on the lookups only, 87 ms (max 208-221) with it on the whole operation;
+   * one request alone, 272-294 ms without and 270-332 ms with, the host's
+   * noise (measured on torre 2026-11-11 00:17-00:19 UTC, load ~2.5-2.7 on 16
+   * cores, the probes in `relationFilters.bounds.pg.test.ts`, two runs each,
+   * three with). 2, as uploads (`lib/uploadSlots.ts`): the web sends no
+   * crossing term (grep of `apps/web/src`, 2026-11-10), so one person needs
+   * none at once; 2 leaves a retry room to overlap (inferred).
    */
   maxInFlight: (): number => envInt('QUERY_RELATION_MAX_CONCURRENT_PER_USER', 2),
 }
@@ -137,6 +146,14 @@ export const relationFilterLimits = {
  * is free by then (inferred).
  */
 export const RELATION_BUSY_RETRY_AFTER_SECONDS = 1
+
+/**
+ * 30 s: a slot nothing gave back is freed after this long. Only a local-API
+ * call that throws after `beforeOperation` gets here (REST has `afterError`).
+ * An at-cap request answers in under 1.1 s (measured, above), so no live
+ * request is cut short at 30 s (inferred).
+ */
+export const RELATION_SLOT_LEASE_MS = 30_000
 
 /**
  * A filter past {@link relationFilterLimits}. Public, so REST answers 400 with the message.
@@ -170,11 +187,20 @@ export class RelationFilterBusy extends APIError {
  * many times the module is evaluated.
  */
 const SLOTS = Symbol.for('edc.backend.relationFilters.inFlight')
-type Slots = { byUser: Map<string, number>; holding: WeakSet<object> }
+type Slots = { byUser: Map<string, number>; holding: WeakMap<object, () => void> }
 const slots: Slots = ((globalThis as unknown as { [SLOTS]?: Slots })[SLOTS] ??= {
   byUser: new Map(),
-  holding: new WeakSet(),
+  holding: new WeakMap(),
 })
+
+/**
+ * The release, carried on the operation's args from `beforeOperation` to its
+ * `afterOperation`. On the args and not on `req`: a lookup the request runs
+ * itself shares the `req`, and its own `afterOperation` must not free the
+ * slot of the query it is resolving. Enumerable, so a later hook that spreads
+ * the args (`narrowGatedQueriesAt`) keeps it.
+ */
+const SLOT_RELEASE = Symbol.for('edc.backend.relationFilters.release')
 
 /** Slots `userId` holds now. Tests. */
 export const relationSlotsHeld = (userId: string | number): number => slots.byUser.get(String(userId)) ?? 0
@@ -199,11 +225,15 @@ function busy(req: PayloadRequest, retryAfterSeconds: number, message: string): 
  * it holds the slot already and takes nothing. A request refused by the
  * per-minute bucket gives its slot back before the 429.
  *
- * The slot covers the lookups, where the cost is; the query itself, with the
- * resolved `in` lists, runs after it is freed.
+ * 🔴 THE SLOT IS HELD UNTIL THE WHOLE OPERATION ENDS (D2 leftover): the
+ * lookups, and the query that runs after them with up to `maxIds` ids in its
+ * `in` lists. `releaseRelationSlot` frees it in `afterOperation`,
+ * `releaseRelationSlotOnError` in `afterError` (every REST error), and the
+ * lease ({@link RELATION_SLOT_LEASE_MS}) whatever neither reached. `null`
+ * when the request holds one already.
  */
-async function takeRelationSlot(req: PayloadRequest, userId: string | number): Promise<() => void> {
-  if (slots.holding.has(req)) return () => {}
+async function takeRelationSlot(req: PayloadRequest, userId: string | number): Promise<(() => void) | null> {
+  if (slots.holding.has(req)) return null
   const key = String(userId)
   const max = relationFilterLimits.maxInFlight()
   const held = slots.byUser.get(key) ?? 0
@@ -211,16 +241,19 @@ async function takeRelationSlot(req: PayloadRequest, userId: string | number): P
     throw busy(req, RELATION_BUSY_RETRY_AFTER_SECONDS, `Too many filters through a relationship at once: at most ${max}.`)
   }
   slots.byUser.set(key, held + 1)
-  slots.holding.add(req)
   let released = false
   const release = () => {
     if (released) return
     released = true
+    clearTimeout(lease)
     slots.holding.delete(req)
     const now = (slots.byUser.get(key) ?? 1) - 1
     if (now > 0) slots.byUser.set(key, now)
     else slots.byUser.delete(key)
   }
+  const lease = setTimeout(release, RELATION_SLOT_LEASE_MS)
+  lease.unref?.()
+  slots.holding.set(req, release)
   try {
     const verdict = await checkRateLimits([
       { scope: 'relation-filter:user', key: `relation-filter:user:${key}`, limit: rateLimits.relationReadPerUser() },
@@ -550,9 +583,12 @@ export function constrainRelationQueries(options: { follow: boolean; fieldRule: 
       const release = await takeRelationSlot(req, user.id)
       try {
         where = await resolveRelationCrossings(a.where, fields, req, options.follow, budget)
-      } finally {
-        release()
+      } catch (err) {
+        release?.()
+        throw err
       }
+      // Held through the query itself; `releaseRelationSlot` frees it.
+      if (release) next = Object.assign({ ...next }, { [SLOT_RELEASE]: release })
     }
     if (where !== a.where) next = { ...next, where: where as Where }
     const parts = sortParts(a.sort)
@@ -585,6 +621,22 @@ export const relationFilterHook: CollectionBeforeOperationHook = async (hookArgs
   return plainRule(hookArgs)
 }
 
+/** The operation that took a slot in `beforeOperation` has ended: free it. */
+export const releaseRelationSlot: CollectionAfterOperationHook = ({ args, result }) => {
+  const release = (args as { [SLOT_RELEASE]?: unknown } | undefined)?.[SLOT_RELEASE]
+  if (typeof release === 'function') release()
+  return result
+}
+
+/**
+ * A REST request that failed after `beforeOperation` (a 400, a timeout, a
+ * throw in a later hook) frees the slot it holds. Global, so an error on any
+ * collection, or in a custom endpoint, reaches it.
+ */
+export const releaseRelationSlotOnError: AfterErrorHook = ({ req }) => {
+  slots.holding.get(req)?.()
+}
+
 /** Does any field, at any depth, cross into another collection or hide its value from some callers? */
 export function needsRelationFilters(fields: QueryField[]): boolean {
   return fields.some((f) => {
@@ -599,6 +651,8 @@ export function needsRelationFilters(fields: QueryField[]): boolean {
  * Payload's own `payload-locked-documents` and `payload-preferences`, added
  * inside `buildConfig`, get the hook too. Last in `beforeOperation`: a
  * collection's own hook (`limitQueriesOnUser`) judges the query as sent.
+ * `releaseRelationSlot` goes first in `afterOperation`, and
+ * `releaseRelationSlotOnError` first in the global `afterError`.
  * `relationFilters.pg.test.ts` walks the built config and fails on a
  * collection that needs the hook and lacks it.
  */
@@ -607,6 +661,10 @@ export function applyRelationFilters(config: SanitizedConfig): SanitizedConfig {
     if (!needsRelationFilters(collection.flattenedFields as unknown as QueryField[])) continue
     const hooks = (collection.hooks.beforeOperation ??= [])
     if (!hooks.includes(relationFilterHook)) hooks.push(relationFilterHook)
+    const after = (collection.hooks.afterOperation ??= [])
+    if (!after.includes(releaseRelationSlot)) after.unshift(releaseRelationSlot)
   }
+  const onError = ((config.hooks ??= { afterError: [] }).afterError ??= [])
+  if (!onError.includes(releaseRelationSlotOnError)) onError.unshift(releaseRelationSlotOnError)
   return config
 }

@@ -11,7 +11,7 @@
 import type { PayloadRequest } from 'payload'
 import { describe, expect, it } from 'vitest'
 
-import { constrainRelationQueries, type QueryField } from './relationFilters'
+import { constrainRelationQueries, releaseRelationSlot, type QueryField } from './relationFilters'
 
 const fields: QueryField[] = [
   { name: 'session', type: 'relationship', relationTo: 'sessions' },
@@ -53,8 +53,12 @@ function fakeReq(rows: number) {
 }
 
 const rule = constrainRelationQueries({ follow: false, fieldRule: true })
-const run = (req: PayloadRequest, where: unknown) =>
-  rule({ args: { where }, operation: 'read', collection: { flattenedFields: fields }, req } as never)
+/** The hook, then the end of the operation, which frees the slot. */
+const run = async (req: PayloadRequest, where: unknown) => {
+  const args = await rule({ args: { where }, operation: 'read', collection: { flattenedFields: fields }, req } as never)
+  releaseRelationSlot({ args, result: undefined } as never)
+  return args
+}
 const terms = (n: number) => ({ or: Array.from({ length: n }, (_, i) => ({ 'session.title': { like: `t${i}` } })) })
 
 describe('🔴 a filter through a relation reads the target one lookup at a time', () => {
