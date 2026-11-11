@@ -20,6 +20,7 @@ import {
 } from 'bullmq';
 
 import { env } from '../config/env.js';
+import { rootLogger, type ComponentLogger } from '../logger.js';
 import { bullmqStalledTotal } from '../metrics/registry.js';
 import { QUEUE_NAMES } from './connection.js';
 import type { GenerationJobData } from '../types/generation.js';
@@ -423,6 +424,7 @@ export interface WorkerLifecycleEvents {
 export function attachWorkerLifecycleLogging(
   worker: WorkerLifecycleEvents,
   label: string,
+  logger: ComponentLogger = rootLogger,
 ): void {
   worker.on('stalled', (jobId, prev) => {
     // The log line below is for a human already reading logs; this counter is
@@ -435,7 +437,9 @@ export function attachWorkerLifecycleLogging(
         "presumed dead is failed as 'worker_lost' instead.",
     );
   });
+  // Through the logger's `err` serializer (`errors/log-safe.ts`): a worker
+  // error can be a database error, and its message can quote the row.
   worker.on('error', (err) => {
-    console.error(`${label}: worker error: ${err.message}`);
+    logger.error({ err }, `${label}: worker error`);
   });
 }

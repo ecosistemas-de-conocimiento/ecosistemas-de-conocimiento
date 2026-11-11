@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
+import { errSummary } from '$lib/errorSummary';
 import { backendJson } from '$lib/server/backendResponse';
 
 /**
@@ -29,7 +30,7 @@ export const POST: RequestHandler = async ({ locals, params }) => {
     return json(
       {
         error: 'upstream_unreachable',
-        detail: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+        detail: errSummary(err),
       },
       { status: 502 },
     );

@@ -26,6 +26,7 @@ declare function errSummary(e: unknown): string
 declare function safeErrMessage(e: unknown): string
 declare const err: Error, error: Error, ex: Error, reason: Error
 declare const job: Promise<void>
+declare const results: PromiseSettledResult<void>[]
 `;
 const lines = (body: string) => prelude.split('\n').length + body.trimStart().split('\n').length - 1;
 
@@ -41,6 +42,11 @@ describe('edc/no-raw-error-log in apps/web', () => {
     `console.error('[x]', JSON.stringify(err))`,
     `try { void 0 } catch (boom) { console.error('[x]', boom) }`,
     `job.catch((boom) => console.warn(\`[x] \${boom}\`))`,
+    `console.error('[x]', err.toString())`,
+    `try { void 0 } catch (boom) { console.warn(\`[x] \${boom.toString()}\`) }`,
+    `job.then(() => undefined, (boom) => console.error('[x]', boom))`,
+    `for (const r of results) if (r.status === 'rejected') console.warn('[x]', r.reason)`,
+    `console.error('[x]', error.cause)`,
   ])('🔴 rejects %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([lines(body)]);
   });
@@ -51,6 +57,10 @@ describe('edc/no-raw-error-log in apps/web', () => {
     `console.warn(\`[x] failed (\${(err as Error)?.name ?? 'Error'})\`)`,
     `try { void 0 } catch (boom) { console.error('[x]', safeErrMessage(boom)) }`,
     `job.then((boom) => console.log('[x]', boom))`,
+    `job.then(() => undefined, (boom) => console.error('[x]', safeErrMessage(boom)))`,
+    `for (const r of results) if (r.status === 'rejected') console.warn('[x]', safeErrMessage(r.reason))`,
+    `console.error('[x]', err.cause instanceof Error ? err.cause.name : 'x')`,
+    `const n = 1; console.log('[x]', n.toString())`,
   ])('allows %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([]);
   });

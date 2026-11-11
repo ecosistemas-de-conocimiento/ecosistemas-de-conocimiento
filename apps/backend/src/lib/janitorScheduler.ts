@@ -60,6 +60,18 @@ export function janitorsDisabledForTests(): boolean {
   return process.env[JANITORS_DISABLED_VAR] === '1'
 }
 
+/**
+ * Say at boot that the switch is on, once, from `onInit`. Each janitor returns
+ * silently under it, so without this line a process with the variable set by
+ * mistake runs no janitor and nothing says why. Silent while it is unset,
+ * which is every deployment.
+ */
+export function announceJanitorsDisabled(payload: Pick<Payload, 'logger'>): boolean {
+  if (!janitorsDisabledForTests()) return false
+  payload.logger.warn(`[janitors] ${JANITORS_DISABLED_VAR}=1: no janitor arms in this process`)
+  return true
+}
+
 /** Shared by every janitor here: minutes from boot to the first sweep. */
 export const JANITOR_FIRST_SWEEP_MIN_VAR = 'JANITOR_FIRST_SWEEP_MIN'
 /**

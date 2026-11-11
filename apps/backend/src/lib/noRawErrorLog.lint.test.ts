@@ -25,6 +25,7 @@ declare function errSummary(e: unknown): string
 declare function safeErrMessage(e: unknown): string
 declare const err: Error, error: Error, e: Error, cause: Error, writeErr: Error, updateError: Error, ex: Error, reason: Error
 declare const job: Promise<void>
+declare const results: PromiseSettledResult<void>[]
 `
 const lines = (body: string) => prelude.split('\n').length + body.trimStart().split('\n').length - 1
 
@@ -60,6 +61,17 @@ describe('edc/no-raw-error-log', () => {
     `try { void 0 } catch (boom) { payload.logger.warn({ id: 1, detail: boom }, '[x]') }`,
     `job.catch((boom) => console.error('[x]', boom))`,
     `job.catch(function (boom) { console.warn('[x]', String(boom)) })`,
+    // toString(), the rejection handler of .then(), .reason and .cause.
+    `console.error('[x]', err.toString())`,
+    `payload.logger.warn(\`[x] \${err?.toString()}\`)`,
+    `try { void 0 } catch (boom) { console.error('[x] ' + boom.toString()) }`,
+    `job.then(() => undefined, (boom) => console.error('[x]', boom))`,
+    `job.then(() => undefined, function (boom) { payload.logger.warn(\`[x] \${boom}\`) })`,
+    `for (const r of results) if (r.status === 'rejected') console.error('[x]', r.reason)`,
+    `for (const r of results) if (r.status === 'rejected') payload.logger.warn({ id: 1, detail: r.reason }, '[x]')`,
+    `console.error('[x]', err.cause)`,
+    `results.forEach((outcome) => console.warn('[x]', outcome.reason))`,
+    `payload.logger.warn(\`[x] \${error.cause}\`)`,
   ])('🔴 rejects %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([lines(body)])
   })
@@ -82,6 +94,13 @@ describe('edc/no-raw-error-log', () => {
     // Bound outside a catch: an ordinary value.
     `const boom = 'fine'; console.log('[x]', boom)`,
     `job.then((boom) => console.log('[x]', boom))`,
+    `job.then(() => undefined, (boom) => payload.logger.error({ err: boom }, '[x]'))`,
+    `for (const r of results) if (r.status === 'rejected') payload.logger.warn({ err: r.reason }, '[x]')`,
+    `payload.logger.warn({ err: err.cause }, '[x]')`,
+    `console.error('[x]', safeErrMessage(err.cause), err.cause instanceof Error ? err.cause.name : 'x')`,
+    `const n = 1; console.log('[x]', n.toString())`,
+    // A domain reason, not a rejection.
+    `const decision = { reason: 'tier' }; payload.logger.info(\`[x] \${decision.reason}\`)`,
   ])('allows %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([])
   })

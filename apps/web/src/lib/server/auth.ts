@@ -8,6 +8,7 @@
 // proxied calls.
 
 import { env } from '$env/dynamic/private';
+import { errSummary } from '$lib/errorSummary';
 import { currentClientIp, forwardClientIp } from './clientIp';
 import { MAX_LOGIN_EMAIL_LENGTH, reserveLoginAttempt } from './loginRateLimit';
 
@@ -120,7 +121,10 @@ export interface LoginResult {
   user?: BackendUser;
   /** Machine code. Maps to Spanish copy; never rendered as-is. */
   failure?: AuthFailure;
-  /** The backend's / runtime's own words. FOR LOGS ONLY — never rendered. */
+  /**
+   * The backend's own words, or a thrown fetch's `errSummary` (name and code,
+   * never its message). FOR LOGS ONLY — never rendered.
+   */
   detail?: string;
   /** On the backend's 429: its wait, from `Retry-After` or its message. */
   retryAfterSeconds?: number;
@@ -196,8 +200,9 @@ export async function loginWithBackend(
     }
     return { ok: true, token: body.token, user: body.user };
   } catch (err) {
-    // A thrown fetch means we never reached the backend at all.
-    return { ok: false, failure: 'unreachable', detail: (err as Error).message };
+    // A thrown fetch means we never reached the backend at all. Its name and
+    // code only: `detail` is logged, and a message is text we did not write.
+    return { ok: false, failure: 'unreachable', detail: errSummary(err) };
   }
 }
 
@@ -260,8 +265,8 @@ export async function signIn(
     // Only a guess keeps its slot; an outage or the backend's own 429 does not.
     if (failure !== 'invalid-credentials' && failure !== 'account-locked') slot.release();
     // 🔴 The split: the technical detail goes to the LOG, the Spanish sentence
-    // goes to the screen. `detail` holds Payload's English or a raw
-    // `fetch failed`; neither is ever put in the response body.
+    // goes to the screen. `detail` holds Payload's English or a thrown fetch's
+    // name and code; neither is ever put in the response body.
     console.warn(`[auth] login failed (${failure}): ${result.detail ?? 'sin detalle'}`);
     // An unreachable or broken backend is not the user's fault, so it must not
     // answer 401 — that reads as "wrong password" to every caller.

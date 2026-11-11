@@ -25,6 +25,7 @@ const {
   AUTH_ERROR_COPY,
   authErrorMessage,
   loginWithBackend,
+  signIn,
 } = await import('./auth');
 
 /** Stub `fetch` with a JSON body + status, the way Payload replies. */
@@ -100,7 +101,24 @@ describe('loginWithBackend', () => {
     );
     const res = await loginWithBackend('a@b.mx', 'x');
     expect(res.failure).toBe('unreachable');
-    expect(res.detail).toBe('fetch failed');
+    expect(res.detail).toBe('TypeError');
+  });
+
+  it("🔴 logs a thrown fetch's name and code, never its message", async () => {
+    const thrown = Object.assign(new TypeError('fetch failed: row 42 ana@ejemplo.mx'), {
+      cause: Object.assign(new Error('connect ECONNREFUSED 10.0.0.9:3002'), { code: 'ECONNREFUSED' }),
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw thrown;
+      }),
+    );
+    const res = await signIn('nadie@ejemplo.mx', 'unaClaveLarga', { set: vi.fn() }, false);
+    expect(res).toMatchObject({ ok: false, status: 503 });
+    const logged = vi.mocked(console.warn).mock.calls.map((args) => args.join(' ')).join('\n');
+    expect(logged).toContain('[auth] login failed (unreachable): TypeError(ECONNREFUSED)');
+    expect(logged).not.toMatch(/row 42|ana@ejemplo|10\.0\.0\.9|fetch failed/);
   });
 
   it('keeps the backend English in detail and out of the copy', async () => {

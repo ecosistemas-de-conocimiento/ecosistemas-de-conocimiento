@@ -19,6 +19,11 @@ const SHAPES = [
   new RegExp(String.raw`console\.(?:log|info|warn|error|debug)\(.*\(?${ERR}(?: as Error)?\)?\??\.(?:message|stack)\b`),
   new RegExp(String.raw`console\.(?:log|info|warn|error|debug)\(.*(?:String|JSON\.stringify)\(${ERR}\)`),
   new RegExp(String.raw`console\.(?:log|info|warn|error|debug)\(.*\$\{${ERR}\}`),
+  // `err.toString()`, a settled result's `.reason`, an error's `.cause`.
+  new RegExp(String.raw`console\.(?:log|info|warn|error|debug)\(.*\b${ERR}\??\.toString\(`),
+  /console\.(?:log|info|warn|error|debug)\(.*(?:\.cause|\b(?:r|res|result|outcome|settled|\w+Result)\??\.reason)\b(?!\??\.)/,
+  // `.then(ok, (x) => console.error('…', x))`: the rejection handler's error.
+  /\.then\(.+,\s*(?:async\s*)?\(?(\w+)\)?\s*=>.*console\.(?:log|info|warn|error|debug)\(.*(?:,\s*\1\s*\)|\$\{\1\})/,
 ];
 
 /** The lint rule's own opt-out on the line above, which the rule also honours. */
@@ -54,6 +59,11 @@ describe('no raw error text in a log line (grep)', () => {
     `console.warn('[x]', { mediaId, err: String(err) });`,
     `console.error('[x]', JSON.stringify(ex));`,
     `console.warn(\`[x] failed: \${err}\`);`,
+    `console.error('[x]', err.toString());`,
+    `console.warn(\`[x] \${error?.toString()}\`);`,
+    `if (r.status === 'rejected') console.warn('[x]', r.reason);`,
+    `console.error('[x]', err.cause);`,
+    `job.then(() => undefined, (boom) => console.error('[x]', boom));`,
   ])('🔴 the shapes catch %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(true);
   });
@@ -62,6 +72,11 @@ describe('no raw error text in a log line (grep)', () => {
     `console.error('[x] failed', errSummary(err));`,
     `console.warn('[x] failed:', safeErrMessage(err));`,
     `console.warn(\`[x] failed (\${(err as Error)?.name ?? 'Error'})\`);`,
+    `console.error('[x]', err.cause?.name);`,
+    `console.log('[x]', n.toString());`,
+    `console.warn('[x] refused', decision.reason);`,
+    `job.then((boom) => console.log('[x]', boom));`,
+    `job.then(() => undefined, (boom) => console.error('[x]', safeErrMessage(boom)));`,
   ])('allows %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(false);
   });

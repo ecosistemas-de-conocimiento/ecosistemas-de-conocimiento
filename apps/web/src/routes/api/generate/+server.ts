@@ -1,4 +1,4 @@
-import { safeErrMessage } from '$lib/errorSummary';
+import { errSummary, safeErrMessage } from '$lib/errorSummary';
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
@@ -496,7 +496,8 @@ function streamGenerate(
         }
       } catch (err) {
         if ((err as Error)?.name !== 'AbortError') {
-          emit({ type: 'error', code: 'STREAM_INTERRUPTED', message: (err as Error).message });
+          // Name and code only: the browser gets no text we did not write.
+          emit({ type: 'error', code: 'STREAM_INTERRUPTED', message: errSummary(err) });
         }
       } finally {
         controller.close();

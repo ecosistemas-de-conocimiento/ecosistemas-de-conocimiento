@@ -67,6 +67,11 @@ export function startSessionJanitor(payload: Payload): boolean {
   return true
 }
 
+/** Is the interval armed in this process? For the test that no janitor arms in a test run. */
+export function sessionJanitorArmed(): boolean {
+  return timer !== null
+}
+
 /** Stop the interval (used by tests / graceful shutdown). */
 export function stopSessionJanitor(): void {
   if (timer) {

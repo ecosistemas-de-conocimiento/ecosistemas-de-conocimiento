@@ -1,6 +1,8 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
+import noRawErrorLog from '../../apps/backend/eslint/noRawErrorLog.js';
+
 export default tseslint.config(
   // `**/dist/` (not just `dist/`) so vendored build output like
   // `packages/ai-client/dist/*.js` isn't linted — it's emitted JS, not source.
@@ -23,6 +25,33 @@ export default tseslint.config(
       // this arm and hand-edit 29 files) is written up as open item 23.
       '@typescript-eslint/consistent-type-imports': ['error', { disallowTypeAnnotations: false }],
     },
+  },
+  // P-07: a raw error's text can quote a database row. The backend's rule,
+  // shared by path (`apps/backend/eslint/noRawErrorLog.js`); here it accepts
+  // `{ err }` because every pino logger carries `errors/log-safe.ts`. Tests
+  // are exempt, they log nothing that ships.
+  //
+  // ⚠ PENDING: the files below still log a raw error (27 sites, measured with
+  // `eslint .` on 2026-11-10), and the rule skips them whole until they are
+  // fixed. Each leaves this list once `eslint .` is clean without it.
+  {
+    files: ['**/*.ts', '**/*.mjs'],
+    ignores: [
+      '**/*.test.ts',
+      'scripts/run-retrieval-eval.ts',
+      'scripts/schema-gate.mjs',
+      'scripts/set-budget.ts',
+      'scripts/smoke-callback.ts',
+      'src/server.ts',
+      'src/services/budget/enforcer.ts',
+      'src/services/callbacks/emit.ts',
+      'src/services/callbacks/sweeper.ts',
+      'src/services/generation/cancel.ts',
+      'src/services/jobs/reaper.ts',
+      'src/workers/generation.worker.ts',
+    ],
+    plugins: { edc: { rules: { 'no-raw-error-log': noRawErrorLog } } },
+    rules: { 'edc/no-raw-error-log': 'error' },
   },
   // Plain-Node build/CI scripts. The TS sources get their Node globals from
   // `@types/node` via the type-aware config; a `.mjs` has no such declaration

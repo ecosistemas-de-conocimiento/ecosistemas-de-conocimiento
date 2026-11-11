@@ -249,6 +249,16 @@ describe('🔴 uploadDocument — a refused create deletes the stored file (audi
     expect(res).toEqual({ status: 400, body: { error: 'document_create_failed' } });
   });
 
+  it("🔴 an unreachable media upload answers the error's name and code, never its text", async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      Object.assign(new Error('Failed query: select * from users\nparams: ana@ejemplo.mx'), {
+        code: 'ECONNREFUSED',
+      }),
+    );
+    const res = await uploadDocument('tok', pdfForm(), { session: [], defaultPinned: false, organization: '4' });
+    expect(res).toEqual({ status: 502, body: { error: 'upstream_unreachable', detail: 'Error(ECONNREFUSED)' } });
+  });
+
   it('never deletes the file of a document that was created', async () => {
     mockMedia();
     fetchMock().mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 21 } }), { status: 201 }));
