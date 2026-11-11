@@ -26,6 +26,7 @@
  * after the first can return the same answers at no cost.
  */
 import { env } from '$env/dynamic/private';
+import { errSummary, isUnsafeText } from '$lib/errorSummary';
 import type { BackendUser } from '$lib/server/auth';
 import { judgeCitation, judgeStyle, makeJudge, type JudgeFn } from './judge';
 import { aggregate, citedClaims, isRefusal, numberedSources, rankOf } from './score';
@@ -56,6 +57,8 @@ export interface RunContext {
 }
 
 const errName = (err: unknown): string => {
+  // Stored on the run and shown on the admin page: never a failed query's text.
+  if (isUnsafeText(err)) return errSummary(err);
   const e = err as { status?: number; body?: { message?: string }; message?: string; name?: string };
   if (typeof e?.status === 'number') return `${e.status} ${e.body?.message ?? ''}`.trim().slice(0, 200);
   return (e?.message ?? e?.name ?? 'error').slice(0, 200);

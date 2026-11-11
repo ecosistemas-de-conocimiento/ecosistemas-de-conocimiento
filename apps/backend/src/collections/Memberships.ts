@@ -6,6 +6,7 @@ import type {
   CollectionConfig,
   CollectionSlug,
   FieldAccess,
+  PayloadRequest,
 } from 'payload'
 import { sql } from '@payloadcms/db-postgres'
 import { APIError, ValidationError, type Where } from 'payload'
@@ -142,6 +143,7 @@ export const FOREIGN_ORGANIZATION_MESSAGE =
 type AdminOrgResolver = (
   payload: Parameters<typeof organizationIdsForUserWithMinRole>[0],
   userId: number | string,
+  req?: PayloadRequest,
 ) => Promise<(number | string)[]>
 
 /**
@@ -157,6 +159,7 @@ export type ForeignOrganizationTarget = {
   organizationOf?: (
     payload: Parameters<typeof organizationIdsForUserWithMinRole>[0],
     value: number | string,
+    req?: PayloadRequest,
   ) => Promise<number | string | null>
 }
 
@@ -168,8 +171,8 @@ const MEMBERSHIP_TARGET: ForeignOrganizationTarget = {
 
 export const makeRefuseForeignOrganization =
   (
-    adminOrgIds: AdminOrgResolver = (payload, userId) =>
-      organizationIdsForUserWithMinRole(payload, userId, 'admin'),
+    adminOrgIds: AdminOrgResolver = (payload, userId, req) =>
+      organizationIdsForUserWithMinRole(payload, userId, 'admin', req),
     target: ForeignOrganizationTarget = MEMBERSHIP_TARGET,
   ): CollectionBeforeValidateHook =>
   async ({ data, operation, originalDoc, req }) => {
@@ -189,12 +192,12 @@ export const makeRefuseForeignOrganization =
     // A missing value is the `required` validator's job, not ours.
     if (value === null) return data
     const organization = target.organizationOf
-      ? await target.organizationOf(req.payload, value)
+      ? await target.organizationOf(req.payload, value, req)
       : value
 
     // An unknown team resolves to no organization: refused, never waved through.
     if (organization !== null) {
-      const allowed = await adminOrgIds(req.payload, callerId as number | string)
+      const allowed = await adminOrgIds(req.payload, callerId as number | string, req)
       if (allowed.some((id) => String(id) === String(organization))) return data
     }
 
@@ -229,6 +232,7 @@ type RoleResolver = (
   payload: Parameters<typeof roleInOrganization>[0],
   userId: number | string,
   organizationId: number | string,
+  req?: PayloadRequest,
 ) => Promise<OrgRole | null>
 
 const roleOrDefault = (value: unknown): OrgRole => (isOrgRole(value) ? value : DEFAULT_ORG_ROLE)
@@ -253,7 +257,7 @@ export const makeRefuseRoleAboveOwn =
         req,
       })
 
-    const mine = await roleIn(req.payload, callerId as number | string, target as number | string)
+    const mine = await roleIn(req.payload, callerId as number | string, target as number | string, req)
     if (mine === null) throw refuse()
 
     const isUpdate = operation === 'update'
@@ -265,7 +269,7 @@ export const makeRefuseRoleAboveOwn =
     // there must also reach the role the row had (audit 2026-10-28).
     const source = isUpdate ? toRelationId(stored.organization) : null
     if (source !== null && String(source) !== String(target)) {
-      const mineAtSource = await roleIn(req.payload, callerId as number | string, source as number | string)
+      const mineAtSource = await roleIn(req.payload, callerId as number | string, source as number | string, req)
       if (mineAtSource === null || outranks(roleOrDefault(stored.role), mineAtSource)) throw refuse()
     }
     return data
@@ -289,7 +293,7 @@ export const makeRefuseDeleteAboveOwn =
     if (!row) return
     const organization = toRelationId(row.organization)
     if (organization === null) return
-    const mine = await roleIn(req.payload, callerId as number | string, organization as number | string)
+    const mine = await roleIn(req.payload, callerId as number | string, organization as number | string, req)
     if (mine === null) return
     if (outranks(roleOrDefault(row.role), mine)) throw new APIError(ROLE_CEILING_MESSAGE, 403, undefined, true)
   }
@@ -525,7 +529,7 @@ export const limitQueriesOnUser: CollectionBeforeOperationHook = async ({ args, 
   const callerId = (req?.user as { id?: unknown } | null | undefined)?.id
   if (callerId === null || callerId === undefined || isPlatformAdminUser(req.user)) return args
   if (isSafeWhere(a.where, callerId) && isSafeSort(a.sort)) return args
-  const managed = await organizationIdsForUserWithMinRole(req.payload, callerId as number | string, 'admin')
+  const managed = await organizationIdsForUserWithMinRole(req.payload, callerId as number | string, 'admin', req)
   if (managed.length === 0) throw new APIError(USER_QUERY_MESSAGE, 400, undefined, true)
   const scope = { organization: { in: managed } }
   return { ...args, where: a.where ? { and: [a.where, scope] } : scope } as typeof args
@@ -556,7 +560,9 @@ export const readMembershipUser: FieldAccess = async ({ req, doc }) => {
     Promise<OrgRole | null>
   >
   const key = String(organization)
-  if (!cache.has(key)) cache.set(key, roleInOrganization(req.payload, callerId as number | string, organization as number | string))
+  if (!cache.has(key)) {
+    cache.set(key, roleInOrganization(req.payload, callerId as number | string, organization as number | string, req))
+  }
   const role = await cache.get(key)!
   return role !== null && ROLE_PERMISSIONS[role].includes(PERMISSIONS.membersManage)
 }
@@ -580,7 +586,7 @@ export const readMemberships: Access = async ({ req }) => {
   const callerId = principalId(req)
   if (callerId === null || !isActiveUser(req.user)) return false
 
-  const mine = await membershipsForUser(req.payload, callerId)
+  const mine = await membershipsForUser(req.payload, callerId, req)
   if (mine.length === 0) return false
   const full = mine.filter((m) => m.role !== 'estudiante').map((m) => Number(m.organization.id))
   const studentOrgs = mine.filter((m) => m.role === 'estudiante').map((m) => Number(m.organization.id))
@@ -588,8 +594,12 @@ export const readMemberships: Access = async ({ req }) => {
 
   // The student rows this caller may see: their own, and the opted-in classmates'.
   const orgList = sql.join(studentOrgs.map((id) => sql`${id}`), sql`, `)
+  // On the caller's transaction when there is one, never a second connection.
+  const db =
+    (await transactionHandle(req)) ??
+    (req.payload.db as unknown as { drizzle: { execute(q: unknown): Promise<unknown> } }).drizzle
   const visible = rowsOf(
-    await (req.payload.db as unknown as { drizzle: { execute(q: unknown): Promise<unknown> } }).drizzle.execute(sql`
+    await db.execute(sql`
       SELECT mb.id AS id
         FROM memberships mb
        WHERE mb.organization_id IN (${orgList}) AND mb.role::text = 'estudiante'

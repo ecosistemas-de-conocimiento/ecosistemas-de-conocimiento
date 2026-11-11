@@ -45,6 +45,7 @@ import { tokenEndpoint } from './endpoints/token'
 import { checkAIServiceCapabilities } from './lib/capabilityCheck'
 import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
+import { DB_POOL_CONNECTION_TIMEOUT_MS } from './lib/dbPool'
 import { startCallbackRetentionJanitor } from './lib/callbackRetention'
 import { startEmbeddingJanitor } from './lib/embeddingJanitor'
 import { safeErrMessage, safeErrSerializer } from './lib/errorSummary'
@@ -453,6 +454,8 @@ export default buildConfig({
   db: guardStaleUserRows(postgresAdapter({
     pool: {
       connectionString: process.env.DATABASE_URI || '',
+      // A starved pool answers an error instead of hanging: `lib/dbPool.ts`.
+      connectionTimeoutMillis: DB_POOL_CONNECTION_TIMEOUT_MS,
     },
     /**
      * ⚠ SCHEMA PUSH IS OFF UNLESS YOU ASK FOR IT. The gate is opt-IN, so the

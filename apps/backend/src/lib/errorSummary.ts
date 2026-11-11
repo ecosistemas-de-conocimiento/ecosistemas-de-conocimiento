@@ -134,9 +134,14 @@ export function safeErrSerializer(err: unknown): unknown {
 /**
  * For a log line that used to print `err.message`: the same message for an
  * ordinary error (truncated), {@link errSummary} for a database one.
+ *
+ * Also what a row's reason column (`ingestError`, `publicationError`…) gets:
+ * the web hands those to the browser. A string is another service's error
+ * text (an ai-service callback), withheld when it is drizzle's.
  */
 export function safeErrMessage(err: unknown, max = 300): string {
   if (isDatabaseError(err)) return errSummary(err)
+  if (typeof err === 'string' && QUERY_TEXT.test(err)) return REDACTED
   const message = err instanceof Error ? err.message : typeof err === 'string' ? err : errSummary(err)
   return message.slice(0, max)
 }

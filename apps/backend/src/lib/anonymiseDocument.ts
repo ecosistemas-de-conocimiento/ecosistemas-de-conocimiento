@@ -44,6 +44,7 @@ import { randomUUID } from 'node:crypto'
 import { anonymiseRequested, documentTitleFor, type ContentKind } from './contentKind'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { gatedTextHash } from './gatedTextHash'
+import { safeErrMessage } from './errorSummary'
 import type { GateReport, PersonDetector } from './anonymise/types'
 import { documentGateInput } from './anonymise/gateInput'
 import { authorsLog, publicFiguresLog } from './publicFigures'
@@ -401,7 +402,8 @@ export async function anonymiseDocumentText(args: {
     // ⚠ An UNEXPECTED throw is a HOLD, not a pass. The gate's own failure paths
     // already return `hold`; anything that escapes them is a bug, and a bug in
     // the redactor is the last thing that should be allowed to fail open.
-    const reason = err instanceof Error ? err.message : String(err)
+    // `anonymisationError` is read back by the web: never a failed query's text.
+    const reason = safeErrMessage(err)
     if (!(await finish({
       anonymisationStatus: 'held',
       anonymisationError: `gate_crashed: ${reason}`.slice(0, 500),

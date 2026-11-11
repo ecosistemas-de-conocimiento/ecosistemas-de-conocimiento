@@ -2161,10 +2161,8 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
         id: docId as never,
         data: {
           ingestStatus: 'failed',
-          ingestError: `extraction_failed: ${err instanceof Error ? err.message : String(err)}`.slice(
-            0,
-            500,
-          ),
+          // The web hands `ingestError` to the browser: never a failed query's text.
+          ingestError: `extraction_failed: ${safeErrMessage(err)}`.slice(0, 500),
         },
         overrideAccess: true,
         context: { __skipDocsExtract: true },
@@ -2826,10 +2824,7 @@ export async function enqueueIngestForDoc(args: {
       id: docId as never,
       data: {
         ingestStatus: 'failed',
-        ingestError: `ingest_enqueue_failed: ${err instanceof Error ? err.message : String(err)}`.slice(
-          0,
-          500,
-        ),
+        ingestError: `ingest_enqueue_failed: ${safeErrMessage(err)}`.slice(0, 500),
       },
       overrideAccess: true,
       context: { __skipDocsExtract: true },
@@ -2910,7 +2905,9 @@ export async function startTranscription(args: {
   // function makes. One job per document per attempt.
   if (fresh.transcribeId) return
 
-  const fail = async (code: string, message: string): Promise<void> => {
+  const fail = async (code: string, raw: string): Promise<void> => {
+    // audio-service's message lands in `ingestError`, which the browser reads.
+    const message = safeErrMessage(raw)
     console.error('[documents] transcription not started for doc', docId, code, message)
     await payload.update({
       collection: 'documents',
@@ -2945,10 +2942,7 @@ export async function startTranscription(args: {
   try {
     media = await (args.openMedia ?? openMediaStream)(payload, mediaId)
   } catch (err) {
-    return void (await fail(
-      'media_unreadable',
-      err instanceof Error ? err.message : String(err),
-    ))
+    return void (await fail('media_unreadable', safeErrMessage(err)))
   }
 
   const attempt = Number(fresh.transcribeAttempt ?? 0) || 0
