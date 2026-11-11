@@ -17,6 +17,7 @@ import type { Payload, PayloadRequest } from 'payload'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { miembrosEndpoints } from '@/endpoints/miembros'
+import { DB_POOL_CONNECTION_TIMEOUT_MS } from '@/lib/dbPool'
 import { bootPayload, dockerOk, shutdown, startRealPostgres, type RealPostgres } from '@/lib/testing/realPostgres'
 
 type Pool = {
@@ -125,6 +126,22 @@ describe.skipIf(!dockerOk)('writes on one free connection', () => {
     }).catch((e: unknown) => e)
     expect(starved(err)).toBe(true)
   }, 20_000)
+
+  it('a starved pool answers an error after its timeout, it does not hang', async () => {
+    expect(saved.connectionTimeoutMillis).toBe(DB_POOL_CONNECTION_TIMEOUT_MS)
+    for (const { client } of [...pool._idle]) pool._remove(client)
+    pool.options.max = pool._clients.length
+    const started = Date.now()
+    const err = await Promise.race([
+      payload.find({ collection: 'users', overrideAccess: true, limit: 1 }).catch((e: unknown) => e),
+      new Promise((r) => setTimeout(() => r('hung'), DB_POOL_CONNECTION_TIMEOUT_MS + 5_000)),
+    ])
+    Object.assign(pool.options, saved)
+    expect(starved(err)).toBe(true)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(DB_POOL_CONNECTION_TIMEOUT_MS - 100)
+    // And the pool serves the next request.
+    await payload.find({ collection: 'users', overrideAccess: true, limit: 1 })
+  }, DB_POOL_CONNECTION_TIMEOUT_MS + 20_000)
 
   it('/api/miembros: add a new email, add a known one, change a role, remove', async () => {
     await payload.update({ collection: 'memberships', id: 3, data: { isActive: false } as never, overrideAccess: true })

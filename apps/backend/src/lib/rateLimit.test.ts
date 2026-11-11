@@ -203,6 +203,25 @@ describe('reserve and release', () => {
     expect([...keys.keys()]).toEqual(['kept'])
   })
 
+  it('a release gives back ITS OWN hit, not the newest one (interleaved)', async () => {
+    // A reserves at 0 s, B at 10 s, A fails and refunds at 20 s. Only B's hit
+    // counts, until 70 s. Refunding the newest kept A's 0 s hit instead, which
+    // left the window at 60 s: B's slot came back 10 s early.
+    vi.useFakeTimers()
+    const minute = { scope: 'test', key: 'mix', limit: 2, windowMs: 60_000 }
+    const a = await reserveRateLimits([minute])
+    vi.advanceTimersByTime(10_000)
+    const b = await reserveRateLimits([minute])
+    expect(b.allowed).toBe(true)
+    vi.advanceTimersByTime(10_000)
+    await a.release()
+    vi.advanceTimersByTime(45_000)
+    expect((await reserveRateLimits([minute])).allowed).toBe(true)
+    expect((await reserveRateLimits([minute])).allowed).toBe(false)
+    vi.advanceTimersByTime(6_000)
+    expect((await reserveRateLimits([minute])).allowed).toBe(true)
+  })
+
   it('a denial counts nothing, not even in the rules before it', async () => {
     await reserveRateLimits([rule('second', 1)])
     const verdict = await reserveRateLimits([rule('first', 1), rule('second', 1)])
