@@ -24,6 +24,11 @@ const SHAPES = [
   /console\.(?:log|info|warn|error|debug)\(.*(?:\.cause|\b(?:r|res|result|outcome|settled|\w+Result)\??\.reason)\b(?!\??\.)/,
   // `.then(ok, (x) => console.error('…', x))`: the rejection handler's error.
   /\.then\(.+,\s*(?:async\s*)?\(?(\w+)\)?\s*=>.*console\.(?:log|info|warn|error|debug)\(.*(?:,\s*\1\s*\)|\$\{\1\})/,
+  // A logger under any name (`routeLog.warn`, `logFor(x).error`), since
+  // 2026-11-10: the error's text, through `.message`, `String()` or `JSON.stringify()`.
+  new RegExp(
+    String.raw`\.(?:info|warn|error|debug|fatal|trace)\(.*(?:\(?\b${ERR}(?: as Error)?\)?\??\.(?:message|stack)\b|\b(?:String|JSON\.stringify)\(${ERR}\))`,
+  ),
 ];
 
 /** The lint rule's own opt-out on the line above, which the rule also honours. */
@@ -64,6 +69,8 @@ describe('no raw error text in a log line (grep)', () => {
     `if (r.status === 'rejected') console.warn('[x]', r.reason);`,
     `console.error('[x]', err.cause);`,
     `job.then(() => undefined, (boom) => console.error('[x]', boom));`,
+    `routeLog.warn(\`[x] failed: \${(err as Error).message}\`);`,
+    `logFor('x').error({ id, err: String(err) });`,
   ])('🔴 the shapes catch %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(true);
   });
@@ -77,6 +84,7 @@ describe('no raw error text in a log line (grep)', () => {
     `console.warn('[x] refused', decision.reason);`,
     `job.then((boom) => console.log('[x]', boom));`,
     `job.then(() => undefined, (boom) => console.error('[x]', safeErrMessage(boom)));`,
+    `routeLog.warn('[x] failed', safeErrMessage(err));`,
   ])('allows %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(false);
   });

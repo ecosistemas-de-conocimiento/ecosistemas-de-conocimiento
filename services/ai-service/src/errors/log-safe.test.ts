@@ -7,7 +7,13 @@ import pino, { type Logger } from 'pino';
 import postgres from 'postgres';
 import { describe, expect, it } from 'vitest';
 
-import { LOG_SAFE_OPTIONS, isDatabaseError, safeErrSerializer } from './log-safe.js';
+import {
+  LOG_SAFE_OPTIONS,
+  errSummary,
+  isDatabaseError,
+  safeErrMessage,
+  safeErrSerializer,
+} from './log-safe.js';
 
 const ROW_TEXT = 'Juana Pérez declaró en la audiencia';
 
@@ -45,6 +51,48 @@ function postgresError(): Error {
   });
   return err;
 }
+
+/**
+ * What postgres.js rejects with when the server refuses the connection: Node's
+ * `net` error (`errno` -111 on Linux), with the `query` it was running
+ * attached, which makes it a database error.
+ */
+function refused(): Error {
+  const err = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), {
+    code: 'ECONNREFUSED',
+    errno: -111,
+    syscall: 'connect',
+    address: '127.0.0.1',
+    port: 5432,
+  });
+  Object.defineProperty(err, 'query', { value: 'select $1', enumerable: false });
+  return err;
+}
+
+describe('a Node system error keeps its code (2026-11-10)', () => {
+  it('🔴 migrate\'s fatal on an unreachable database says ECONNREFUSED, errno and syscall', () => {
+    const { log, lines } = captured();
+    log.fatal({ err: refused() }, 'Migration failed');
+    const line = JSON.parse(lines[0]!) as { err: Record<string, unknown> };
+    expect(line.err).toMatchObject({ type: 'Error', code: 'ECONNREFUSED', errno: -111, syscall: 'connect' });
+  });
+
+  it('🔴 a database error still drops its message, and keeps its SQLSTATE', () => {
+    const out = safeErrSerializer(postgresError()) as Record<string, unknown>;
+    expect(out.code).toBe('23505');
+    expect(out.message).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('Juana');
+  });
+
+  it('🔴 errSummary and safeErrMessage say the code; neither quotes a row', () => {
+    expect(errSummary(refused())).toBe('Error(ECONNREFUSED)');
+    expect(errSummary(new Error('x', { cause: refused() }))).toBe('Error(ECONNREFUSED)');
+    expect(errSummary(postgresError())).toBe('PostgresError(23505)');
+    expect(safeErrMessage(postgresError())).toBe('PostgresError(23505)');
+    expect(safeErrMessage(new TypeError('boom'))).toBe('TypeError: boom');
+    expect(safeErrMessage(`Failed query: select\nparams: ${ROW_TEXT}`)).not.toContain('Juana');
+  });
+});
 
 describe('safeErrSerializer', () => {
   it('a postgres.js PostgresError logged as { err } leaves no row text, keeps type, SQLSTATE and frames', () => {

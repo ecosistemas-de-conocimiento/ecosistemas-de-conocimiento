@@ -338,9 +338,7 @@ async function runClaimedIngestJob(
       ...(deps.lostWindowMs !== undefined ? { windowMs: deps.lostWindowMs } : {}),
       ...(deps.budget ? { budget: deps.budget } : {}),
     }).catch((err) => {
-      ingestLog.warn(
-        `ingest worker: reaping job row ${jobRowId} failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      ingestLog.warn({ jobRowId, err }, 'ingest worker: reaping job row failed');
       return false;
     });
     if (!reaped) {
@@ -378,9 +376,7 @@ async function runClaimedIngestJob(
     // way — swallowing here would turn a failed ingest into a silent success.
     if (jobRowId) {
       await releaseIngestJob(db, jobRowId).catch((e) => {
-        ingestLog.warn(
-          `ingest worker: releasing job row ${jobRowId} failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        ingestLog.warn({ jobRowId, err: e }, 'ingest worker: releasing job row failed');
       });
     }
     throw err;
@@ -425,7 +421,7 @@ async function settleShutdownAbortedIngestJob(
     message: SHUTDOWN_ERROR,
   }).catch((e) => {
     ingestLog.error(
-      { jobRowId, ingestId: data.ingestId, err: e instanceof Error ? e.message : String(e) },
+      { jobRowId, ingestId: data.ingestId, err: e },
       'ingest worker: shutdown bookkeeping failed — batch counters and ingest.failed callback NOT written',
     );
   });
@@ -599,7 +595,7 @@ async function runIngestJob(
       .refund({ org: data.org, amountUsd: estimateUsd, traceId })
       .catch((e: unknown) => {
         ingestLog.error(
-          { org: data.org, ingestId: data.ingestId, traceId, err: e instanceof Error ? e.message : String(e) },
+          { org: data.org, ingestId: data.ingestId, traceId, err: e },
           'ingest worker: refunding the embed hold failed',
         );
       });
@@ -617,7 +613,7 @@ async function runIngestJob(
     .adjust({ org: data.org, deltaUsd: estimateUsd - cost, traceId })
     .catch((e: unknown) => {
       ingestLog.error(
-        { org: data.org, ingestId: data.ingestId, traceId, estimateUsd, cost, err: e instanceof Error ? e.message : String(e) },
+        { org: data.org, ingestId: data.ingestId, traceId, estimateUsd, cost, err: e },
         'ingest worker: budget true-up failed; the hold stays at the estimate',
       );
     });
@@ -1244,7 +1240,7 @@ export async function reapLostIngestJob(
     }
   } catch (e) {
     ingestLog.error(
-      { jobRowId, org: settled.org, err: e instanceof Error ? e.message : String(e) },
+      { jobRowId, org: settled.org, err: e },
       'ingest worker: refunding the lost job\'s budget hold failed',
     );
   }
@@ -1260,7 +1256,7 @@ export async function reapLostIngestJob(
     { code: WORKER_LOST_CODE, message: WORKER_LOST_ERROR },
   ).catch((e) => {
     ingestLog.error(
-      { jobRowId, ingestId: settled.ingestId, err: e instanceof Error ? e.message : String(e) },
+      { jobRowId, ingestId: settled.ingestId, err: e },
       'ingest worker: lost-job bookkeeping failed — batch counters and ingest.failed callback NOT written',
     );
   });
@@ -1337,9 +1333,7 @@ export async function startIngestWorker(
   // retries are exhausted (`job.attemptsMade >= job.opts.attempts`). The
   // counter bump + callback contract emit happens then.
   worker.on('failed', (job, err) => {
-    ingestLog.error(
-      `ingest worker: BullMQ-level failure for job ${job?.id}: ${err.message}`,
-    );
+    ingestLog.error({ bullJobId: job?.id, err }, 'ingest worker: BullMQ-level failure');
     if (!job) return;
     const attempts = job.opts?.attempts ?? 1;
     if (job.attemptsMade >= attempts) {
@@ -1361,7 +1355,7 @@ export async function startIngestWorker(
           {
             bullJobId: job.id,
             ingestId: job.data.ingestId,
-            err: e instanceof Error ? e.message : String(e),
+            err: e,
           },
           'ingest worker: failure bookkeeping failed — batch counters and ingest.failed callback NOT written',
         );

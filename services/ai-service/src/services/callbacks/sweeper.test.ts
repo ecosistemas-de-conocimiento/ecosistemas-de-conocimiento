@@ -23,6 +23,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Db } from '../../db/client.js';
 import { rootLogger } from '../../logger.js';
+import { capturedLog } from '../../testing/captured-log.js';
 import { MAX_ATTEMPTS } from './emit.js';
 import {
   sweepOnce,
@@ -506,10 +507,10 @@ describe('callback sweeper — observability', () => {
   });
 
   /** A db whose every statement fails, i.e. a sweeper that cannot work. */
-  const brokenDb = (message = 'connection terminated unexpectedly'): Db =>
+  const brokenDb = (message: string | Error = 'connection terminated unexpectedly'): Db =>
     ({
       execute: async () => {
-        throw new Error(message);
+        throw typeof message === 'string' ? new Error(message) : message;
       },
     }) as unknown as Db;
 
@@ -561,17 +562,30 @@ describe('callback sweeper — observability', () => {
     expect(calls.warn.join(' ')).not.toContain('sweep failed');
   });
 
-  it('the failing sweep carries the underlying error text, not just a message', async () => {
-    const errs: object[] = [];
-    const handle = startCallbackSweeper({
-      db: brokenDb('ECONNREFUSED 127.0.0.1:5432'),
-      logger: { info: () => {}, warn: () => {}, error: (o) => errs.push(o) },
-    });
+  /** The `err` of each 'sweep failed' line, as the shared serializer wrote it. */
+  const sweepFailures = async (thrown: string | Error): Promise<{ lines: string[]; errs: object[] }> => {
+    const { log, lines } = capturedLog();
+    const handle = startCallbackSweeper({ db: brokenDb(thrown), logger: log });
     await letBootSweepRun();
     await handle.stop();
+    const failed = lines.filter((l) => l.includes('sweep failed'));
+    return { lines, errs: failed.map((l) => (JSON.parse(l) as { err: object }).err) };
+  };
 
+  it('the failing sweep carries the underlying error text, not just a message', async () => {
+    const { errs } = await sweepFailures('ECONNREFUSED 127.0.0.1:5432');
     expect(errs).toHaveLength(1);
-    expect(errs[0]).toMatchObject({ err: 'ECONNREFUSED 127.0.0.1:5432' });
+    expect(errs[0]).toMatchObject({ type: 'Error', message: 'ECONNREFUSED 127.0.0.1:5432' });
+  });
+
+  it('🔴 a sweep that fails with a database error logs its code, not the row', async () => {
+    const rowText = 'Juana Pérez declaró en la audiencia';
+    const { lines, errs } = await sweepFailures(
+      Object.assign(new Error(`duplicate key value violates unique constraint: ${rowText}`), { code: '23505' }),
+    );
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toMatchObject({ code: '23505' });
+    expect(lines.join('')).not.toContain('Juana');
   });
 
   it('keeps sweeping after a failure, and logs EVERY failure, not just the first', async () => {

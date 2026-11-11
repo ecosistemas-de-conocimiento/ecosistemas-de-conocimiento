@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const src = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const ERR = String.raw`(?:err|error|e|ex|cause|reason|\w+Err|\w+Error)`
 
 const SHAPES = [
   // console.error('…', err) and friends: the raw error as a whole argument.
@@ -27,6 +28,11 @@ const SHAPES = [
   /(?:console|logger)\.(?:log|info|warn|error|debug)\(.*\$\{[^}]*(?:\.cause|\b(?:r|res|result|outcome|settled|\w+Result)\??\.reason)\}/,
   // `.then(ok, (x) => console.error('…', x))`: the rejection handler's error.
   /\.then\(.+,\s*(?:async\s*)?\(?(\w+)\)?\s*=>.*console\.(?:log|info|warn|error|debug)\(.*(?:,\s*\1\s*\)|\$\{\1\})/,
+  // A logger under any name (`ingestLog.warn`, `loggerOf(deps)?.error`), since
+  // 2026-11-10: the error's text, through `.message`, `String()` or `JSON.stringify()`.
+  new RegExp(
+    String.raw`\.(?:info|warn|error|debug|fatal|trace)\(.*(?:\(?\b${ERR}(?: as Error)?\)?\??\.(?:message|stack)\b|\b(?:String|JSON\.stringify)\(${ERR}\))`,
+  ),
 ]
 
 /** The lint rule's own opt-out on the line above, which the rule also honours. */
@@ -82,6 +88,9 @@ describe('no raw error text in a log line (grep)', () => {
     `console.error('[x]', err.cause)`,
     `job.then(() => undefined, (boom) => console.error('[x]', boom))`,
     `job.then(ok, (boom) => console.warn(\`[x] \${boom}\`))`,
+    `ingestLog.warn(\`[x] failed: \${e instanceof Error ? e.message : String(e)}\`)`,
+    `loggerOf(deps)?.warn({ id, err: String(writeErr) }, '[x]')`,
+    `jobLog.child({ c: 1 }).error({ detail: (err as Error).stack }, '[x]')`,
   ])('🔴 the shapes catch %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(true)
   })
@@ -96,6 +105,8 @@ describe('no raw error text in a log line (grep)', () => {
     `payload.logger.info(\`[x] \${decision.reason}\`)`,
     `job.then((boom) => console.log('[x]', boom))`,
     `job.then(() => undefined, (boom) => console.error('[x]', safeErrMessage(boom)))`,
+    `ingestLog.warn({ id, err }, '[x] failed')`,
+    `loggerOf(deps)?.warn({ id, err: writeErr }, '[x]')`,
   ])('allows %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(false)
   })

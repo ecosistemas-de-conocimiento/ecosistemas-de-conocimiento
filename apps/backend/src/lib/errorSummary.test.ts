@@ -71,6 +71,36 @@ describe('errSummary', () => {
   })
 })
 
+/** What Node's `net` throws for a refused connection (`errno` -111 on Linux). */
+function refused(): Error {
+  return Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), {
+    code: 'ECONNREFUSED',
+    errno: -111,
+    syscall: 'connect',
+    address: '127.0.0.1',
+    port: 5432,
+  })
+}
+
+describe('a Node system error keeps its code (2026-11-10)', () => {
+  it('🔴 an ECONNREFUSED is summarised with its code, also from the cause chain', () => {
+    expect(errSummary(refused())).toBe('Error(ECONNREFUSED)')
+    expect(errSummary(new DrizzleQueryError('select 1', [], refused()))).toBe('DrizzleQueryError(ECONNREFUSED)')
+  })
+
+  it('🔴 the serializer keeps code, errno and syscall, and still drops a database error\'s text', () => {
+    const viaDb = safeErrSerializer(new DrizzleQueryError('select $1', [SECRET], refused())) as Record<string, unknown>
+    expect(viaDb).toMatchObject({ type: 'DrizzleQueryError', code: 'ECONNREFUSED', errno: -111, syscall: 'connect' })
+    expect(viaDb.message).toBeUndefined()
+    expect(JSON.stringify(viaDb)).not.toContain('Lucía')
+
+    const db = safeErrSerializer(dbError('23505')) as Record<string, unknown>
+    expect(db.code).toBe('23505')
+    expect(db.message).toBeUndefined()
+    expect(JSON.stringify(db)).not.toContain('Lucía')
+  })
+})
+
 describe('safeErrSerializer', () => {
   it('🔴 a database error loses message, query, params, detail and cause', () => {
     const out = safeErrSerializer(dbError('57014'))

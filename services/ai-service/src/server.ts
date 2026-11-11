@@ -177,7 +177,7 @@ export function createRateLimitRedis(log: FastifyBaseLogger, config: Config): Re
     if (!reachable) return;
     reachable = false;
     log.warn(
-      { err: err.message },
+      { err },
       'rate-limit Redis unreachable — /v1 rate limiting is FAILING OPEN until it returns',
     );
   });

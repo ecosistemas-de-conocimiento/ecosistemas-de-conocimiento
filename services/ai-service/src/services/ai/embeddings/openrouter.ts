@@ -232,7 +232,8 @@ export async function callOpenRouterEmbedding(opts: EmbedOptions): Promise<Embed
   if (circuitOpen) return callFallback();
 
   const deadline = withRequestTimeout(opts.signal, env.EMBEDDINGS_PRIMARY_TIMEOUT_MS);
-  let reason: string | undefined;
+  // A fixed label (`timeout`, `http_503`, `network_ECONNRESET`), never error text.
+  let fallbackKind: string | undefined;
   try {
     return await postEmbeddings(
       OPENROUTER_EMBEDDINGS_URL,
@@ -245,8 +246,8 @@ export async function callOpenRouterEmbedding(opts: EmbedOptions): Promise<Embed
   } catch (err) {
     // A caller abort (shutdown, client disconnect) is not a primary outage.
     if (opts.signal?.aborted) throw err;
-    reason = deadline.cause() === 'timeout' ? 'timeout' : fallbackReason(err);
-    if (!reason) throw err;
+    fallbackKind = deadline.cause() === 'timeout' ? 'timeout' : fallbackReason(err);
+    if (!fallbackKind) throw err;
   } finally {
     deadline.dispose();
   }
@@ -254,7 +255,7 @@ export async function callOpenRouterEmbedding(opts: EmbedOptions): Promise<Embed
   primaryDownUntil = Date.now() + env.EMBEDDINGS_FALLBACK_COOLDOWN_S * 1000;
   // Reason and model only — never keys, never input text.
   (await getFallbackLog()).warn(
-    { reason, model: opts.model, cooldownS: env.EMBEDDINGS_FALLBACK_COOLDOWN_S },
+    { reason: fallbackKind, model: opts.model, cooldownS: env.EMBEDDINGS_FALLBACK_COOLDOWN_S },
     'embeddings: primary failed; serving this call from EMBEDDINGS_FALLBACK_URL',
   );
   return callFallback();
