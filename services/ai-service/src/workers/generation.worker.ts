@@ -74,6 +74,7 @@ import {
   waitForDrain,
 } from '../services/jobs/shutdown.js';
 import type { GenerationJobData } from '../types/generation.js';
+import { clientErrText } from '../errors/log-safe.js';
 
 /**
  * Per-pod registry of in-flight AbortControllers keyed by `generationRequestId`.
@@ -738,7 +739,7 @@ async function runGenerationJob(
         db,
         row,
         parent,
-        error: `render error: ${err instanceof Error ? err.message : String(err)}`,
+        error: `render error: ${clientErrText(err)}`,
         errorCode: taxonomyErrorCode(err),
         bus,
       });
@@ -789,7 +790,7 @@ async function runGenerationJob(
       db,
       row,
       parent,
-      error: `spec resolution failed: ${err instanceof Error ? err.message : String(err)}`,
+      error: `spec resolution failed: ${clientErrText(err)}`,
       errorCode: taxonomyErrorCode(err),
       bus,
     });
@@ -826,7 +827,7 @@ async function runGenerationJob(
       db,
       row,
       parent,
-      error: `system prompt render error: ${err instanceof Error ? err.message : String(err)}`,
+      error: `system prompt render error: ${clientErrText(err)}`,
       errorCode: taxonomyErrorCode(err),
       bus,
     });
@@ -951,7 +952,7 @@ async function runGenerationJob(
       db,
       row,
       parent,
-      error: `router error: ${err instanceof Error ? err.message : String(err)}`,
+      error: `router error: ${clientErrText(err)}`,
       errorCode: taxonomyErrorCode(err),
       bus,
     });

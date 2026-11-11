@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   LOG_SAFE_OPTIONS,
+  clientErrText,
   errSummary,
   isDatabaseError,
   safeErrMessage,
@@ -124,6 +125,31 @@ describe('safeErrSerializer', () => {
     expect(safeErrSerializer(text)).toBe('[database error text withheld]');
   });
 
+  it('🔴 an AggregateError holding a PostgresError is a database error (2026-11-11)', () => {
+    const agg = new AggregateError([new Error('timeout'), postgresError()], `all failed: ${ROW_TEXT}`);
+    expect(isDatabaseError(agg)).toBe(true);
+    expect(JSON.stringify(safeErrSerializer(agg))).not.toContain('Juana');
+    expect(safeErrMessage(agg)).toBe('AggregateError');
+  });
+
+  it('a PostgresError whose debug-mode fields are enumerable still leaves no row text', () => {
+    // postgres.js with `debug` on: `query` and `parameters` are plain fields.
+    const err = Object.assign(
+      new postgres.PostgresError({
+        severity: 'ERROR',
+        code: '22P02',
+        message: `invalid input syntax for type uuid: "${ROW_TEXT}"`,
+        where: `unnamed portal parameter $1 = '${ROW_TEXT}'`,
+      } as unknown as string),
+      { query: 'select $1::uuid', parameters: [ROW_TEXT] },
+    );
+    const { log, lines } = captured();
+    log.error({ err }, 'insert failed');
+    expect(lines[0]).not.toContain('Juana');
+    expect(safeErrMessage(err)).toBe('PostgresError(22P02)');
+    expect(errSummary(err)).toBe('PostgresError(22P02)');
+  });
+
   it('any other error keeps its message, truncated to 500 characters', () => {
     const out = safeErrSerializer(new TypeError('x'.repeat(600))) as Record<string, string>;
     expect(out.type).toBe('TypeError');
@@ -158,5 +184,14 @@ describe('every ai-service logger uses it', () => {
       await app.close();
       await runtime.close();
     }
+  });
+});
+
+describe('clientErrText', () => {
+  it('a database error is its code; any other reads exactly as its message did', () => {
+    expect(clientErrText(postgresError())).toBe('PostgresError(23505)');
+    expect(clientErrText(new Error('upstream 500'))).toBe('upstream 500');
+    expect(clientErrText(42)).toBe('42');
+    expect(clientErrText(`Failed query: select\nparams: ${ROW_TEXT}`)).not.toContain('Juana');
   });
 });

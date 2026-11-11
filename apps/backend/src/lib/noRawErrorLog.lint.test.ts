@@ -29,6 +29,8 @@ declare function safeErrMessage(e: unknown): string
 declare const err: Error, error: Error, e: Error, cause: Error, writeErr: Error, updateError: Error, ex: Error, reason: Error
 declare const job: Promise<void>
 declare const results: PromiseSettledResult<void>[]
+declare const util: { format: (...a: unknown[]) => string; inspect: (v: unknown) => string }
+declare const req: { query: object; params: object }
 `
 const lines = (body: string) => prelude.split('\n').length + body.trimStart().split('\n').length - 1
 
@@ -81,6 +83,28 @@ describe('edc/no-raw-error-log', () => {
     `loggerOf(job)?.warn({ id: 1, err: String(writeErr) }, '[x]')`,
     `payload.logger.child({ c: 1 }).error({ detail: err }, '[x]')`,
     `ingestLog.child({ c: 1 }).warn('[x] ' + err.message)`,
+    // A format argument after a string, a database error's own fields, child
+    // bindings, a destructured or derived text, a console alias, util.format
+    // and process.stderr (2026-11-11).
+    `payload.logger.error('[x] %s', err)`,
+    `ingestLog.warn(\`[x] %o\`, e)`,
+    `try { void 0 } catch (boom) { payload.logger.error('[x] %s', boom) }`,
+    `console.error('[x]', err.detail)`,
+    `payload.logger.warn({ id: 1, at: err.where }, '[x]')`,
+    `payload.logger.warn({ err: err.detail }, '[x]')`,
+    `try { void 0 } catch (boom) { console.error('[x]', (boom as { query?: string }).query) }`,
+    `payload.logger.warn({ p: (err as unknown as { params: unknown }).params }, '[x]')`,
+    `payload.logger.warn({ p: error.parameters }, '[x]')`,
+    `payload.logger.child({ e: err })`,
+    `const { message } = err; payload.logger.warn({ id: 1, message }, '[x]')`,
+    `try { void 0 } catch (boom) { const { detail } = boom as { detail: string }; console.warn('[x]', detail) }`,
+    `const msg = err instanceof Error ? err.message : String(err); payload.logger.warn(\`[x] \${msg}\`)`,
+    `const log = console.error; log('[x]', err)`,
+    `const log = console.warn.bind(console); log('[x]', err)`,
+    `payload.logger.warn(util.format('[x] %s', err))`,
+    `console.log('[x]', util.inspect(err))`,
+    `process.stderr.write(String(err))`,
+    `const msg = err instanceof Error ? err.message : String(err); process.stderr.write(\`[x] \${msg}\\n\`)`,
   ])('🔴 rejects %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([lines(body)])
   })
@@ -113,6 +137,19 @@ describe('edc/no-raw-error-log', () => {
     `ingestLog.error({ id: 1, err }, '[x]')`,
     `loggerOf(job)?.warn({ id: 1, err: writeErr }, '[x]')`,
     `ingestLog.child({ c: 1 }).warn(\`[x] \${errSummary(err)}\`)`,
+    `payload.logger.error({ err }, '[x] %s', 'id-1')`,
+    `payload.logger.error(err, '[x] failed')`,
+    `payload.logger.info('[x] %s', req)`,
+    `payload.logger.info({ q: req.query, p: req.params }, '[x]')`,
+    `console.error('[x]', err.code, err.name)`,
+    `payload.logger.child({ err })`,
+    `payload.logger.child({ module: 'x' }).error({ err }, '[x]')`,
+    `const { name } = err; console.error('[x]', name)`,
+    `const e2 = err; payload.logger.error({ err: e2 }, '[x]')`,
+    `const msg = safeErrMessage(err); process.stderr.write(msg)`,
+    `const log = console.error; log('[x]', errSummary(err))`,
+    `process.stderr.write(\`[x] \${errSummary(err)}\\n\`)`,
+    `const where = { id: 1 }; console.log('[x]', where, util.format('%s', 1))`,
   ])('allows %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([])
   })

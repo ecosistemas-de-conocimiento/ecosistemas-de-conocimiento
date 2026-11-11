@@ -57,6 +57,7 @@
 // for as long as that stays true; a stub that goes back to recording only from
 // `where()` silently switches this file's blast-radius test off again.
 
+import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Db } from '../db/client.js';
@@ -1326,6 +1327,23 @@ describe('processGenerationJob — system prompt', () => {
     ]);
   });
 
+  it('🔴 a spec lookup that fails on the database stores its code, not the row', async () => {
+    vi.mocked(resolveSpec).mockRejectedValue(
+      new postgres.PostgresError({
+        severity: 'ERROR',
+        code: '22P02',
+        message: 'invalid input syntax for type uuid: "Juana Pérez declaró en la audiencia"',
+      } as unknown as string),
+    );
+    state.jobs.set(JOB_ID, makeJobRow());
+    state.requests.set(REQ_ID, makeRequestRow());
+
+    await processGenerationJob({ id: 'q-1', data: jobData() }, { db, router, bus });
+
+    const failed = state.updates.find((u) => u.table === 'jobs' && u.set.status === 'failed');
+    expect(failed!.set.error).toBe('spec resolution failed: PostgresError(22P02)');
+  });
+
   it('fails the job cleanly when the system template cannot render', async () => {
     vi.mocked(resolveSpec).mockResolvedValue(
       makeSpec({
@@ -2011,6 +2029,22 @@ describe('processGenerationJob — the error CODE survives the queue', () => {
     expect(failed).toBeDefined();
     return failed as Extract<AppEvent, { type: 'generation.job.failed' }>;
   }
+
+  it('🔴 a database error reaches the job row and `unit.failed` as its code, not the row', async () => {
+    const rowText = 'Juana Pérez declaró en la audiencia';
+    const pgError = new postgres.PostgresError({
+      severity: 'ERROR',
+      code: '22P02',
+      message: `invalid input syntax for type uuid: "${rowText}"`,
+    } as unknown as string);
+    const failed = await runWithRouterError(pgError);
+
+    expect(failed.errorMessage).toBe('router error: PostgresError(22P02)');
+    const row = state.updates.find((u) => u.table === 'jobs' && u.set.status === 'failed');
+    expect(String(row!.set.error)).not.toContain('Juana');
+    const unitFailed = state.callbackDeliveries.find((r) => r['event'] === 'unit.failed');
+    expect(String(unitFailed!['body'])).not.toContain('Juana');
+  });
 
   it('a budget refusal is typed, not the generic `job-failed`', async () => {
     const { BudgetExceeded } = await import('../services/budget/errors.js');

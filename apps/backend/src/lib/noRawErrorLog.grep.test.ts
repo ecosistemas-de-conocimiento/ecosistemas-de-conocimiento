@@ -33,6 +33,19 @@ const SHAPES = [
   new RegExp(
     String.raw`\.(?:info|warn|error|debug|fatal|trace)\(.*(?:\(?\b${ERR}(?: as Error)?\)?\??\.(?:message|stack)\b|\b(?:String|JSON\.stringify)\(${ERR}\))`,
   ),
+  // 2026-11-11: an error as a format argument after a string first argument
+  // (`log.error('x %s', err)`: pino prints `String(err)`), a database error's
+  // own fields, a child binding not under `err`, `util.format` / `inspect`,
+  // and `process.stderr.write`.
+  new RegExp(String.raw`\.(?:info|warn|error|debug|fatal|trace)\((?:'[^']*'|"[^"]*"|\x60[^\x60]*\x60)\s*,(?:[^,]*,)*\s*${ERR}\s*\)`),
+  new RegExp(
+    String.raw`(?:console\.(?:log|info|warn|error|debug)|\.(?:info|warn|error|debug|fatal|trace))\(.*\b${ERR}(?: as [^)]*\))?\??\.(?:detail|where|query|params|parameters)\b`,
+  ),
+  new RegExp(String.raw`\.child\(\{[^}]*\b(?!err\b)\w+:\s*${ERR}\s*[,}]`),
+  new RegExp(String.raw`(?:console\.(?:log|info|warn|error|debug)|\.(?:info|warn|error|debug|fatal|trace))\(.*\b(?:format|inspect)\([^)]*\b${ERR}\b`),
+  new RegExp(
+    String.raw`process\.std(?:err|out)\.write\(.*(?:\b${ERR}(?: as Error)?\)?\??\.(?:message|stack)\b|(?:String|JSON\.stringify)\(${ERR}\)|\$\{${ERR}\})`,
+  ),
 ]
 
 /** The lint rule's own opt-out on the line above, which the rule also honours. */
@@ -91,6 +104,14 @@ describe('no raw error text in a log line (grep)', () => {
     `ingestLog.warn(\`[x] failed: \${e instanceof Error ? e.message : String(e)}\`)`,
     `loggerOf(deps)?.warn({ id, err: String(writeErr) }, '[x]')`,
     `jobLog.child({ c: 1 }).error({ detail: (err as Error).stack }, '[x]')`,
+    `payload.logger.error('[x] %s', err)`,
+    `payload.logger.warn(\`[x] %o\`, writeErr)`,
+    `console.error('[x]', err.detail)`,
+    `payload.logger.warn({ id, at: err.where, q: err.query }, '[x]')`,
+    `payload.logger.warn({ p: (error as PgError).parameters }, '[x]')`,
+    `payload.logger.child({ e: err })`,
+    `payload.logger.warn(util.format('[x] %s', err))`,
+    `process.stderr.write(String(err))`,
   ])('🔴 the shapes catch %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(true)
   })
@@ -107,6 +128,11 @@ describe('no raw error text in a log line (grep)', () => {
     `job.then(() => undefined, (boom) => console.error('[x]', safeErrMessage(boom)))`,
     `ingestLog.warn({ id, err }, '[x] failed')`,
     `loggerOf(deps)?.warn({ id, err: writeErr }, '[x]')`,
+    `payload.logger.error({ err }, '[x] %s', id)`,
+    `payload.logger.info('[x] %s', req.query)`,
+    `payload.logger.child({ err })`,
+    `console.log('[x]', req.params, where.id)`,
+    `process.stderr.write(\`[x] \${errSummary(err)}\n\`)`,
   ])('allows %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(false)
   })

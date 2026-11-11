@@ -1005,7 +1005,8 @@ const stamp = async () => {
     const why =
       code === '42501'
         ? `this role may not COMMENT ON DATABASE (it must own the database)`
-        : `${err instanceof Error ? err.message : String(err)}`;
+        : // The class and code only: a Postgres message can quote a value.
+          `${err instanceof Error ? err.name : typeof err}${typeof code === 'string' ? ` (${code})` : ''}`;
     // ⚠ THE CONSEQUENCE DEPENDS ON WHETHER THERE WAS ALREADY A STAMP, and
     // saying "will ADOPT whatever it finds" unconditionally was FALSE for the
     // stamped case: the OLD stamp is untouched by a failed write and survives,

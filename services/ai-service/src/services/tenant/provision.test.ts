@@ -36,6 +36,7 @@
 // `<NO PREDICATE>`, so that mutation now fails by its real name and
 // `expectNoUnfilteredQuery()` below is a gate rather than a restatement.
 
+import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { budgetState, registryEntries } from '../../db/schema/index.js';
@@ -315,6 +316,32 @@ describe('provisionTenant', () => {
     const entry = result.items.find((i) => i.item === 'registry:summary')!;
     expect(entry.status).toBe('failed');
     expect(entry.message).toContain('prompt_template violates check');
+  });
+
+  it('🔴 a database error on either item reports its code, never the row it quotes', async () => {
+    const rowText = 'Juana Pérez declaró en la audiencia';
+    const pgError = () =>
+      new postgres.PostgresError({
+        severity: 'ERROR',
+        code: '23514',
+        message: `new row violates check constraint: ${rowText}`,
+        detail: `Failing row contains (${rowText}).`,
+      } as unknown as string);
+    setOrgBudgetMock.mockRejectedValue(pgError());
+    createVersionMock.mockRejectedValue(pgError());
+    const db = makeDb({ budget: [], activeEntry: [] });
+
+    const result = await provisionTenant(db, ctx, {
+      budget: { limitUsd: 25 },
+      unitTypes: [{ unitType: 'summary', version: '1', promptTemplate: rowText }],
+    });
+
+    const failed = result.items.filter((i) => i.status === 'failed');
+    expect(failed.map((i) => i.item)).toEqual(['budget', 'registry:summary']);
+    for (const item of failed) {
+      expect(item.message).toContain('PostgresError(23514)');
+      expect(item.message).not.toContain('Juana');
+    }
   });
 
   it('says so loudly when no budget was supplied', async () => {

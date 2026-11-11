@@ -29,6 +29,7 @@ declare function getFallbackLog(): Promise<Log>;
 declare function safeErrMessage(e: unknown): string;
 declare const err: Error;
 declare const job: Promise<void>;
+declare const util: { format: (...a: unknown[]) => string };
 `;
 const lines = (body: string) => prelude.split('\n').length + body.trimStart().split('\n').length - 1;
 
@@ -41,6 +42,17 @@ describe('edc/no-raw-error-log in ai-service', () => {
     `ingestLog.child({ c: 1 }).warn({ detail: err }, '[x]')`,
     `void getFallbackLog().then((l) => l.warn({ reason: err.stack }, '[x]'))`,
     `console.warn(\`[x] \${err.message}\`)`,
+    // 2026-11-11: a postgres.js error's own fields, a format argument, child
+    // bindings, destructured or derived text, util.format, process.stderr (the
+    // shape of scripts/refresh-model-pricing.ts until that day).
+    `ingestLog.error('[x] %s', err)`,
+    `job.catch((e) => ingestLog.error(\`[x] %o\`, e))`,
+    `ingestLog.warn({ id: 1, detail: err.detail }, '[x]')`,
+    `ingestLog.warn({ id: 1, q: err.query, p: err.parameters, at: err.where }, '[x]')`,
+    `ingestLog.child({ cause: err })`,
+    `const { message } = err; ingestLog.warn({ message }, '[x]')`,
+    `ingestLog.warn(util.format('[x] %s', err))`,
+    `job.catch((e: unknown) => { const msg = e instanceof Error ? e.message : String(e); process.stderr.write(\`x: \${msg}\\n\`) })`,
   ])('🔴 rejects %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([lines(body)]);
   });
@@ -50,6 +62,10 @@ describe('edc/no-raw-error-log in ai-service', () => {
     `job.catch((e) => ingestLog.error({ id: 1, err: e }, '[x]'))`,
     `ingestLog.child({ c: 1 }).warn({ err }, '[x]')`,
     `console.warn(\`[x] \${safeErrMessage(err)}\`)`,
+    `ingestLog.error(err, '[x] failed')`,
+    `ingestLog.error({ err }, '[x] %s', 'id-1')`,
+    `ingestLog.child({ err })`,
+    `job.catch((e: unknown) => process.stderr.write(\`x: \${safeErrMessage(e)}\\n\`))`,
   ])('allows %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([]);
   });

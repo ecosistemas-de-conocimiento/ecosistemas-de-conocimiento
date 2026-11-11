@@ -81,21 +81,25 @@ function framesOnly(stack: unknown): string | undefined {
 const QUERY_TEXT = /Failed query:|\nparams:/;
 
 /**
- * Is this, or anything in its `cause` chain, a database error? Then its text
- * (message, detail, query, parameters) may quote a row. `in`, not a value
- * read: postgres.js attaches `query` / `parameters` NON-enumerable unless
- * `debug` is on.
+ * Is this, or anything in its `cause` chain or an `AggregateError`'s `errors`,
+ * a database error? Then its text (message, detail, query, parameters) may
+ * quote a row. `in`, not a value read: postgres.js attaches `query` /
+ * `parameters` NON-enumerable unless `debug` is on.
+ *
+ * A postgres.js `PostgresError` is caught by its SQLSTATE `code`, and by
+ * `query` when it came from a query. drizzle 0.38 (this service's) does not
+ * wrap it: `db.execute` and the query builders reject with the driver's own
+ * error. Until 2026-11-11 the `errors` of an `AggregateError` (`Promise.any`)
+ * went unchecked, so one holding a `PostgresError` kept its message.
  */
-export function isDatabaseError(err: unknown): boolean {
-  let cur: unknown = err;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH && cur && typeof cur === 'object'; depth++) {
-    const e = cur as { code?: unknown; message?: unknown };
-    if ('query' in e || 'params' in e || 'parameters' in e) return true;
-    if (typeof e.code === 'string' && SQLSTATE.test(e.code)) return true;
-    if (typeof e.message === 'string' && QUERY_TEXT.test(e.message)) return true;
-    cur = (cur as { cause?: unknown }).cause;
-  }
-  return false;
+export function isDatabaseError(err: unknown, depth = 0): boolean {
+  if (depth >= MAX_CAUSE_DEPTH || !err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; message?: unknown; cause?: unknown; errors?: unknown };
+  if ('query' in e || 'params' in e || 'parameters' in e) return true;
+  if (typeof e.code === 'string' && SQLSTATE.test(e.code)) return true;
+  if (typeof e.message === 'string' && QUERY_TEXT.test(e.message)) return true;
+  if (Array.isArray(e.errors) && e.errors.some((inner) => isDatabaseError(inner, depth + 1))) return true;
+  return isDatabaseError(e.cause, depth + 1);
 }
 
 const REDACTED = '[database error text withheld]';
@@ -150,6 +154,18 @@ export function safeErrMessage(err: unknown, max = 300): string {
   const message = (err as { message?: unknown } | null)?.message;
   if (typeof message !== 'string' || message === '') return errSummary(err);
   return `${errSummary(err)}: ${message.slice(0, max)}`;
+}
+
+/**
+ * For text a CLIENT reads (a response body, a job row's `error`, a callback):
+ * the message as before for any other error, {@link errSummary} alone for a
+ * database error. Unlike {@link safeErrMessage} it adds no prefix and no
+ * truncation, so a non-database error reads exactly as it did.
+ */
+export function clientErrText(err: unknown): string {
+  if (typeof err === 'string') return QUERY_TEXT.test(err) ? REDACTED : err;
+  if (isDatabaseError(err)) return errSummary(err);
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
