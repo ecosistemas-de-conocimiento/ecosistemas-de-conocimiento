@@ -25,7 +25,7 @@ import {
   retryAfterMsFromError,
 } from './resilience.js';
 import { RouterCache } from './cache.js';
-import { EmptyCompletion } from './empty-completion.js';
+import { CompletionTruncated, EmptyCompletion } from './empty-completion.js';
 import { getTaskProfile } from './task-profiles.js';
 import type { RouteRequest } from './types.js';
 
@@ -334,6 +334,10 @@ describe('Router — circuit breaker', () => {
     }
     expect(adapter).toHaveBeenCalledTimes(12);
     expect(resilience.state()).toBe(CircuitState.Closed);
+  });
+
+  it('an empty answer at the token cap is neither retried nor counted by the breaker', () => {
+    expect(isTransientProviderError(new CompletionTruncated())).toBe(false);
   });
 
   it('a non-transient failure does not count towards opening the circuit', async () => {

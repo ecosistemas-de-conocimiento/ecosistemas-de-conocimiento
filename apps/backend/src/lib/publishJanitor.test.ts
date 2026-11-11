@@ -17,6 +17,7 @@
  *     specific diagnosis is worth more than this file's generic one.
  */
 
+import { allowJanitors } from '@/lib/testing/janitors'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
@@ -37,6 +38,9 @@ import {
   stuckAfterMs,
   sweepStalledPublishes,
 } from './publishJanitor'
+
+// Its own janitor arms here (`vitest.setup.ts` turns them all off).
+allowJanitors()
 
 const NOW = new Date('2026-08-28T12:00:00Z')
 const DEADLINE_MS = 30 * 60_000

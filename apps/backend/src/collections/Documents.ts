@@ -46,7 +46,7 @@ import { refuseDisabledAudioUpload } from './hooks/featureGates'
 import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
 import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote, publishStudentNoteChanges } from '../lib/studentNotes'
 import { anonimizacionEndpoints } from '../lib/anonymisationControls'
-import { CONSENT_HELD_MESSAGE, isConsentHeld, readConsentHeld } from '../lib/consentHold'
+import { CONSENT_HELD_MESSAGE, isConsentHeld, isConsentHeldNow, readConsentHeld } from '../lib/consentHold'
 import { verdictSettings } from '../lib/publicFigures'
 import { errSummary, safeErrMessage } from '../lib/errorSummary'
 import {
@@ -1744,8 +1744,8 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
   if (req.user && operation === 'update' && isAppNote(row)) return doc
 
   if (!isIngestable(row)) return doc
-  // 🔴 Retenido por consentimiento: `runExtractAndIngest` checks the fresh row too.
-  if (isConsentHeld(row)) return doc
+  // 🔴 Retenido por consentimiento, a revision's original's too: `runExtractAndIngest` checks the fresh row again.
+  if (await isConsentHeldNow(req.payload, row)) return doc
 
   // Run async to avoid blocking the Payload response, AND defer one tick
   // so the create transaction is fully committed before we re-read the row
@@ -2040,7 +2040,7 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   }
   if (!isIngestable(fresh)) return
   // 🔴 Retenido por consentimiento: no extraction, no gate, no ingest (`lib/consentHold.ts`).
-  if (isConsentHeld(fresh)) {
+  if (await isConsentHeldNow(payload, fresh)) {
     console.warn('[documents] doc', docId, 'is held for consent — skipping extract+ingest.')
     return
   }
@@ -2336,7 +2336,7 @@ export async function scheduleGraphExtractionForDoc(args: {
     }
 
     // 🔴 Retenido por consentimiento: no graph run, and nothing written (`lib/consentHold.ts`).
-    if (isConsentHeld(row)) return
+    if (await isConsentHeldNow(payload, row)) return
 
     const corpusText = corpusTextFor(row)
     if (!corpusText.ok) {
@@ -2485,7 +2485,7 @@ export async function enqueueIngestForDoc(args: {
    * (`lib/ingestRecovery.ts`) and the re-gates build `fresh` by hand. Checked
    * again before the send, since the gate below takes model time.
    */
-  const consentHeldNow = async () => isConsentHeld(fresh) || (await readConsentHeld(payload, docId))
+  const consentHeldNow = async () => (await isConsentHeldNow(payload, fresh)) || (await readConsentHeld(payload, docId))
   if (await consentHeldNow()) {
     console.warn('[documents] doc', docId, 'is held for consent — refusing to gate or ingest.')
     return
@@ -2663,6 +2663,18 @@ export async function enqueueIngestForDoc(args: {
   })
   if (stillOurs === 0) {
     console.warn(`[documents] doc ${docId}: no longer \`extracting\` — this run lost it, nothing sent.`)
+    return
+  }
+  // 🔴 AND AGAIN AFTER THE CLAIM (ola 11): a hold (the row's, or a revision's
+  // note's) that landed between the check above and the claim. The claim is
+  // handed back to `extracting`, as a refusal before it would have left it.
+  if (await readConsentHeld(payload, docId)) {
+    console.warn('[documents] doc', docId, 'was held for consent as it was claimed — nothing sent.')
+    await writeColumns(payload as never, {
+      id: docId,
+      where: [{ ingestStatus: { equals: 'embedding' } }, { ingestId: { exists: false } }],
+      data: { ingestStatus: 'extracting' },
+    })
     return
   }
 

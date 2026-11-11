@@ -28,6 +28,7 @@
  * caller already belongs to — worst case it is ignored and rewritten.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { dev } from '$app/environment';
 import type { Cookies } from '@sveltejs/kit';
 
@@ -163,7 +164,7 @@ export async function listEcosystems(token: string | undefined): Promise<Ecosyst
     list.sort((a, b) => a.name.localeCompare(b.name, 'es'));
     return { list, ok: true };
   } catch (err) {
-    console.warn('[ecosistemas] membership read failed', err);
+    console.warn('[ecosistemas] membership read failed', safeErrMessage(err));
     return { list: [], ok: false };
   }
 }

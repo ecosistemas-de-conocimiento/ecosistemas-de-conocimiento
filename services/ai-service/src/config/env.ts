@@ -18,6 +18,8 @@ import { config as loadDotenv } from 'dotenv';
 import { pino } from 'pino';
 import { z } from 'zod';
 
+import { LOG_SAFE_OPTIONS } from '../errors/log-safe.js';
+
 loadDotenv();
 
 export const apiKeyEntry = z.object({
@@ -1252,5 +1254,5 @@ export function warnOnExpiringApiKeys(now: Date = new Date(), log = bootLogger()
 
 /** Lazily-built boot logger, so importing this module starts no transport. */
 function bootLogger() {
-  return pino({ name: 'boot', level: env.LOG_LEVEL });
+  return pino({ name: 'boot', level: env.LOG_LEVEL, ...LOG_SAFE_OPTIONS });
 }

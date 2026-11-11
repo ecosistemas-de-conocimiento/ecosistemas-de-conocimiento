@@ -9,6 +9,7 @@
  * compose a corpus name can address another ecosistema's corpus.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { backendFetch } from '$lib/server/auth';
 import { parseCorporaResponse, type SessionCorpora } from './retrieval';
 
@@ -47,7 +48,7 @@ export async function fetchSessionCorpora(
     }
     return parseCorporaResponse(await res.json());
   } catch (err) {
-    console.error('[corpora] read failed; skipping retrieval this turn:', err);
+    console.error('[corpora] read failed; skipping retrieval this turn:', safeErrMessage(err));
     return EMPTY;
   }
 }

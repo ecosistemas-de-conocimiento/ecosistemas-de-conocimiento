@@ -88,6 +88,14 @@ supplies a thin adapter that maps `scopeId → projectId` (and forwards the
 optional `/v1/retrieve` `filter` field). The engine has no notion of "project"
 on purpose — see `apps/web/src/lib/server/engine/aiClient.ts`.
 
+## 0.10.0 — an empty answer at the output cap is its own error
+
+An empty answer with `finishReason: 'length'` now throws `AnswerTruncatedError`
+(`code: 'answer_truncated'`) from `assertAnswer` / `respond()` instead of `EmptyAnswerError`;
+`streamOutcome` returns the same code for such a `done` frame and for ai-service's
+`CompletionTruncated` error frame. Asking again hits the same cap, so a UI should not offer a
+retry. Also exported: `isTruncatedAnswerCode`.
+
 ## 0.9.0 — an empty answer is an error, not a message
 
 ⚠ **Behaviour change in `respond()`.** An answer with no visible text (empty or whitespace

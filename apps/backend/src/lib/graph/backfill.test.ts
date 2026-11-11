@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { NO_DRIZZLE } from '@/lib/documentColumns.testFake'
+import { NOT_CONSENT_HELD } from '@/lib/consentHold'
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
 import {
@@ -117,7 +118,7 @@ describe('staleDocumentsWhere', () => {
 
 describe('publishedDocumentsWhere (the forced re-extraction)', () => {
   it('🔴 every published row with text, whatever its stamp; the ecosistema first when given', () => {
-    const held = { consentHeld: { not_equals: true } }
+    const held = NOT_CONSENT_HELD
     expect(publishedDocumentsWhere()).toEqual({
       and: [{ extractedText: { exists: true } }, { publicationStatus: { equals: 'published' } }, held],
     })
@@ -129,7 +130,7 @@ describe('publishedDocumentsWhere (the forced re-extraction)', () => {
   // 🔴 B (2026-11-10): a row held for consent is not even selected (lib/consentHold.ts).
   it('🔴 both selections leave out a row held for consent', () => {
     for (const where of [staleDocumentsWhere(), staleDocumentsWhere(8), publishedDocumentsWhere(), publishedDocumentsWhere(8)]) {
-      expect((where as { and: unknown[] }).and).toContainEqual({ consentHeld: { not_equals: true } })
+      expect((where as { and: unknown[] }).and).toContainEqual(NOT_CONSENT_HELD)
     }
   })
 

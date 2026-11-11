@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { ECOSYSTEM_COOKIE } from '$lib/server/ecosystem';
+import { rateLimitHeaders } from '$lib/server/backendResponse';
 
 /**
  * POST   /api/live/:sid?offset=N — one recorder slice → live partial text.
@@ -43,7 +44,7 @@ export const POST: RequestHandler = async ({ locals, params, url, request, cooki
   }
   return new Response(res.body, {
     status: res.status,
-    headers: { 'content-type': 'application/json', ...NO_STORE },
+    headers: { 'content-type': 'application/json', ...NO_STORE, ...rateLimitHeaders(res) },
   });
 };
 

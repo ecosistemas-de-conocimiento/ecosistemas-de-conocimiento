@@ -149,6 +149,21 @@ describe.skipIf(!dockerOk)('backfill provenance titles', () => {
     expect(await changedIds()).not.toContain(M.open)
   })
 
+  it('🔴 a message citing a revision of a consent-held row is untouched (the revision inherits the hold)', async () => {
+    const REV = 21
+    await run(`
+      INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, content_kind, anonymise, publication_status, consent_held, revision_of_id)
+        VALUES (803, 8, 1, 'Taller Persona.pdf', 'pdf', 'documento', true, 'draft', false, 801);
+      INSERT INTO messages (id, session_id, role, content, provenance, updated_at)
+        VALUES (${REV}, 80, 'assistant', 'Respuesta [1][2].', ${lit({
+          chunks: [chunk(0, '803', 'Taller Persona.pdf'), chunk(1, '802', 'Taller Otra.pdf')],
+        })}, '2026-11-01T10:00:00Z');
+    `)
+    const report = await backfillProvenanceTitles(pg.db, { apply: true })
+    expect(report.consentHeld).toContain(REV)
+    expect(await titleAt(REV, '{chunks,1,metadata,title}')).toBe('Taller Otra.pdf')
+  })
+
   it('🔴 a provenance stored as a JSON STRING is rewritten, and stays a string', async () => {
     const STR = 9
     const provenance = { chunks: [chunk(0, '101', RAW), chunk(1, '103', 'Libro abierto.pdf')] }

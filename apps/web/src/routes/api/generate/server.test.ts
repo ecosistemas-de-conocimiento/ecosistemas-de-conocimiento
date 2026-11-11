@@ -610,6 +610,43 @@ describe('🔴 POST /api/generate — an empty answer is a failed turn, never sa
     expect(saves()).toHaveLength(0);
   });
 
+  // Empty at the output cap (ai-service `CompletionTruncated`): its own code,
+  // because asking again hits the same cap. Never saved either.
+  const TRUNCATED = { error: 'CompletionTruncated', code: 'ERR_COMPLETION_TRUNCATED', message: 'cap' };
+
+  it('sync: ai-service\'s CompletionTruncated fails with answer_truncated, not empty_answer', async () => {
+    world.syncError = { status: 502, body: TRUNCATED };
+    const err = await failure(POST(event(turn())));
+    expect(err?.status).toBe(502);
+    expect(err?.body?.code).toBe('answer_truncated');
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('stream: CompletionTruncated before the headers fails with answer_truncated', async () => {
+    world.syncError = { status: 502, body: TRUNCATED };
+    const err = await failure(POST(event(turn(), true)));
+    expect(err?.status).toBe(502);
+    expect(err?.body?.code).toBe('answer_truncated');
+    expect(saves()).toHaveLength(0);
+  });
+
+  it.each([
+    ['before', []],
+    ['after', [{ type: 'delta', text: 'Medio ' }]],
+  ])('stream: a CompletionTruncated frame %s partial content becomes answer_truncated', async (_when, deltas) => {
+    world.streamFrames = [...deltas, { type: 'error', code: 'CompletionTruncated', errorCode: 'ERR_COMPLETION_TRUNCATED', message: 'cap' }];
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.at(-1)).toMatchObject({ type: 'error', code: 'answer_truncated' });
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('stream: `done` with no content and finishReason length emits answer_truncated and saves nothing', async () => {
+    world.streamFrames = [{ ...EMPTY_DONE, finishReason: 'length' }];
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.at(-1)).toMatchObject({ type: 'error', code: 'answer_truncated' });
+    expect(saves()).toHaveLength(0);
+  });
+
   it('stream: an unknown error code passes through as is', async () => {
     world.streamFrames = [{ type: 'error', code: 'SOMETHING_NEW', message: 'nuevo' }];
     const frames = await readSse(await POST(event(turn(), true)));

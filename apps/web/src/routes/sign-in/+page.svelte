@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import { safeErrMessage } from '$lib/errorSummary';
 
   // Old `/sign-up` links land here (sign-up is closed, UX backlog #6). Say why
   // instead of silently showing a login form to someone with no account.
@@ -46,7 +47,7 @@
     } catch (err) {
       // 🔴 `err.message` is `fetch failed` / `Load failed` — our plumbing, not
       // something a person can act on. It goes to the console, not the screen.
-      console.warn('[sign-in] la petición no salió:', (err as Error).message);
+      console.warn('[sign-in] la petición no salió:', safeErrMessage(err));
       error = CANNOT_REACH;
     } finally {
       submitting = false;

@@ -19,6 +19,8 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.{test,spec}.ts'],
     exclude: ['node_modules/**', '.next/**'],
+    // 🔴 No janitor arms in a test unless the test asks (`vitest.setup.ts`).
+    setupFiles: ['./vitest.setup.ts'],
     /**
      * ⚠ `testTimeout` IS LEFT AT THE STRICT 5 s DEFAULT, DELIBERATELY. A slow
      * TEST should still fail — that is the signal the default exists to give,

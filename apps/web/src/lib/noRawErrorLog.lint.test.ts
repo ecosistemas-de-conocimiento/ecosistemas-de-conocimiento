@@ -1,0 +1,79 @@
+/**
+ * P-07 (re-audit 2026-11-10): the lint rule that keeps a raw error's text out
+ * of every log line (`apps/backend/eslint/noRawErrorLog.js`, shared), run
+ * through the web's own `eslint.config.js` with the ESLint Node API, as
+ * `pnpm lint` runs it. That config has no `.svelte` parser, so the last test
+ * lints each component's `<script>` blocks here instead.
+ */
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { ESLint } from 'eslint';
+import { describe, expect, it } from 'vitest';
+
+const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const eslint = new ESLint({ cwd: web });
+
+/** The lines the rule flags in `code`, linted as if it were a source file. */
+async function flagged(code: string, filePath = 'src/lib/__rawErrorLogFixture.ts'): Promise<number[]> {
+  const [result] = await eslint.lintText(code, { filePath: path.join(web, filePath) });
+  return result!.messages.filter((m) => m.ruleId === 'edc/no-raw-error-log' || m.fatal).map((m) => m.line);
+}
+
+const prelude = `
+declare function errSummary(e: unknown): string
+declare function safeErrMessage(e: unknown): string
+declare const err: Error, error: Error, ex: Error, reason: Error
+declare const job: Promise<void>
+`;
+const lines = (body: string) => prelude.split('\n').length + body.trimStart().split('\n').length - 1;
+
+describe('edc/no-raw-error-log in apps/web', () => {
+  it.each([
+    `console.error('[handleError] uncaught error', error)`,
+    `console.warn('[grafo] graph view read failed', err)`,
+    `console.warn('[sign-in] la petición no salió:', (err as Error).message)`,
+    `console.warn('[chat] turn failed:', (err as Error)?.message ?? err)`,
+    `console.warn('[upload] could not delete', { mediaId: 1, err: String(err) })`,
+    `console.error('[x]', ex)`,
+    `console.error('[x]', reason)`,
+    `console.error('[x]', JSON.stringify(err))`,
+    `try { void 0 } catch (boom) { console.error('[x]', boom) }`,
+    `job.catch((boom) => console.warn(\`[x] \${boom}\`))`,
+  ])('🔴 rejects %s', async (body) => {
+    expect(await flagged(prelude + body)).toEqual([lines(body)]);
+  });
+
+  it.each([
+    `console.error('[x] failed', errSummary(err))`,
+    `console.warn('[x] failed', safeErrMessage(err))`,
+    `console.warn(\`[x] failed (\${(err as Error)?.name ?? 'Error'})\`)`,
+    `try { void 0 } catch (boom) { console.error('[x]', safeErrMessage(boom)) }`,
+    `job.then((boom) => console.log('[x]', boom))`,
+  ])('allows %s', async (body) => {
+    expect(await flagged(prelude + body)).toEqual([]);
+  });
+
+  it("🔴 no component's <script> logs a raw error", async () => {
+    const src = path.join(web, 'src');
+    const svelte = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+        const full = path.join(dir, d.name);
+        return d.isDirectory() ? svelte(full) : d.name.endsWith('.svelte') ? [full] : [];
+      });
+    const found: string[] = [];
+    for (const file of svelte(src)) {
+      const text = readFileSync(file, 'utf8');
+      for (const m of text.matchAll(/(<script\b[^>]*>)([\s\S]*?)<\/script>/g)) {
+        // Blank lines before the block keep the reported line numbers the file's.
+        const offset = text.slice(0, m.index + m[1]!.length).split('\n').length - 1;
+        const rel = path.relative(web, file);
+        for (const line of await flagged('\n'.repeat(offset) + m[2]!, `${rel}.script.ts`)) {
+          found.push(`${rel}:${line}`);
+        }
+      }
+    }
+    expect(found).toEqual([]);
+  });
+});

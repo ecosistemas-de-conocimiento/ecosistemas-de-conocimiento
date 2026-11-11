@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ANSWER_TRUNCATED_CODE,
+  AnswerTruncatedError,
   assertAnswer,
   EMPTY_ANSWER_CODE,
   EmptyAnswerError,
   isEmptyAnswerCode,
   isEmptyGeneration,
+  isTruncatedAnswerCode,
   shouldRetryEmpty,
   streamOutcome,
 } from './generation.js';
@@ -49,17 +52,46 @@ describe('isEmptyAnswerCode', () => {
   });
 });
 
+describe('isTruncatedAnswerCode', () => {
+  it('reads every spelling of a truncated completion', () => {
+    for (const code of ['CompletionTruncated', 'ERR_COMPLETION_TRUNCATED', 'COMPLETION_TRUNCATED', 'answer_truncated']) {
+      expect(isTruncatedAnswerCode(code)).toBe(true);
+      expect(isEmptyAnswerCode(code)).toBe(false);
+    }
+  });
+  it('an empty-completion code, or none, is not one', () => {
+    for (const code of ['EmptyCompletion', 'empty_answer', '', undefined, 7]) {
+      expect(isTruncatedAnswerCode(code)).toBe(false);
+    }
+  });
+});
+
 describe('assertAnswer', () => {
   it('an empty or whitespace-only sync answer throws EmptyAnswerError', () => {
     for (const text of ['', ' \n\t ', null, undefined]) {
-      expect(() => assertAnswer({ text, finishReason: 'length' })).toThrow(EmptyAnswerError);
+      expect(() => assertAnswer({ text, finishReason: 'stop' })).toThrow(EmptyAnswerError);
+      expect(() => assertAnswer({ text })).toThrow(EmptyAnswerError);
     }
+    expect.assertions(9);
     try {
-      assertAnswer({ text: '', finishReason: 'length' });
+      assertAnswer({ text: '', finishReason: 'stop' });
     } catch (err) {
       expect((err as EmptyAnswerError).code).toBe(EMPTY_ANSWER_CODE);
-      expect((err as EmptyAnswerError).finishReason).toBe('length');
     }
+  });
+  it('an empty answer that stopped at the output cap throws AnswerTruncatedError, not EmptyAnswerError', () => {
+    expect.assertions(3);
+    try {
+      assertAnswer({ text: ' ', finishReason: 'length' });
+    } catch (err) {
+      expect(err).toBeInstanceOf(AnswerTruncatedError);
+      expect(err).not.toBeInstanceOf(EmptyAnswerError);
+      expect((err as AnswerTruncatedError).code).toBe(ANSWER_TRUNCATED_CODE);
+    }
+  });
+  it('an answer with text that stopped at the cap passes', () => {
+    const gen = { text: 'Hola…', finishReason: 'length' };
+    expect(assertAnswer(gen)).toBe(gen);
   });
   it('an answer with text passes through as the same object', () => {
     const gen = { text: 'Hola.' };
@@ -85,6 +117,22 @@ describe('streamOutcome', () => {
       expect(streamOutcome({ type: 'error', code, message: 'x' }, '')).toMatchObject({ ok: false, code: EMPTY_ANSWER_CODE });
       expect(streamOutcome({ type: 'error', code, message: 'x' }, 'Medio')).toMatchObject({ ok: false, code: EMPTY_ANSWER_CODE });
     }
+  });
+  it('a truncated error frame, before or after partial content: answer_truncated', () => {
+    for (const code of ['CompletionTruncated', 'ERR_COMPLETION_TRUNCATED']) {
+      expect(streamOutcome({ type: 'error', code, message: 'x' }, '')).toMatchObject({ ok: false, code: ANSWER_TRUNCATED_CODE });
+      expect(streamOutcome({ type: 'error', code, message: 'x' }, 'Medio')).toMatchObject({ ok: false, code: ANSWER_TRUNCATED_CODE });
+    }
+  });
+  it('done with no content at the output cap: answer_truncated; with streamed text, that text', () => {
+    expect(streamOutcome({ type: 'done', text: '', finishReason: 'length' }, '')).toMatchObject({
+      ok: false,
+      code: ANSWER_TRUNCATED_CODE,
+    });
+    expect(streamOutcome({ type: 'done', text: '', finishReason: 'length' }, 'Parcial.')).toEqual({
+      ok: true,
+      text: 'Parcial.',
+    });
   });
   it('any other error frame keeps its code, before or after partial content', () => {
     expect(streamOutcome({ type: 'error', code: 'ProviderUnavailable', message: 'down' }, '')).toEqual({

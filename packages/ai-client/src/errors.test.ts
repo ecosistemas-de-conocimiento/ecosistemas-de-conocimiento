@@ -68,6 +68,7 @@ const SERVER_ERR_CODES = [
   'ERR_CALLBACK_SECRET_MISSING',
   'ERR_CALLBACK_URL_BLOCKED',
   'ERR_CHUNK_SIZE_LOCKED',
+  'ERR_COMPLETION_TRUNCATED',
   'ERR_CORPUS_ALREADY_EXISTS',
   'ERR_CORPUS_NAME_IS_ALIAS',
   'ERR_CORPUS_NOT_FOUND',
@@ -169,13 +170,14 @@ describe('reachability — spelling parity is not the same as working', () => {
     }
   });
 
-  it('the tally is 25 typed / 0 flattened / 4 unverified', () => {
+  it('the tally is 25 typed / 0 flattened / 5 unverified', () => {
     // +2 unverified in 0.24.0: CallbackSecretMissingError and IngestNotFoundError
     // are route-tested server side but not yet measured against a deploy.
     // +1 on 2026-11-10: EmptyCompletion (ai-service sends it; no typed class yet).
+    // +1 on 2026-11-10: CompletionTruncated (same shape, not retried).
     const tally = { typed: 0, flattened: 0, unverified: 0 };
     for (const e of Object.values(WIRE_ERRORS)) tally[e.reachable] += 1;
-    expect(tally).toEqual({ typed: 25, flattened: 0, unverified: 4 });
+    expect(tally).toEqual({ typed: 25, flattened: 0, unverified: 5 });
   });
 
   it('every entry states its reachability', () => {

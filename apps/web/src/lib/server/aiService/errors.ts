@@ -7,6 +7,7 @@
 // Callers should `instanceof`-check the specific subclasses; the SvelteKit BFF
 // uses `httpStatusFor()` to map them onto user-facing status codes.
 
+import { errSummary } from '$lib/errorSummary';
 import { AI_UNAVAILABLE_MESSAGE, AI_UNAVAILABLE_CODE } from './messages';
 
 export class AIServiceError extends Error {
@@ -229,7 +230,7 @@ export function logBudgetFailure(
     console.error(
       '[aiService] ai-service budget failure: NO BUDGET CONFIGURED for org — provision a budget row',
       {
-        err,
+        err: errSummary(err),
         budgetFailure: 'not_configured' satisfies BudgetFailureKind,
         org: err.org,
         surface,
@@ -241,7 +242,7 @@ export function logBudgetFailure(
     console.error(
       '[aiService] ai-service budget failure: BUDGET EXHAUSTED for org — top up the cap',
       {
-        err,
+        err: errSummary(err),
         budgetFailure: 'exceeded' satisfies BudgetFailureKind,
         org: err.org,
         requestedUsd: err.requested,

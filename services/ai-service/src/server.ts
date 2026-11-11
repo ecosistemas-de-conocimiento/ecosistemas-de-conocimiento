@@ -25,6 +25,7 @@ import eventsRoutes from './routes/events.js';
 import generateRoutes from './routes/generate.js';
 import internalRoutes from './routes/internal.js';
 import { internalRoutesEnabled } from './routes/internal-gate.js';
+import { LOG_SAFE_OPTIONS } from './errors/log-safe.js';
 import { healthRoutes } from './routes/health.js';
 import { holdingRoutes } from './routes/holding.js';
 import ingestRoutes from './routes/ingest.js';
@@ -238,7 +239,8 @@ export async function buildServer(injectedRuntime?: Runtime): Promise<FastifyIns
     logger: {
       level: config.LOG_LEVEL,
       // Coolify captures stdout; keep it JSON in prod, pretty is opt-in via tooling.
-      redact: ['req.headers.authorization'],
+      // Redaction plus the `err` serializer that keeps row text out of the log.
+      ...LOG_SAFE_OPTIONS,
     },
     // Trust exactly `TRUSTED_PROXY_HOPS` hops (default 1: the Traefik ingress).
     // `true` trusted every hop, so `req.ip` was the LEFTMOST `X-Forwarded-For`

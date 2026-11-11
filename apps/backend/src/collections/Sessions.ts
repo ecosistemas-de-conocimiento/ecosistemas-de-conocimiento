@@ -728,7 +728,8 @@ export const Sessions: CollectionConfig = {
      * ⚠ Any OTHER document survives: attached elsewhere, published, a
      * conversación, uploaded in another conversation (or, on rows older than
      * `uploadedInSession`, older than this one), someone else's, or referenced
-     * elsewhere. A held testimonio's review rows go with it. For those,
+     * elsewhere. A held testimonio goes with the deleting user's own review rows;
+     * everyone else's stay (`lib/conversationUploads.ts`). For those,
      * `documents_rels_sessions_fk` is `ON DELETE CASCADE` (re-verified against
      * the live schema, 2026-08-28), so deleting a conversation removes only the
      * JOIN ROW — the attachment, not the document.

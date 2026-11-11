@@ -24,8 +24,9 @@
 // expose what Postgres emits:
 // `password authentication failed for user "<name>"` — a credential-shaped
 // string on a public endpoint. Every value we emit comes from the closed
-// vocabulary below. Full detail goes to `console.error`, server-side only.
+// vocabulary below. The log-safe detail (`$lib/errorSummary`) goes to `console.error`, server-side only.
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { backendUrl } from '$lib/server/auth';
 
 export type HealthStatus = 'ok' | 'down';
@@ -250,7 +251,7 @@ async function probeBackend(fetchImpl: FetchLike): Promise<ProbeOutcome> {
   } catch (err) {
     // 🔴 The full error goes HERE and only here. It may contain a connection
     // string, a hostname, or a database message.
-    console.error('[health] the backend readiness probe failed', err);
+    console.error('[health] the backend readiness probe failed', safeErrMessage(err));
     return { ok: false, ms: Date.now() - started, error: classifyError(err) };
   }
 }

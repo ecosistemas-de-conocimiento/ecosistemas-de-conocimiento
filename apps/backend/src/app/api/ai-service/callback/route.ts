@@ -979,7 +979,8 @@ async function dispatchPublishMove(
       'failed; leaving it in',
       String(doc.publicationStatus),
       'so it stays visible and retryable:',
-      reason,
+      // ai-service's own error text, which can quote the document.
+      safeErrMessage(reason),
     )
     await failPublish(doc as never, { payload }, reason)
     return

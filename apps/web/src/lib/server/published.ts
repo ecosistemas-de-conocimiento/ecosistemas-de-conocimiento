@@ -6,6 +6,7 @@
  * `$lib/server/holds.ts`; a 404 is the backend's one refusal.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { backendFetch } from '$lib/server/auth';
 import type { HoldsResult } from '$lib/server/holds';
 
@@ -40,7 +41,7 @@ export async function listPublished(
     const body = (await res.json().catch(() => null)) as { items?: unknown } | null;
     return { state: 'ready', value: parsePublishedList(body?.items) };
   } catch (err) {
-    console.warn('[published] could not list', err);
+    console.warn('[published] could not list', safeErrMessage(err));
     return { state: 'unavailable' };
   }
 }
@@ -60,7 +61,7 @@ export async function rejectPublishedDoc(
     if (!res.ok) return { state: 'unavailable' };
     return { state: 'ready', value: { id } };
   } catch (err) {
-    console.warn('[published] could not reject', err);
+    console.warn('[published] could not reject', safeErrMessage(err));
     return { state: 'unavailable' };
   }
 }

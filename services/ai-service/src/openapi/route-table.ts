@@ -355,14 +355,16 @@ export const ROUTES: readonly RouteRow[] = [
       ),
       402: BUDGET_402,
       499: CLIENT_CLOSED_499,
-      502: {
-        description:
-          'The provider answered with no text on every attempt of the bounded ' +
-          'retry ladder. Not billed, not cached. `code: ERR_EMPTY_COMPLETION`; ' +
-          'on `/v1/generate/stream` the same failure is the error frame ' +
-          '`code: EmptyCompletion`.',
-        schema: C.EmptyCompletionBody,
-      },
+      502: oneOfBodies(
+        'The provider answered with no text. `EmptyCompletion` ' +
+          '(`code: ERR_EMPTY_COMPLETION`): on every attempt of the bounded retry ' +
+          'ladder. `CompletionTruncated` (`code: ERR_COMPLETION_TRUNCATED`): ' +
+          'with `finish_reason` length, i.e. the output token cap ran out ' +
+          'first; not retried. Neither is billed or cached. On ' +
+          '`/v1/generate/stream` each is the error frame with the same `code`.',
+        C.EmptyCompletionBody,
+        C.CompletionTruncatedBody,
+      ),
       503: PROVIDER_UNAVAILABLE_503,
       504: {
         description:
