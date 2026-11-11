@@ -49,6 +49,7 @@ import { anonimizacionEndpoints } from '../lib/anonymisationControls'
 import { CONSENT_HELD_MESSAGE, isConsentHeld, isConsentHeldNow, readConsentHeld } from '../lib/consentHold'
 import { verdictSettings } from '../lib/publicFigures'
 import { errSummary, safeErrMessage } from '../lib/errorSummary'
+import { withholdRowText } from '../lib/storedReason'
 import {
   consumeCorpusCleanupSkip,
   isOwnersMedia,
@@ -3297,6 +3298,7 @@ export const Documents: CollectionConfig = {
     {
       name: 'publicationError',
       type: 'textarea',
+      hooks: { afterRead: [withholdRowText] },
       admin: {
         readOnly: true,
         position: 'sidebar',
@@ -3799,6 +3801,7 @@ export const Documents: CollectionConfig = {
     {
       name: 'anonymisationError',
       type: 'textarea',
+      hooks: { afterRead: [withholdRowText] },
       access: { create: gateWritesOnly, update: gateWritesOnly },
       admin: {
         readOnly: true,
@@ -3967,6 +3970,8 @@ export const Documents: CollectionConfig = {
        */
       name: 'ingestError',
       type: 'textarea',
+      // Rows from before 2026-11-10 may hold drizzle's text (`lib/storedReason.ts`).
+      hooks: { afterRead: [withholdRowText] },
       admin: {
         readOnly: true,
         description: 'Why the last ingest/transcription attempt failed. `code: message`.',
@@ -4027,6 +4032,7 @@ export const Documents: CollectionConfig = {
        */
       name: 'graphError',
       type: 'textarea',
+      hooks: { afterRead: [withholdRowText] },
       /**
        * 🔴 GATED LIKE THE ORIGINAL. Since 2026-10-26 a reply miss records
        * shape info only (`lib/graph/reply.ts`), but rows written earlier

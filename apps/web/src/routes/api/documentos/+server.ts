@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 
 import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
+import { safeReason } from '$lib/errorSummary';
 import { relationIds, relationSessions } from '$lib/documents';
 import { ECOSYSTEM_COOKIE, resolveEcosystem } from '$lib/server/ecosystem';
 import { uploadLooseDocument } from '$lib/server/uploadDocument';
@@ -151,13 +152,14 @@ function slimDoc(row: Record<string, unknown>, callerId: string): Record<string,
     contentKind: row.contentKind,
     testimonioTitle: row.testimonioTitle,
     ingestStatus: row.ingestStatus,
-    ingestError: row.ingestError,
+    // Rows from before 2026-11-10 may hold database text (`safeReason`).
+    ingestError: safeReason(row.ingestError),
     anonymisationStatus: row.anonymisationStatus,
     audioMeta: row.audioMeta,
     publicationStatus: row.publicationStatus,
-    publicationError: row.publicationError,
+    publicationError: safeReason(row.publicationError),
     graphStatus: row.graphStatus,
-    graphError: row.graphError,
+    graphError: safeReason(row.graphError),
     // ⚠ A boolean, not the uploader's id: the view only needs to know whether
     // the backend's graph-retry rule ("only the uploader") lets this caller in.
     uploadedByCaller: relationIds(row.uploadedBy)[0] === callerId,

@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
-import { errSummary } from '$lib/errorSummary';
+import { errSummary, safeReason } from '$lib/errorSummary';
 import { parsePublicationStatus } from '$lib/publication';
 import { backendJson } from '$lib/server/backendResponse';
 
@@ -75,8 +75,8 @@ export const POST: RequestHandler = async ({ locals, params }) => {
   return json(
     {
       publicationStatus: parsePublicationStatus(doc.publicationStatus),
-      publicationError:
-        typeof doc.publicationError === 'string' ? doc.publicationError : null,
+      // Rows from before 2026-11-10 may hold database text (`safeReason`).
+      publicationError: safeReason(doc.publicationError),
       // A student's note: gated and indexed first (backend `lib/studentNotes.ts`).
       ...(body.processing === true
         ? { processing: true, ingestStatus: typeof body.ingestStatus === 'string' ? body.ingestStatus : 'pending' }

@@ -136,3 +136,20 @@ describe('POST /api/documents/[id]/publish', () => {
     expect(await res.json()).toEqual({ error: 'upstream_unreachable', detail: 'Error(ECONNREFUSED)' });
   });
 });
+
+// A row written before 2026-11-10 can hold drizzle's text, which quotes the row.
+describe('POST /api/documents/[id]/publish — a stored publicationError', () => {
+  it('🔴 never passes database error text through', async () => {
+    const raw = 'Failed query: update "documents" set "extracted_text" = $1\nparams: Juana Perez,7';
+    mockedBackendFetch.mockImplementation(async () =>
+      jsonResponse({ doc: { publicationStatus: 'publishing', publicationError: `publish_failed: ${raw}` } }),
+    );
+    const res = await POST(makeEvent({}));
+    const text = await res.text();
+    expect(text).not.toMatch(/Juana Perez|Failed query|extracted_text/);
+    expect(JSON.parse(text)).toEqual({
+      publicationStatus: 'publishing',
+      publicationError: 'publish_failed: [database error text withheld]',
+    });
+  });
+});

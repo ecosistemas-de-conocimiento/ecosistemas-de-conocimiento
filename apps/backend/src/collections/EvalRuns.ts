@@ -16,6 +16,7 @@
 import type { CollectionConfig } from 'payload'
 
 import { isPlatformAdmin } from '../access'
+import { withholdRowText } from '../lib/storedReason'
 
 export const EVAL_RUN_STATUSES = ['queued', 'running', 'done', 'failed'] as const
 export type EvalRunStatus = (typeof EVAL_RUN_STATUSES)[number]
@@ -61,6 +62,7 @@ export const EvalRuns: CollectionConfig = {
     { name: 'sessionId', type: 'text' },
     { name: 'metrics', type: 'json' },
     { name: 'results', type: 'json' },
-    { name: 'error', type: 'text' },
+    /** The error's class name (the runner's `errName`); read-guarded like every reason column (`lib/storedReason.ts`). */
+    { name: 'error', type: 'text', hooks: { afterRead: [withholdRowText] } },
   ],
 }

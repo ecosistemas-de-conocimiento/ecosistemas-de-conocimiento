@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
+import { safeReason } from '$lib/errorSummary';
 import { relationIds } from '$lib/documents';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 
@@ -68,10 +69,11 @@ function slimDoc(row: Record<string, unknown>): Record<string, unknown> {
     name: row.name,
     kind: row.kind,
     ingestStatus: row.ingestStatus,
-    ingestError: row.ingestError,
+    // Rows from before 2026-11-10 may hold database text (`safeReason`).
+    ingestError: safeReason(row.ingestError),
     audioMeta: row.audioMeta,
     publicationStatus: row.publicationStatus,
-    publicationError: row.publicationError,
+    publicationError: safeReason(row.publicationError),
     isPinned: row.isPinned,
     bodyMarkdown: row.bodyMarkdown,
     // Every row here is the caller's (`where[uploadedBy]` below). An uploaded

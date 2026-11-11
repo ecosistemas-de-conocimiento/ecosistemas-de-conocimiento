@@ -13,6 +13,7 @@ import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
 import { assertSessionOwnedBy, SessionNotOwnedError } from '../lib/corpus'
 import { relationId } from '../lib/permissions'
 import { safeErrMessage } from '../lib/errorSummary'
+import { withholdRowText } from '../lib/storedReason'
 
 /**
  * Chat messages — one per turn (user, assistant, or system). Replaces the
@@ -385,6 +386,8 @@ export const Messages: CollectionConfig = {
     {
       name: 'corpusError',
       type: 'textarea',
+      // Rows from before 2026-11-10 may hold drizzle's text (`lib/storedReason.ts`).
+      hooks: { afterRead: [withholdRowText] },
       admin: {
         readOnly: true,
         description:

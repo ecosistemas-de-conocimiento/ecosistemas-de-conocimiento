@@ -82,3 +82,21 @@ export function safeErrMessage(err: unknown, max = 300): string {
   if (typeof message !== 'string' || message === '') return errSummary(err);
   return `${errSummary(err)}: ${message.slice(0, max)}`;
 }
+
+/** The backend's text for a withheld reason (`lib/storedReason.ts`). */
+const WITHHELD = '[database error text withheld]';
+/** The `code: ` the backend's writers put first; the client maps it to Spanish copy. */
+const CODE_PREFIX = /^([a-z][a-z0-9_.-]{0,40}): /;
+
+/**
+ * A stored reason column (`ingestError`, `publicationError`…) on its way to
+ * the browser. The backend already withholds database text on read; this is
+ * the second guard. The leading `code:` is kept, the rest withheld when it
+ * may quote a row ({@link isUnsafeText}). Not a string: `null`.
+ */
+export function safeReason(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  if (!isUnsafeText(value)) return value;
+  const code = CODE_PREFIX.exec(value)?.[1];
+  return code ? `${code}: ${WITHHELD}` : WITHHELD;
+}

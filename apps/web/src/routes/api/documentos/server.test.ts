@@ -406,3 +406,23 @@ describe('GET /api/documentos — every page, only the columns it sends (C-08)',
     expect(q.get('depth')).toBe('1');
   });
 });
+
+// A row written before 2026-11-10 can hold drizzle's text, which quotes the row.
+describe('GET /api/documentos — stored reason columns', () => {
+  it('🔴 never passes database error text through; the code stays', async () => {
+    const raw = 'Failed query: update "documents" set "extracted_text" = $1\nparams: Juana Perez,10';
+    mockedBackendFetch.mockResolvedValueOnce(
+      listResponse([
+        doc(10, { ingestError: `ingest_failed: ${raw}`, publicationError: raw, graphError: `graph_failed: ${raw}` }),
+      ]),
+    );
+
+    const res = await GET(makeEvent({}));
+    const text = await res.text();
+
+    expect(text).not.toMatch(/Juana Perez|Failed query|extracted_text/);
+    const row = (JSON.parse(text) as { docs: Array<Record<string, unknown>> }).docs[0]!;
+    expect(row.ingestError).toBe('ingest_failed: [database error text withheld]');
+    expect(row.graphError).toBe('graph_failed: [database error text withheld]');
+  });
+});

@@ -98,7 +98,7 @@ export function isDatabaseError(err: unknown): boolean {
   return false
 }
 
-const REDACTED = '[database error text withheld]'
+export const REDACTED = '[database error text withheld]'
 
 /**
  * A pino serializer for the `err` key:

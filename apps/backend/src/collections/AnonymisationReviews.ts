@@ -52,6 +52,7 @@ import type { CollectionConfig } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { organizationIdsForUserWithPermission, PERMISSIONS, relationId } from '../lib/permissions'
+import { withholdRowText } from '../lib/storedReason'
 
 /** What a reviewer decided. Two outcomes, no third. */
 export const REVIEW_DECISIONS = ['approved', 'rejected'] as const
@@ -194,6 +195,8 @@ export const AnonymisationReviews: CollectionConfig = {
        */
       name: 'gateReason',
       type: 'textarea',
+      // A copy of `anonymisationError`, so the same read guard (`lib/storedReason.ts`).
+      hooks: { afterRead: [withholdRowText] },
       admin: { readOnly: true },
     },
     {
