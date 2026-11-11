@@ -440,7 +440,8 @@ async function recordTransitionFailure(
   try {
     const reason = isRateLimited(err)
       ? rateLimitedError(action)
-      : transitionFailedError(action, err instanceof Error ? err.message : String(err))
+      : // `publicationError` reaches the browser; a database error's text quotes the row.
+        transitionFailedError(action, safeErrMessage(err))
     await failPublish(doc, deps, reason)
   } catch (writeErr) {
     loggerOf(deps)?.warn(

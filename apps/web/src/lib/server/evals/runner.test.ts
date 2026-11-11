@@ -109,6 +109,15 @@ describe('executeRun', () => {
     expect(done.metrics).toMatchObject({ errors: 2, questions: 0 });
   });
 
+  it('🔴 an item error that quotes a row is stored as its summary', async () => {
+    const { store, updates } = fakeStore();
+    const turn: TurnFn = async () => {
+      throw new Error('Failed query: select $1\nparams: Me llamo Lucía Hernández');
+    };
+    await executeRun({ runId: 'r1', orgId: '6', store, turn, judge: vi.fn(), style: null, items: [item({})] });
+    expect((updates.at(-1)!.results as Array<{ error?: string }>).map((r) => r.error)).toEqual(['Error']);
+  });
+
   it('a failure outside an item marks the run failed and still deletes the conversation', async () => {
     const { store, updates, deleted } = fakeStore({
       updateRun: vi.fn(async (_id: string, data: Record<string, unknown>) => {

@@ -11,7 +11,7 @@ import { DrizzleQueryError } from '@payloadcms/db-postgres/drizzle'
 import { defaultLoggerOptions, type Config } from 'payload'
 import { describe, expect, it } from 'vitest'
 
-import { errSummary, isDatabaseError, safeErrSerializer } from './errorSummary'
+import { errSummary, isDatabaseError, safeErrMessage, safeErrSerializer } from './errorSummary'
 
 const SECRET = 'Me llamo Lucía Hernández y vivo con mi hermano Tomás Ruiz'
 
@@ -130,5 +130,21 @@ describe('safeErrSerializer', () => {
       destination: defaultLoggerOptions,
     }
     expect(logger).toBeTruthy()
+  })
+})
+
+describe('safeErrMessage', () => {
+  it('🔴 a string carrying drizzle’s text (another service’s error message) is withheld', () => {
+    const s = safeErrMessage(`Failed query: insert into "chunks" values ($1)\nparams: ${SECRET}`)
+    expect(s).not.toContain(SECRET)
+  })
+
+  it('keeps an ordinary string and an ordinary error’s message', () => {
+    expect(safeErrMessage('document text is empty')).toBe('document text is empty')
+    expect(safeErrMessage(new Error('fetch failed'))).toBe('fetch failed')
+  })
+
+  it('a database error is its summary', () => {
+    expect(safeErrMessage(dbError())).toBe('DrizzleQueryError(57P01)')
   })
 })

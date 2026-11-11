@@ -501,6 +501,40 @@ describe('🔴 anonymiseDocumentText — failure ends in `held`, never in a pass
     expect(fake.last('redactedText')).toBeNull()
   })
 
+  it('🔴 a crash that quotes the text is written as its summary, never its text', async () => {
+    const ROW_TEXT = 'Me llamo Lucía Hernández y vivo con mi hermano Tomás Ruiz'
+    const crashingName = {
+      get name(): string {
+        throw new Error(`Failed query: select $1\nparams: ${ROW_TEXT}`)
+      },
+      async detect() {
+        return []
+      },
+    } as unknown as PersonDetector
+
+    const fake = fakePayload()
+    await run(fake, { contentKind: 'testimonio', detector: crashingName })
+
+    expect(String(fake.last('anonymisationError'))).toMatch(/^gate_crashed: /)
+    expect(String(fake.last('anonymisationError'))).not.toContain(ROW_TEXT)
+  })
+
+  it('a crash with an ordinary message keeps it', async () => {
+    const crashingName = {
+      get name(): string {
+        throw new Error('boom')
+      },
+      async detect() {
+        return []
+      },
+    } as unknown as PersonDetector
+
+    const fake = fakePayload()
+    await run(fake, { contentKind: 'testimonio', detector: crashingName })
+
+    expect(fake.last('anonymisationError')).toBe('gate_crashed: boom')
+  })
+
   it('🔴 a detector that finds nothing at all still cannot leak the name', async () => {
     // "Nothing to redact" is a legitimate answer, and the gate will let the text
     // through. What must hold is that whatever is returned is what was WRITTEN —

@@ -1,3 +1,5 @@
+import { backendErrorDetail } from '$lib/server/backendResponse';
+
 /**
  * Map an upstream the backend (Payload `/api/media`) error into a stable
  * client-facing `{ error, ... }` payload + response status. Codes are
@@ -8,7 +10,8 @@ export function mapUpstreamMediaError(
   upstreamStatus: number,
   detail: string,
 ): { status: number; body: Record<string, unknown> } {
-  const slim = detail.slice(0, 500);
+  // Payload's own messages only: the raw body can quote a row.
+  const slim = backendErrorDetail(upstreamStatus, detail, 500);
   switch (upstreamStatus) {
     case 400:
       return { status: 400, body: { error: 'media_upload_rejected', detail: slim } };
