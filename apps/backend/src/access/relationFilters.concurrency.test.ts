@@ -7,10 +7,17 @@
  */
 
 import type { PayloadRequest } from 'payload'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetRateLimits } from '../lib/rateLimit'
-import { constrainRelationQueries, relationSlotsHeld, type QueryField } from './relationFilters'
+import {
+  constrainRelationQueries,
+  RELATION_SLOT_LEASE_MS,
+  relationSlotsHeld,
+  releaseRelationSlot,
+  releaseRelationSlotOnError,
+  type QueryField,
+} from './relationFilters'
 
 const fields: QueryField[] = [{ name: 'session', type: 'relationship', relationTo: 'sessions' }]
 const rule = constrainRelationQueries({ follow: false, fieldRule: true })
@@ -37,8 +44,19 @@ function fakeReq(o: Opts = {}) {
   return req
 }
 
-const run = (req: PayloadRequest, where: unknown = crossing, extra: Record<string, unknown> = {}) =>
+/** `beforeOperation` alone: the operation's query has not run yet. */
+const begin = (req: PayloadRequest, where: unknown = crossing, extra: Record<string, unknown> = {}) =>
   rule({ args: { where, ...extra }, operation: 'read', collection: { flattenedFields: fields }, req } as never)
+
+/** `afterOperation`: the operation that ran with these args has ended. */
+const end = (args: unknown) => releaseRelationSlot({ args, result: undefined } as never)
+
+/** The whole operation: the hook, the query, `afterOperation`. */
+const run = async (req: PayloadRequest, where: unknown = crossing, extra: Record<string, unknown> = {}) => {
+  const args = await begin(req, where, extra)
+  end(args)
+  return args
+}
 
 function gate() {
   let open!: () => void
@@ -48,6 +66,7 @@ function gate() {
 
 beforeEach(() => resetRateLimits())
 afterEach(() => {
+  vi.useRealTimers()
   delete process.env.QUERY_RELATION_MAX_CONCURRENT_PER_USER
   delete process.env.QUERY_RELATION_RATELIMIT_USER_MAX
 })
@@ -91,6 +110,53 @@ describe('🔴 filters through a relation: per-person concurrency', () => {
     await expect(run(fakeReq({ rows: 10_000 }))).rejects.toMatchObject({ status: 400 })
     expect(relationSlotsHeld(2)).toBe(0)
     await expect(run(fakeReq({ fail: true }))).rejects.toThrow(/went away/)
+    expect(relationSlotsHeld(2)).toBe(0)
+  })
+
+  it('🔴 the slot is held through the query itself: a third is refused while two are past their lookups', async () => {
+    const first = await begin(fakeReq())
+    const second = await begin(fakeReq())
+    // Both lookups are done; their queries are running.
+    expect(relationSlotsHeld(2)).toBe(2)
+    await expect(begin(fakeReq())).rejects.toMatchObject({ status: 429 })
+    end(first)
+    expect(relationSlotsHeld(2)).toBe(1)
+    end(second)
+    end(second)
+    expect(relationSlotsHeld(2)).toBe(0)
+  })
+
+  it('🔴 an error after beforeOperation frees it: afterError on REST, the lease elsewhere', async () => {
+    const req = fakeReq()
+    await begin(req)
+    expect(relationSlotsHeld(2)).toBe(1)
+    await releaseRelationSlotOnError({ req, error: new Error('statement timeout'), context: {} } as never)
+    expect(relationSlotsHeld(2)).toBe(0)
+    // A second call, or the args' own release after it, frees nothing more.
+    const other = await begin(fakeReq())
+    await releaseRelationSlotOnError({ req, error: new Error('again'), context: {} } as never)
+    expect(relationSlotsHeld(2)).toBe(1)
+    end(other)
+
+    vi.useFakeTimers()
+    await begin(fakeReq())
+    expect(relationSlotsHeld(2)).toBe(1)
+    vi.advanceTimersByTime(RELATION_SLOT_LEASE_MS - 1)
+    expect(relationSlotsHeld(2)).toBe(1)
+    vi.advanceTimersByTime(1)
+    expect(relationSlotsHeld(2)).toBe(0)
+  })
+
+  it("a lookup's own afterOperation does not free the slot of the query it resolves", async () => {
+    const opts: Opts = {}
+    const req = fakeReq(opts)
+    let depth = 0
+    opts.nested = async () => {
+      if (depth++ === 0) end(await begin(req))
+    }
+    const outer = await begin(req)
+    expect(relationSlotsHeld(2)).toBe(1)
+    end(outer)
     expect(relationSlotsHeld(2)).toBe(0)
   })
 
