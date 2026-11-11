@@ -77,12 +77,14 @@ describe.skipIf(!dockerOk)('a revision of a consent-held note is held', () => {
     await shutdown(pg, payload)
   })
 
-  it('isConsentHeld: a populated original or the flag decides; an original known only by id holds (fail closed)', () => {
+  it('isConsentHeld: a populated original or the flag decides; an original known only by id leaves the own flag', () => {
     expect(isConsentHeld({ consentHeld: false, revisionOf: { id: 71, consentHeld: true } })).toBe(true)
     expect(isConsentHeld({ consentHeld: false, revisionOf: { id: 73, consentHeld: false } })).toBe(false)
     expect(isConsentHeld({ consentHeld: false, revisionOf: 71, revisionOfConsentHeld: true })).toBe(true)
     expect(isConsentHeld({ consentHeld: false, revisionOf: 73, revisionOfConsentHeld: false })).toBe(false)
-    expect(isConsentHeld({ consentHeld: false, revisionOf: 73 })).toBe(true)
+    // Depth 0: the sync check cannot read the original (isConsentHeldNow does).
+    expect(isConsentHeld({ consentHeld: false, revisionOf: 71 })).toBe(false)
+    expect(isConsentHeld({ consentHeld: true, revisionOf: 73 })).toBe(true)
     expect(isConsentHeld({ consentHeld: false, revisionOf: { id: 73 } })).toBe(true)
     expect(isConsentHeld({ consentHeld: false, revisionOf: null })).toBe(false)
   })

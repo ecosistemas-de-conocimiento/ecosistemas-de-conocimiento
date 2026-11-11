@@ -54,27 +54,27 @@ export interface ConsentRow {
 
 /**
  * 🔴 Only `true` holds. Missing or null (a row read before the migration, a partial row) is false.
- * A revision is held when its original is: from `revisionOfConsentHeld`, or a
- * populated `revisionOf`. A revision whose original is only an id answers TRUE
- * (fail closed): a caller that must let a revision of a free note through
- * resolves it with {@link isConsentHeldNow}.
  *
- * ⚠ A slice without `revisionOf` cannot be told from a plain row: pair it with
- * {@link readConsentHeld}, as `enqueueIngestForDoc` does.
+ * ⚠ THE SYNC CHECK INHERITS ONLY WHAT IT IS HANDED. A revision is held through
+ * its original when `revisionOf` is POPULATED (depth ≥ 1) or the caller passes
+ * `revisionOfConsentHeld`. When `revisionOf` is a bare id (depth 0), this
+ * answers the row's OWN flag: it cannot read the original. A caller holding a
+ * depth-0 revision that needs the original's hold uses {@link isConsentHeldNow}
+ * or {@link readConsentHeld}, which read the table (owner ruling 2026-11-10:
+ * a fail-closed sync answer held every depth-0 revision and blocked
+ * "Publicar cambios" for free notes).
  */
 export function isConsentHeld(row: ConsentRow | null | undefined): boolean {
   if (row?.consentHeld === true) return true
   const original = row?.revisionOf
-  if (original === null || original === undefined) return false
-  if (typeof row?.revisionOfConsentHeld === 'boolean') return row.revisionOfConsentHeld
-  if (typeof original === 'object') return (original as { consentHeld?: unknown }).consentHeld !== false
-  return true
+  if (original === null || typeof original !== 'object') return row?.revisionOfConsentHeld === true
+  return (original as { consentHeld?: unknown }).consentHeld !== false
 }
 
 /**
  * {@link isConsentHeld}, with a revision's original read now when the row
- * carries only its id. A handle with no `db.drizzle` (a unit-test fake) cannot
- * read it: the revision stays held.
+ * carries only its id. An original that cannot be read holds the revision
+ * (fail closed), and so does a handle with no `db.drizzle` (a unit-test fake).
  */
 export async function isConsentHeldNow(payload: unknown, row: ConsentRow | null | undefined): Promise<boolean> {
   const original = row?.revisionOf

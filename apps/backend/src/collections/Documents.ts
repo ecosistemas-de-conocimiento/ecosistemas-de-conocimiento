@@ -2665,6 +2665,18 @@ export async function enqueueIngestForDoc(args: {
     console.warn(`[documents] doc ${docId}: no longer \`extracting\` — this run lost it, nothing sent.`)
     return
   }
+  // 🔴 AND AGAIN AFTER THE CLAIM (ola 11): a hold (the row's, or a revision's
+  // note's) that landed between the check above and the claim. The claim is
+  // handed back to `extracting`, as a refusal before it would have left it.
+  if (await readConsentHeld(payload, docId)) {
+    console.warn('[documents] doc', docId, 'was held for consent as it was claimed — nothing sent.')
+    await writeColumns(payload as never, {
+      id: docId,
+      where: [{ ingestStatus: { equals: 'embedding' } }, { ingestId: { exists: false } }],
+      data: { ingestStatus: 'extracting' },
+    })
+    return
+  }
 
   // Lazy-import the client + helpers so we don't pull @edc/ai-client
   // into the payload-types-only `payload generate:types` build path.

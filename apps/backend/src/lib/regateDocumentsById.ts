@@ -42,7 +42,7 @@
 
 import type { Payload } from 'payload'
 
-import { isConsentHeld } from './consentHold'
+import { isConsentHeld, isConsentHeldNow } from './consentHold'
 import { draftCorpus, publishedCorpus } from './corpus'
 import { errSummary } from './errorSummary'
 import { relationId } from './permissions'
@@ -156,6 +156,11 @@ export async function regateDocumentsById(
   for (const rawId of opts.ids) {
     const id = String(rawId)
     const row = byId.get(id)
+    // 🔴 A depth-0 revision carries only its note's id: read the note's hold
+    // now, so `refusalFor`'s sync check sees it (`lib/consentHold.ts`).
+    if (row && relationId(row.revisionOf) !== null) {
+      row.revisionOfConsentHeld = await isConsentHeldNow(payload, { revisionOf: relationId(row.revisionOf) })
+    }
     const line: RegateByIdLine = {
       id,
       contentKind: row?.contentKind ?? null,
