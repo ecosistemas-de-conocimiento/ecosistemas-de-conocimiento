@@ -548,8 +548,9 @@ export async function organizationIdsForUserWithPermission(
 export async function resolvePrincipal(
   payload: Payload,
   email: string,
+  req?: PayloadRequest,
 ): Promise<ResolvedPrincipal | null> {
-  const user = await loadActiveUser(payload, email)
+  const user = await loadActiveUser(payload, email, req)
   if (!user) return null
 
   const isPlatformAdmin = user.isPlatformAdmin === true
@@ -559,7 +560,7 @@ export async function resolvePrincipal(
     // Expanded across every ACTIVE organization, with no membership row needed.
     const organizations = await findAll<OrganizationRow>(payload, 'organizations', {
       isActive: { equals: true },
-    })
+    }, req)
     const grant = grantForRole(PLATFORM_ADMIN_ROLE)
     for (const organization of organizations) {
       projects[organization.slug] = { roles: [...grant.roles], permissions: [...grant.permissions] }
@@ -572,7 +573,7 @@ export async function resolvePrincipal(
     }
   }
 
-  for (const { organization, role } of await membershipsForUser(payload, user.id)) {
+  for (const { organization, role } of await membershipsForUser(payload, user.id, req)) {
     projects[organization.slug] = grantForRole(role)
   }
 
@@ -595,8 +596,9 @@ export async function resolveForOrganization(
   payload: Payload,
   email: string,
   organizationSlug: string,
+  req?: PayloadRequest,
 ): Promise<ProjectGrant | null> {
-  const user = await loadActiveUser(payload, email)
+  const user = await loadActiveUser(payload, email, req)
   if (!user) return null
 
   const slug = organizationSlug.trim().toLowerCase()
@@ -604,7 +606,7 @@ export async function resolveForOrganization(
 
   const organizations = await findAll<OrganizationRow>(payload, 'organizations', {
     and: [{ slug: { equals: slug } }, { isActive: { equals: true } }],
-  })
+  }, req)
   const organization = organizations[0]
   if (!organization) return null
 
@@ -616,7 +618,7 @@ export async function resolveForOrganization(
       { organization: { equals: organization.id } },
       { isActive: { equals: true } },
     ],
-  })
+  }, req)
   if (memberships.length === 0) return null
 
   // Highest role wins — same rule as `membershipsForUser`, for the same reason.

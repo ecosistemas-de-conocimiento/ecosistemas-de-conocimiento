@@ -90,7 +90,7 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
   // 🔴 Only `/api/evals/session` (local API, no user) sets it.
   next.evalRun = null
 
-  const organizationIds = await organizationIdsForUser(req.payload, user.id)
+  const organizationIds = await organizationIdsForUser(req.payload, user.id, req)
   const declared = next.organization
 
   if (declared !== undefined && declared !== null && declared !== '') {

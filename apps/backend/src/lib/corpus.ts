@@ -55,7 +55,7 @@
  * another ecosistema.
  */
 
-import type { Payload } from 'payload'
+import type { Payload, PayloadRequest } from 'payload'
 
 import { organizationIdsForUser, relationId } from './permissions'
 
@@ -168,9 +168,11 @@ export async function assertSessionOwnedBy(
   payload: Payload,
   sessionId: number | string,
   userId: number | string,
+  // ⚠ From a hook: the write's own transaction (see `findAll` in `lib/permissions.ts`).
+  req?: PayloadRequest,
 ): Promise<{ organizationId: number | string | null; evalRun: number | null }> {
   const session = (await payload
-    .findByID({ collection: 'sessions', id: sessionId as never, depth: 0, overrideAccess: true })
+    .findByID({ collection: 'sessions', id: sessionId as never, depth: 0, overrideAccess: true, disableErrors: true, req })
     .catch(() => null)) as unknown as { user?: unknown; organization?: unknown; evalRun?: unknown } | null
 
   if (!session) {
@@ -206,6 +208,7 @@ export async function assertSessionOwnedBy(
     limit: 1,
     pagination: false,
     overrideAccess: true,
+    req,
   })
   if (active.docs.length === 0) {
     throw new SessionNotOwnedError('No such conversation.')
@@ -222,7 +225,7 @@ export async function assertSessionOwnedBy(
     const row = active.docs[0] as { isActive?: unknown; isPlatformAdmin?: unknown } | undefined
     if (row?.isPlatformAdmin !== true) throw new SessionNotOwnedError('No such conversation.')
   } else if (organizationId !== null) {
-    const mine = await organizationIdsForUser(payload, userId)
+    const mine = await organizationIdsForUser(payload, userId, req)
     if (!mine.some((id) => String(id) === String(organizationId))) {
       throw new SessionNotOwnedError('No such conversation.')
     }

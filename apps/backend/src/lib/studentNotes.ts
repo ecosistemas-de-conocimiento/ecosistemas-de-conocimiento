@@ -43,7 +43,7 @@
  * 🔴 PRIVACY: logs carry ids only.
  */
 
-import type { Payload } from 'payload'
+import type { Payload, PayloadRequest } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { autoPublishParticipantDocument, type AutoPublishSkip } from './autoPublish'
@@ -122,17 +122,22 @@ export function planNoteProcessing(
  * Is this a STUDENT's note in a `studentView` ecosistema — the only notes this
  * file handles? Anything else keeps today's behaviour.
  */
-export async function isStudentNote(payload: Payload, row: Record<string, unknown>): Promise<boolean> {
+export async function isStudentNote(
+  payload: Payload,
+  row: Record<string, unknown>,
+  // ⚠ From a write: its own transaction (see `findAll` in `lib/permissions.ts`).
+  req?: PayloadRequest,
+): Promise<boolean> {
   if (!isAppNote(row)) return false
   const organizationId = relationId(row.organization)
   const uploaderId = relationId(row.uploadedBy)
   if (organizationId === null || uploaderId === null) return false
-  if (!(await featureEnabled(payload, organizationId, 'studentView'))) return false
+  if (!(await featureEnabled(payload, organizationId, 'studentView', req))) return false
   const user = await payload
-    .findByID({ collection: 'users', id: uploaderId as never, depth: 0, overrideAccess: true })
+    .findByID({ collection: 'users', id: uploaderId as never, depth: 0, overrideAccess: true, disableErrors: true, req })
     .catch(() => null)
   if (!user || isPlatformAdminUser(user)) return false
-  return (await roleInOrganization(payload, uploaderId, organizationId)) === 'estudiante'
+  return (await roleInOrganization(payload, uploaderId, organizationId, req)) === 'estudiante'
 }
 
 export type StudentNotePublish =

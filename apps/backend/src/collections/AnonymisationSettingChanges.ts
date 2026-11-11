@@ -61,7 +61,7 @@ export const AnonymisationSettingChanges: CollectionConfig = {
       const user = req.user
       if (!user || !isActiveUser(user)) return false
       if (isPlatformAdminUser(user)) return true
-      const ids = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.holdsReview)
+      const ids = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.holdsReview, req)
       if (ids.length === 0) return false
       return { organization: { in: ids } }
     },

@@ -20,7 +20,7 @@
  * Ask by permission (`lib/permissions.ts`) for anything finer.
  */
 
-import type { Payload } from 'payload'
+import type { Payload, PayloadRequest } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 
@@ -74,8 +74,12 @@ export function canAdminOrg(user: RoleUser | null | undefined, orgId: Id | null 
 }
 
 /** The caller's active memberships, in the session-payload shape, sorted by id. */
-export async function sessionMemberships(payload: Payload, userId: Id): Promise<SessionMembership[]> {
-  const rows = await membershipsForUser(payload, userId)
+export async function sessionMemberships(
+  payload: Payload,
+  userId: Id,
+  req?: PayloadRequest,
+): Promise<SessionMembership[]> {
+  const rows = await membershipsForUser(payload, userId, req)
   return rows
     .map(({ organization, role }) => ({ organization: String(organization.id), slug: organization.slug, role }))
     .sort((a, b) => Number(a.organization) - Number(b.organization) || a.organization.localeCompare(b.organization))
@@ -85,7 +89,8 @@ export async function sessionMemberships(payload: Payload, userId: Id): Promise<
 export async function withMemberships<U extends RoleUser>(
   payload: Payload,
   user: U,
+  req?: PayloadRequest,
 ): Promise<U & { memberships: SessionMembership[] }> {
-  const memberships = user.id === undefined ? [] : await sessionMemberships(payload, user.id)
+  const memberships = user.id === undefined ? [] : await sessionMemberships(payload, user.id, req)
   return { ...user, memberships }
 }
