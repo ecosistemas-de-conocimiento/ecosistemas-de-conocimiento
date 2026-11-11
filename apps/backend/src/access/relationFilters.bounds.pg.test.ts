@@ -9,7 +9,9 @@
  * blocked up to 2.5 s, another person's `/api/users/me` delayed 4.8 s, and a
  * 500 at the end; forty terms took 25 s (quoted from the audit). The first
  * three tests below failed on a3c9df9f; the three marked D2 or on the log
- * (concurrency and rate per person, the log level) failed on dc1a4188. The
+ * (concurrency and rate per person, the log level) failed on dc1a4188; the
+ * slot held through the main query (D2 leftover) failed on 77f335fc, and the
+ * slot coming back after a failure there failed without `afterError`. The
  * web's filters and the platform admin are controls.
  *
  * The bounds (`relationFilterLimits` in `relationFilters.ts`): at most
@@ -17,8 +19,9 @@
  * `QUERY_RELATION_MAX_IDS` ids read in all; past either, 400.
  *
  * `EDC_MEASURE_RELATION_BOUNDS=1` also runs the timing probes at the end,
- * which print each request's time (one at a time, and twenty at once from one
- * member), a concurrent `/api/users/me` and the event loop's longest stall.
+ * which print each request's time (one at a time, twenty at once from one
+ * member, and one member resending every 429), a concurrent `/api/users/me`
+ * and the event loop's longest stall.
  * They assert nothing.
  *
  * Harness: `lib/testing/realPostgres`; driven through `handleEndpoints`, real JWT.
@@ -38,6 +41,7 @@ vi.mock('@/lib/aiClient', () => {
   return { getAdminAIClient: () => anything, getAppAIClient: () => anything }
 })
 
+import { relationSlotsHeld } from '@/access/relationFilters'
 import { resetRateLimits } from '@/lib/rateLimit'
 import { bootPayload, dockerOk, shutdown, startRealPostgres, type RealPostgres } from '@/lib/testing/realPostgres'
 
@@ -206,6 +210,51 @@ describe.skipIf(!dockerOk)('a filter through a relation has a bounded cost (real
     expect(((await deep.json()) as { totalDocs: number }).totalDocs).toBe(1)
   }, 60_000)
 
+  it('🔴 the slot is held through the main query, not only the lookups (D2 leftover)', async () => {
+    // Hold the `ratings` query itself (the one with the resolved `in` lists); the lookups on `sessions` run.
+    const db = payload.db as unknown as { find: (args: { collection: string }) => Promise<unknown> }
+    const original = db.find.bind(db)
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    let waiting = 0
+    vi.spyOn(db, 'find').mockImplementation(async (args) => {
+      if (args.collection === 'ratings') {
+        waiting++
+        await gate
+      }
+      return original(args)
+    })
+    const path = `/api/ratings?depth=0&${orTerms(1, 'b00001')}`
+    const held = [rest('GET', path, tokens.ben), rest('GET', path, tokens.ben)]
+    while (waiting < 2) await new Promise((r) => setTimeout(r, 10))
+    expect(relationSlotsHeld(BEN)).toBe(2)
+    const third = await rest('GET', path, tokens.ben)
+    expect(third.status).toBe(429)
+    open()
+    expect((await Promise.all(held)).map((r) => r.status)).toEqual([200, 200])
+    expect(relationSlotsHeld(BEN)).toBe(0)
+  }, 60_000)
+
+  it('🔴 the slot comes back when the operation fails after its lookups: a 400, a throw (D2 leftover)', async () => {
+    // A path Payload refuses after the hook ran: 400 from its own validation.
+    const bad = await rest('GET', `/api/ratings?depth=0&${orTerms(1, 'b00001')}&where[nope][equals]=1`, tokens.ben)
+    expect(bad.status).toBe(400)
+    expect(relationSlotsHeld(BEN)).toBe(0)
+    // The main query throws (a timeout, the database going away).
+    const db = payload.db as unknown as { find: (args: { collection: string }) => Promise<unknown> }
+    const original = db.find.bind(db)
+    vi.spyOn(db, 'find').mockImplementation(async (args) => {
+      if (args.collection === 'ratings') throw new Error('canceling statement due to statement timeout')
+      return original(args)
+    })
+    const res = await Promise.all([0, 1, 2].map(() => rest('GET', `/api/ratings?depth=0&${orTerms(1, 'b00001')}`, tokens.ben)))
+    expect(res.map((r) => r.status)).toContain(500)
+    expect(relationSlotsHeld(BEN)).toBe(0)
+    vi.restoreAllMocks()
+    // And the person is not locked out.
+    expect((await rest('GET', `/api/ratings?depth=0&${orTerms(1, 'b00001')}`, tokens.ben)).status).toBe(200)
+  }, 60_000)
+
   it('🔴 past the per-minute budget: 429 with Retry-After (D2)', async () => {
     process.env.QUERY_RELATION_RATELIMIT_USER_MAX = '2'
     const path = `/api/ratings?depth=0&${orTerms(1, 'b00001')}`
@@ -285,5 +334,44 @@ describe.skipIf(!dockerOk)('a filter through a relation has a bounded cost (real
       lines.push(`1 over the id cap, alone: HTTP${one.status} ${one.ms.toFixed(0)} ms`)
     }
     process.stdout.write(`\n[relation burst] ${lines.join('\n[relation burst] ')}\n`)
+  }, 300_000)
+
+  it.runIf(process.env.EDC_MEASURE_RELATION_BOUNDS === '1')('measure: one member retrying every 429 at once (D2 leftover)', async () => {
+    // Twenty loops that resend on a 429 with no pause: whatever the slot does not
+    // cover runs alongside the next request's lookups. 30 requests in all (the
+    // per-minute budget); `/me` from another member is sent every 50 ms.
+    const lines: string[] = []
+    const edge = Array.from({ length: 5 }, (_, i) => `where[or][${i}][session.title][like]=b0${i + 1}`).join('&')
+    for (const [label, path] of [
+      ['at the caps (5 terms x 1000 ids)', `/api/ratings?depth=0&${edge}`],
+      ['/count at the caps', `/api/ratings/count?${edge}`],
+    ] as const) {
+      resetRateLimits()
+      let left = 30
+      let refused = 0
+      const h = monitorEventLoopDelay({ resolution: 10 })
+      h.enable()
+      const started = performance.now()
+      const loop = async () => {
+        while (left > 0) {
+          const r = await timed(path, 'ben')
+          if (r.status === 429) refused++
+          else left--
+        }
+      }
+      const loops = Promise.all(Array.from({ length: 20 }, loop))
+      const me: number[] = []
+      let done = false
+      void loops.then(() => (done = true))
+      while (!done) {
+        me.push((await timed('/api/users/me', 'ana')).ms)
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      await loops
+      h.disable()
+      me.sort((a, b) => a - b)
+      lines.push(`${label}: 30 answered in ${(performance.now() - started).toFixed(0)} ms, ${refused} refused on the way; /me n=${me.length} median ${me[Math.floor(me.length / 2)]!.toFixed(0)} ms, max ${me[me.length - 1]!.toFixed(0)} ms; loop max ${(h.max / 1e6).toFixed(0)} ms`)
+    }
+    process.stdout.write(`\n[relation retry] ${lines.join('\n[relation retry] ')}\n`)
   }, 300_000)
 })

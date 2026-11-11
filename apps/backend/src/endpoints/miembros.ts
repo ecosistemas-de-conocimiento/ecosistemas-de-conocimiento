@@ -30,7 +30,11 @@
  *   · every membership write goes through the collection with
  *     `overrideAccess: false` and the caller's `req`, so the access rule and
  *     every hook in `collections/Memberships.ts` (self-assignment, foreign
- *     ecosistema, role ceiling, uniqueness) still decide.
+ *     ecosistema, role ceiling, uniqueness) still decide;
+ *   · 🔴 one manager adds at most `rateLimits.memberAddPerUser()` people an
+ *     hour (audit 2026-11-10, D2 leftover). Every account brings its own
+ *     per-person budgets (relation filters, conversations, uploads), so adds
+ *     without a bound multiplied one person's. See `reserveMemberAdd`.
  *
  * ⚠ A NEW PERSON GETS A ONE-TIME PASSWORD, RETURNED ONCE. There is no mail
  * provider on this installation (measured 2026-10-24: no `email` adapter in
@@ -44,6 +48,7 @@ import { promisify } from 'node:util'
 import type { Endpoint, PayloadRequest } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
+import { MEMBER_ADD_WINDOW_MS, rateLimits, reserveRateLimits, type RateLimitReservation } from '../lib/rateLimit'
 import {
   isOrgRole,
   PERMISSIONS,
@@ -52,7 +57,14 @@ import {
   type OrgRole,
 } from '../lib/permissions'
 
-import { errorResponse, getAuthenticatedUser, jsonResponse, queryParam, readJsonBody } from './http'
+import {
+  errorResponse,
+  getAuthenticatedUser,
+  jsonResponse,
+  queryParam,
+  readJsonBody,
+  tooManyRequests,
+} from './http'
 
 type Id = number | string
 
@@ -158,6 +170,47 @@ async function memberRows(req: PayloadRequest, memberships: Array<Record<string,
   return rows.sort((a, b) => (a.name ?? a.email).localeCompare(b.name ?? b.email, 'es'))
 }
 
+/**
+ * 🔴 ONE MANAGER ADDS AT MOST `rateLimits.memberAddPerUser()` PEOPLE AN HOUR
+ * (audit 2026-11-10, D2 leftover). Each new account comes with its own 2
+ * relation-filter slots and 30 such reads a minute, so adding without a bound
+ * turned one person's budget into as many as they cared to create.
+ *
+ * Reserve, then settle, as `reserveSessionCreate` in `collections/Sessions.ts`:
+ * counted before the lookup, so concurrent adds cannot all pass a check none
+ * has counted; an add that ends in anything but a 201 gives it back. Known and
+ * unknown emails count alike, or the 429 would tell them apart.
+ *
+ * A platform admin is not counted: `POST /api/users` already lets them create
+ * accounts without this route, so a limit here would bound nothing. Per
+ * backend process, like every limit in `lib/rateLimit.ts`.
+ */
+async function reserveMemberAdd(req: PayloadRequest): Promise<RateLimitReservation | Response> {
+  const user = getAuthenticatedUser(req)
+  if (!user || isPlatformAdminUser(req.user)) {
+    return { allowed: true, rule: null, decision: null, release: async () => {} }
+  }
+  const reservation = await reserveRateLimits([
+    {
+      scope: 'miembros:add:user',
+      key: `miembros:add:user:${user.id}`,
+      limit: rateLimits.memberAddPerUser(),
+      windowMs: MEMBER_ADD_WINDOW_MS,
+    },
+  ])
+  if (reservation.allowed) return reservation
+  const decision = reservation.decision ?? {
+    allowed: false,
+    limit: rateLimits.memberAddPerUser(),
+    remaining: 0,
+    resetAt: Date.now() + MEMBER_ADD_WINDOW_MS,
+    retryAfterSeconds: MEMBER_ADD_WINDOW_MS / 1000,
+  }
+  req.payload?.logger?.warn(`[miembros/rateLimit] 429 on scope "${reservation.rule?.scope ?? 'miembros:add'}"`)
+  const minutes = Math.ceil(decision.retryAfterSeconds / 60)
+  return tooManyRequests(decision, `Demasiadas altas seguidas. Intenta de nuevo en ${minutes} min.`)
+}
+
 const listEndpoint: Endpoint = {
   path: '/miembros',
   method: 'get',
@@ -199,83 +252,100 @@ const addEndpoint: Endpoint = {
     // Before the lookup, so a missing name says nothing about the account.
     if (!name) return errorResponse(400, 'Falta el nombre.')
 
-    const found = await req.payload.find({
-      collection: 'users',
-      where: { email: { equals: email } },
-      select: { email: true },
+    const reservation = await reserveMemberAdd(req)
+    if (reservation instanceof Response) return reservation
+    let res: Response | null = null
+    try {
+      res = await addMember(req, { organizationId, email, name, role })
+      return res
+    } finally {
+      // Only an add that happened keeps its slot: a 409, a refused grant, a throw give it back.
+      if (res?.status !== 201) await reservation.release()
+    }
+  },
+}
+
+/** The add itself, once the caller, the input and the rate limit have passed. */
+async function addMember(
+  req: PayloadRequest,
+  { organizationId, email, name, role }: { organizationId: number; email: string; name: string; role: OrgRole },
+): Promise<Response> {
+  const found = await req.payload.find({
+    collection: 'users',
+    where: { email: { equals: email } },
+    select: { email: true },
+    depth: 0,
+    limit: 1,
+    overrideAccess: true,
+    req,
+  })
+  let userId: Id | null = (found.docs[0] as { id?: Id } | undefined)?.id ?? null
+
+  // An existing account: is it already here (active or revoked)?
+  let existing: Record<string, unknown> | null = null
+  if (userId !== null) {
+    const rows = await req.payload.find({
+      collection: 'memberships',
+      where: { and: [{ user: { equals: userId } }, { organization: { equals: organizationId } }] },
       depth: 0,
       limit: 1,
       overrideAccess: true,
       req,
     })
-    let userId: Id | null = (found.docs[0] as { id?: Id } | undefined)?.id ?? null
+    existing = (rows.docs[0] as unknown as Record<string, unknown> | undefined) ?? null
+    // NULL is inactive, as everywhere else (`lib/permissions.ts`).
+    if (existing && existing.isActive === true) {
+      return errorResponse(409, 'Ya es miembro de este ecosistema.')
+    }
+  }
 
-    // An existing account: is it already here (active or revoked)?
-    let existing: Record<string, unknown> | null = null
-    if (userId !== null) {
-      const rows = await req.payload.find({
-        collection: 'memberships',
-        where: { and: [{ user: { equals: userId } }, { organization: { equals: organizationId } }] },
-        depth: 0,
-        limit: 1,
+  // Every answer carries a password; only a new account's is real.
+  const password = temporaryPassword()
+  const isNew = userId === null
+  if (!isNew) await hashLikeANewAccount(password)
+  if (isNew) {
+    try {
+      const created = await req.payload.create({
+        collection: 'users',
+        data: { email, password, displayName: name } as never,
         overrideAccess: true,
         req,
       })
-      existing = (rows.docs[0] as unknown as Record<string, unknown> | undefined) ?? null
-      // NULL is inactive, as everywhere else (`lib/permissions.ts`).
-      if (existing && existing.isActive === true) {
-        return errorResponse(409, 'Ya es miembro de este ecosistema.')
-      }
-    }
-
-    // Every answer carries a password; only a new account's is real.
-    const password = temporaryPassword()
-    const isNew = userId === null
-    if (!isNew) await hashLikeANewAccount(password)
-    if (isNew) {
-      try {
-        const created = await req.payload.create({
-          collection: 'users',
-          data: { email, password, displayName: name } as never,
-          overrideAccess: true,
-          req,
-        })
-        userId = created.id as Id
-      } catch (err) {
-        return writeError(err, req)
-      }
-    }
-
-    try {
-      const membership = existing
-        ? await req.payload.update({
-            collection: 'memberships',
-            id: existing.id as Id,
-            data: { isActive: true, role, personName: name } as never,
-            overrideAccess: false,
-            req,
-          })
-        : await req.payload.create({
-            collection: 'memberships',
-            data: { user: userId, organization: organizationId, role, isActive: true, personName: name } as never,
-            overrideAccess: false,
-            req,
-          })
-      const [member] = await memberRows(req, [membership as unknown as Record<string, unknown>])
-      return jsonResponse(
-        { member, temporaryPassword: password },
-        { status: 201, headers: { 'Cache-Control': 'no-store' } },
-      )
+      userId = created.id as Id
     } catch (err) {
-      // A refused grant must not leave a fresh account nobody can reach.
-      if (isNew && userId !== null) {
-        await req.payload
-          .delete({ collection: 'users', id: userId, overrideAccess: true, req })
-          .catch(() => undefined)
-      }
       return writeError(err, req)
     }
-  },
+  }
+
+  try {
+    const membership = existing
+      ? await req.payload.update({
+          collection: 'memberships',
+          id: existing.id as Id,
+          data: { isActive: true, role, personName: name } as never,
+          overrideAccess: false,
+          req,
+        })
+      : await req.payload.create({
+          collection: 'memberships',
+          data: { user: userId, organization: organizationId, role, isActive: true, personName: name } as never,
+          overrideAccess: false,
+          req,
+        })
+    const [member] = await memberRows(req, [membership as unknown as Record<string, unknown>])
+    return jsonResponse(
+      { member, temporaryPassword: password },
+      { status: 201, headers: { 'Cache-Control': 'no-store' } },
+    )
+  } catch (err) {
+    // A refused grant must not leave a fresh account nobody can reach.
+    if (isNew && userId !== null) {
+      await req.payload
+        .delete({ collection: 'users', id: userId, overrideAccess: true, req })
+        .catch(() => undefined)
+    }
+    return writeError(err, req)
+  }
 }
 
 /** The membership `:id` names, if the caller manages its ecosistema. Otherwise one 404 for both. */
