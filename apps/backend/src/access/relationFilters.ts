@@ -31,6 +31,8 @@
  *
  * Rule 1 reads the target once per crossing, so its cost is bounded per
  * request ({@link relationFilterLimits}): past either cap the request is a 400.
+ * Per person, at most `maxInFlight` such requests run at once and
+ * `rateLimits.relationReadPerUser` a minute; past either, 429.
  *
  * A platform admin and a server read (`overrideAccess`) are not touched.
  * `relationFilters.pg.test.ts` probes each collection over REST;
@@ -46,6 +48,7 @@ import type {
 } from 'payload'
 import { APIError, Forbidden, QueryError } from 'payload'
 
+import { checkRateLimits, rateLimits } from '../lib/rateLimit'
 import { isPlatformAdminUser } from './index'
 
 /**
@@ -112,13 +115,125 @@ function envInt(name: string, fallback: number): number {
 export const relationFilterLimits = {
   maxTerms: (): number => envInt('QUERY_RELATION_MAX_TERMS', 5),
   maxIds: (): number => envInt('QUERY_RELATION_MAX_IDS', 5000),
+  /**
+   * 🔴 `maxInFlight` 2 (`QUERY_RELATION_MAX_CONCURRENT_PER_USER`): requests
+   * with a crossing one person has resolving at once, per backend process
+   * (audit 2026-11-10, D2). The caps above are per request; nothing bounded
+   * how many ran together. Twenty at the caps at once held another person's
+   * `/api/users/me` for 3.5 s with a 543 ms stall; twenty over the id cap,
+   * 2.3 s and 1.3 s (measured on torre 2026-11-10 23:35 UTC, load ~13-16 on
+   * 16 cores, the burst probe in `relationFilters.bounds.pg.test.ts`). A third
+   * is a 429 at once, `Retry-After` {@link RELATION_BUSY_RETRY_AFTER_SECONDS};
+   * no queue, so nothing waits or piles up. 2, as uploads
+   * (`lib/uploadSlots.ts`): the web sends no crossing term (grep of
+   * `apps/web/src`, 2026-11-10), so one person needs none at once; 2 leaves a
+   * retry room to overlap (inferred).
+   */
+  maxInFlight: (): number => envInt('QUERY_RELATION_MAX_CONCURRENT_PER_USER', 2),
 }
 
-/** A filter past {@link relationFilterLimits}. Public, so REST answers 400 with the message. */
+/**
+ * 1 s. An at-cap request answered in 319-745 ms (measured, above), so a slot
+ * is free by then (inferred).
+ */
+export const RELATION_BUSY_RETRY_AFTER_SECONDS = 1
+
+/**
+ * A filter past {@link relationFilterLimits}. Public, so REST answers 400 with the message.
+ *
+ * ⚠ NO STACK: Payload logs a request's error with its frames, at the level
+ * `loggingLevels` names (`payload.config.ts`: `warn`). A caller's own bad
+ * filter is not a server fault, and each one would add a stack to the log.
+ * `name` is set by hand: `loggingLevels` matches it, and a minified build
+ * may rename the class.
+ */
 export class RelationFilterTooBroad extends APIError {
   constructor(message: string) {
     super(message, 400, undefined, true)
+    this.name = 'RelationFilterTooBroad'
+    this.stack = `${this.name}: ${message}`
   }
+}
+
+/** Too many filters through a relationship at once, or this minute. 429; no stack, as above. */
+export class RelationFilterBusy extends APIError {
+  constructor(public readonly retryAfterSeconds: number, message: string) {
+    super(message, 429, undefined, true)
+    this.name = 'RelationFilterBusy'
+    this.stack = `${this.name}: ${message}`
+  }
+}
+
+/**
+ * The slots held, per user id, and the requests holding one. On `globalThis`,
+ * as the rate-limit store (`lib/rateLimit.ts`): one count per process, however
+ * many times the module is evaluated.
+ */
+const SLOTS = Symbol.for('edc.backend.relationFilters.inFlight')
+type Slots = { byUser: Map<string, number>; holding: WeakSet<object> }
+const slots: Slots = ((globalThis as unknown as { [SLOTS]?: Slots })[SLOTS] ??= {
+  byUser: new Map(),
+  holding: new WeakSet(),
+})
+
+/** Slots `userId` holds now. Tests. */
+export const relationSlotsHeld = (userId: string | number): number => slots.byUser.get(String(userId)) ?? 0
+
+function busy(req: PayloadRequest, retryAfterSeconds: number, message: string): RelationFilterBusy {
+  // `routeError` merges these into the error response.
+  const headers = req.responseHeaders ?? new Headers()
+  headers.set('Retry-After', String(retryAfterSeconds))
+  headers.set('Cache-Control', 'no-store')
+  req.responseHeaders = headers
+  return new RelationFilterBusy(retryAfterSeconds, message)
+}
+
+/**
+ * 🔴 ONE PERSON'S FILTERS THROUGH A RELATION: AT MOST `maxInFlight` AT ONCE,
+ * `rateLimits.relationReadPerUser` A MINUTE (audit 2026-11-10, D2).
+ *
+ * The slot is taken and counted synchronously, so concurrent requests cannot
+ * all pass a check none of them has counted. The returned release frees it
+ * once; the caller calls it in a `finally`. A lookup the request runs itself
+ * (`readableIds`, a deeper hop) reaches this hook again with the same `req`:
+ * it holds the slot already and takes nothing. A request refused by the
+ * per-minute bucket gives its slot back before the 429.
+ *
+ * The slot covers the lookups, where the cost is; the query itself, with the
+ * resolved `in` lists, runs after it is freed.
+ */
+async function takeRelationSlot(req: PayloadRequest, userId: string | number): Promise<() => void> {
+  if (slots.holding.has(req)) return () => {}
+  const key = String(userId)
+  const max = relationFilterLimits.maxInFlight()
+  const held = slots.byUser.get(key) ?? 0
+  if (held >= max) {
+    throw busy(req, RELATION_BUSY_RETRY_AFTER_SECONDS, `Too many filters through a relationship at once: at most ${max}.`)
+  }
+  slots.byUser.set(key, held + 1)
+  slots.holding.add(req)
+  let released = false
+  const release = () => {
+    if (released) return
+    released = true
+    slots.holding.delete(req)
+    const now = (slots.byUser.get(key) ?? 1) - 1
+    if (now > 0) slots.byUser.set(key, now)
+    else slots.byUser.delete(key)
+  }
+  try {
+    const verdict = await checkRateLimits([
+      { scope: 'relation-filter:user', key: `relation-filter:user:${key}`, limit: rateLimits.relationReadPerUser() },
+    ])
+    if (!verdict.allowed) {
+      const retry = verdict.decision?.retryAfterSeconds ?? 60
+      throw busy(req, retry, `Too many filters through a relationship. Retry in ${retry}s.`)
+    }
+  } catch (err) {
+    release()
+    throw err
+  }
+  return release
 }
 
 /** What one request has spent of {@link relationFilterLimits}. */
@@ -321,6 +436,13 @@ export async function resolveRelationCrossings(
 /**
  * Ids of the `slug` rows matching `where` that the caller may read.
  *
+ * 🔴 COUNTED FIRST (audit 2026-11-10, D2): a list past the cap is refused on a
+ * `count`, before any row reaches the process. Read first, one term over the
+ * cap materialised 5001 rows to refuse them: 161-210 ms each, a 265 ms stall
+ * (measured on torre 2026-11-10 23:35 UTC, load ~13-16 on 16 cores, the
+ * probes in `relationFilters.bounds.pg.test.ts`). The read keeps its own
+ * check: a row added between the two must not pass the cap.
+ *
  * ⚠ `pagination: false` IS LOAD-BEARING: Payload's default page is 10 rows, and
  * a truncated list silently drops matches (`relationFilters.pg.test.ts` reads
  * more than 10). `limit` is what is left of `budget.ids`, plus one: a list
@@ -350,7 +472,19 @@ async function readableIds(
   budget: CrossingBudget,
 ): Promise<(string | number)[]> {
   const room = budget.maxIds - budget.ids
+  const tooMany = () =>
+    new RelationFilterTooBroad(
+      `A filter through a relationship matches too many rows (more than ${budget.maxIds} per request); narrow it.`,
+    )
   try {
+    const { totalDocs } = await req.payload.count({
+      collection: slug as never,
+      where,
+      overrideAccess: false,
+      user: req.user,
+      req,
+    })
+    if (totalDocs > room) throw tooMany()
     const { docs } = await req.payload.find({
       collection: slug as never,
       where,
@@ -362,11 +496,7 @@ async function readableIds(
       user: req.user,
       req,
     })
-    if (docs.length > room) {
-      throw new RelationFilterTooBroad(
-        `A filter through a relationship matches too many rows (more than ${budget.maxIds} per request); narrow it.`,
-      )
-    }
+    if (docs.length > room) throw tooMany()
     budget.ids += docs.length
     return docs.map((d) => (d as { id: string | number }).id)
   } catch (err) {
@@ -411,10 +541,19 @@ export function constrainRelationQueries(options: { follow: boolean; fieldRule: 
     if (refused.length > 0) throw new QueryError([...new Set(refused)].map((path) => ({ path })))
     // Refused before any lookup: a request past the cap reads nothing.
     const budget = crossingBudget()
-    if (paths.filter(crosses).length > budget.maxTerms) throw tooManyTerms(budget.maxTerms)
+    const crossing = paths.filter(crosses).length
+    if (crossing > budget.maxTerms) throw tooManyTerms(budget.maxTerms)
 
     let next = args as typeof args & { where?: Where; sort?: unknown }
-    const where = await resolveRelationCrossings(a.where, fields, req, options.follow, budget)
+    let where: unknown = a.where
+    if (crossing > 0) {
+      const release = await takeRelationSlot(req, user.id)
+      try {
+        where = await resolveRelationCrossings(a.where, fields, req, options.follow, budget)
+      } finally {
+        release()
+      }
+    }
     if (where !== a.where) next = { ...next, where: where as Where }
     const parts = sortParts(a.sort)
     const kept = parts.filter((p) => {

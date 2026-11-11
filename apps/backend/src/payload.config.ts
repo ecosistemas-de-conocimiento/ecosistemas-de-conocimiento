@@ -435,6 +435,11 @@ export default buildConfig({
     options: { serializers: { err: safeErrSerializer } },
     destination: defaultLoggerOptions,
   },
+  // A filter past the relation caps is the caller's, not a server fault: warn,
+  // and those errors carry no stack (`access/relationFilters.ts`). Payload's
+  // own defaults (`Forbidden: 'info'`…) are merged under this, unchanged. The
+  // type lists only Payload's own error names; the lookup is by `err.name`.
+  loggingLevels: { RelationFilterTooBroad: 'warn', RelationFilterBusy: 'warn' } as Record<string, 'warn'>,
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {
     outputFile: path.resolve(dirname, 'payload-types.ts'),
