@@ -125,4 +125,14 @@ describe('POST /api/documents/[id]/publish', () => {
     expect(body.error).toBe('upstream_unreachable');
     expect(body.publicationStatus).toBeUndefined();
   });
+
+  it("🔴 answers an unreachable backend with the error's name and code, never its text", async () => {
+    mockedBackendFetch.mockImplementation(async () => {
+      throw Object.assign(new Error('Failed query: select * from users\nparams: ana@ejemplo.mx'), {
+        code: 'ECONNREFUSED',
+      });
+    });
+    const res = await POST(makeEvent({}));
+    expect(await res.json()).toEqual({ error: 'upstream_unreachable', detail: 'Error(ECONNREFUSED)' });
+  });
 });

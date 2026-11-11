@@ -20,6 +20,13 @@ const SHAPES = [
   /\berr: err instanceof Error \? err\.message/,
   /\berr: String\(err\)/,
   /\berr: \(err as Error\)\.message/,
+  // Its text through toString(), and a settled result's `.reason` or an
+  // error's `.cause` (an error object, not text: fine under `err`).
+  /(?:console|logger)\.(?:log|info|warn|error|debug)\(.*\b(?:err|error|e|ex|cause|reason|\w+Err|\w+Error)\??\.toString\(/,
+  /console\.(?:log|info|warn|error|debug)\(.*(?:\.cause|\b(?:r|res|result|outcome|settled|\w+Result)\??\.reason)\b(?!\??\.)/,
+  /(?:console|logger)\.(?:log|info|warn|error|debug)\(.*\$\{[^}]*(?:\.cause|\b(?:r|res|result|outcome|settled|\w+Result)\??\.reason)\}/,
+  // `.then(ok, (x) => console.error('…', x))`: the rejection handler's error.
+  /\.then\(.+,\s*(?:async\s*)?\(?(\w+)\)?\s*=>.*console\.(?:log|info|warn|error|debug)\(.*(?:,\s*\1\s*\)|\$\{\1\})/,
 ]
 
 /** The lint rule's own opt-out on the line above, which the rule also honours. */
@@ -62,5 +69,34 @@ describe('no raw error text in a log line (grep)', () => {
   it('every file on the pending list still has a site, or it leaves the list', () => {
     const found = hits()
     expect([...PENDING].filter((rel) => !found.has(rel))).toEqual([])
+  })
+
+  it.each([
+    `console.error('[x] failed', err)`,
+    `payload.logger.warn(\`[x] \${JSON.stringify(err)}\`)`,
+    `console.error('[x]', err.toString())`,
+    `payload.logger.warn(\`[x] \${error?.toString()}\`)`,
+    `if (r.status === 'rejected') console.error('[x]', r.reason)`,
+    `console.warn('[x]', { id, detail: r.reason })`,
+    `payload.logger.warn(\`[x] \${r.reason}\`)`,
+    `console.error('[x]', err.cause)`,
+    `job.then(() => undefined, (boom) => console.error('[x]', boom))`,
+    `job.then(ok, (boom) => console.warn(\`[x] \${boom}\`))`,
+  ])('🔴 the shapes catch %s', (line) => {
+    expect(SHAPES.some((re) => re.test(line))).toBe(true)
+  })
+
+  it.each([
+    `console.error('[x] failed', errSummary(err))`,
+    `payload.logger.error({ err }, '[x] failed')`,
+    `payload.logger.warn({ err: r.reason }, '[x]')`,
+    `console.error('[x]', err.cause?.name, err.cause.code)`,
+    `console.log('[x]', n.toString())`,
+    `console.warn('[x] gate not claimed', decision.reason)`,
+    `payload.logger.info(\`[x] \${decision.reason}\`)`,
+    `job.then((boom) => console.log('[x]', boom))`,
+    `job.then(() => undefined, (boom) => console.error('[x]', safeErrMessage(boom)))`,
+  ])('allows %s', (line) => {
+    expect(SHAPES.some((re) => re.test(line))).toBe(false)
   })
 })

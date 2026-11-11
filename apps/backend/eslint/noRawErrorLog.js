@@ -10,10 +10,16 @@
  * rejects an argument that is, or interpolates:
  *   · an identifier named `err`, `error`, `e`, `ex`, `cause` or `reason`, or
  *     ending in `Err` or `Error`;
- *   · any identifier bound by `catch (x)` or by `.catch((x) => …)`, whatever
- *     its name (wave 11, 2026-11-10);
+ *   · any identifier bound by `catch (x)`, by `.catch((x) => …)` or by the
+ *     rejection handler of `.then(ok, (x) => …)`, whatever its name (wave 11,
+ *     2026-11-10);
  *   · a `.message` or `.stack` member;
- *   · `String(<any of these>)` or `JSON.stringify(<any of these>)`.
+ *   · a `.cause` member, or `.reason` on a `Promise.allSettled` result (`r`,
+ *     `result`, `outcome`, `settled`, or ending in `Result`) or on any of the
+ *     identifiers above, unless the logger's serializer gets it under `err`.
+ *     `.reason` elsewhere is a domain string (`decision.reason`), left alone;
+ *   · `String(<any of these>)`, `JSON.stringify(<any of these>)` or
+ *     `<any of these>.toString()`.
  * Allowed: `errSummary(…)`, `safeErrMessage(…)`, a member such as `err.name`
  * or `err.code`, and in a logger call the error itself under the `err` key or
  * as a whole argument, which the serializer redacts.
@@ -21,6 +27,7 @@
 
 const ERRORISH = /^(?:err|error|e|ex|cause|reason)$|(?:Err|Error)$/
 const LEAKY_MEMBERS = new Set(['message', 'stack'])
+const SETTLED = /^(?:r|res|result|outcome|settled)$|(?:Result|Outcome|Settled)$/
 const SAFE_CALLS = new Set(['errSummary', 'safeErrMessage'])
 const LEVELS = new Set(['log', 'info', 'warn', 'error', 'debug', 'trace', 'fatal'])
 
@@ -59,20 +66,18 @@ function isJsonStringify(callee) {
   )
 }
 
-/** Is this function the handler of a `.catch(…)` call? */
+/** Is this function the handler of a `.catch(…)` call, or `.then(…)`'s second? */
 function isCatchHandler(fn) {
   const call = fn.parent
-  return (
-    call?.type === 'CallExpression' &&
-    call.arguments[0] === fn &&
-    tailName(call.callee) === 'catch' &&
-    call.callee.type !== 'Identifier'
-  )
+  if (call?.type !== 'CallExpression' || call.callee.type === 'Identifier') return false
+  const method = tailName(call.callee)
+  return (method === 'catch' && call.arguments[0] === fn) || (method === 'then' && call.arguments[1] === fn)
 }
 
 /**
- * Was this identifier bound by `catch (x)` or by `.catch((x) => …)`? Then it
- * holds whatever was thrown, whatever it is called.
+ * Was this identifier bound by `catch (x)`, `.catch((x) => …)` or
+ * `.then(ok, (x) => …)`? Then it holds whatever was thrown, whatever it is
+ * called.
  */
 function isCaught(sourceCode, id) {
   for (let scope = sourceCode.getScope(id); scope; scope = scope.upper) {
@@ -97,10 +102,17 @@ function leak(node, bareOk, caught) {
   switch (node.type) {
     case 'Identifier':
       return !bareOk && (ERRORISH.test(node.name) || caught(node)) ? node : undefined
-    case 'MemberExpression':
-      return !node.computed && node.property.type === 'Identifier' && LEAKY_MEMBERS.has(node.property.name)
+    case 'MemberExpression': {
+      const name = !node.computed && node.property.type === 'Identifier' ? node.property.name : undefined
+      if (LEAKY_MEMBERS.has(name)) return node
+      if (bareOk) return undefined
+      // `.cause` and a settled `.reason` hold an error object, not its text.
+      if (name === 'cause') return node
+      const owner = node.object.type === 'Identifier' ? node.object : undefined
+      return name === 'reason' && owner && (SETTLED.test(owner.name) || ERRORISH.test(owner.name) || caught(owner))
         ? node
         : undefined
+    }
     case 'ChainExpression':
     case 'TSAsExpression':
     case 'TSNonNullExpression':
@@ -112,6 +124,7 @@ function leak(node, bareOk, caught) {
       if (SAFE_CALLS.has(name)) return undefined
       if (name === 'String' && node.callee.type === 'Identifier') return leak(node.arguments[0], false, caught)
       if (isJsonStringify(node.callee)) return leak(node.arguments[0], false, caught)
+      if (name === 'toString' && node.callee.type === 'MemberExpression') return leak(node.callee.object, false, caught)
       return undefined
     }
     case 'TemplateLiteral':

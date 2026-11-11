@@ -15,6 +15,7 @@ import {
   warnOnExpiringApiKeys,
 } from './config/env.js';
 import { closeDb } from './db/client.js';
+import { rootLogger } from './logger.js';
 import { createRuntime } from './runtime.js';
 import { buildServer } from './server.js';
 import { shutdownGraceMs } from './services/jobs/shutdown.js';
@@ -152,6 +153,8 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Fatal startup error:', err);
+  // The logger's `err` serializer (`errors/log-safe.ts`): a startup error can
+  // be a database one, and Node prints a raw error's message and stack.
+  rootLogger.fatal({ err }, 'Fatal startup error');
   process.exit(1);
 });

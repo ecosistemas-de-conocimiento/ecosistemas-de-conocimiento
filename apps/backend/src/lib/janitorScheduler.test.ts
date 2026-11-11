@@ -8,6 +8,7 @@ import type { Payload } from 'payload'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  announceJanitorsDisabled,
   armedJanitors,
   JANITOR_FIRST_SWEEP_DEFAULT_MIN,
   JANITORS_DISABLED_VAR,
@@ -79,6 +80,20 @@ describe('startJanitor: the first sweep', () => {
       expect(armedJanitors()).toEqual([])
       await vi.advanceTimersByTimeAsync(2 * DAY)
       expect(sweep).not.toHaveBeenCalled()
+    } finally {
+      delete process.env[JANITORS_DISABLED_VAR]
+    }
+  })
+
+  it('🔴 says once, at warn, that EDC_JANITORS_DISABLED switched them off; nothing while unset', () => {
+    const warn = vi.fn()
+    const payload = { logger: { warn } } as unknown as Payload
+    expect(announceJanitorsDisabled(payload)).toBe(false)
+    expect(warn).not.toHaveBeenCalled()
+    process.env[JANITORS_DISABLED_VAR] = '1'
+    try {
+      expect(announceJanitorsDisabled(payload)).toBe(true)
+      expect(warn.mock.calls).toEqual([['[janitors] EDC_JANITORS_DISABLED=1: no janitor arms in this process']])
     } finally {
       delete process.env[JANITORS_DISABLED_VAR]
     }

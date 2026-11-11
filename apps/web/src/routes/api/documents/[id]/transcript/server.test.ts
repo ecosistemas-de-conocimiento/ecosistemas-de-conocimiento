@@ -252,6 +252,19 @@ describe('PATCH /api/documents/[id]/transcript', () => {
     expect((await res.json()).error).toBe('upstream_unreachable');
   });
 
+  it("🔴 an unreachable backend, on the read or the write, answers the error's name and code only", async () => {
+    const leaky = Object.assign(new Error('Failed query: select * from users\nparams: ana@ejemplo.mx'), {
+      code: 'ECONNREFUSED',
+    });
+    mockedBackendFetch.mockRejectedValue(leaky);
+    expect(await (await PATCH(makeEvent())).json()).toEqual({ error: 'upstream_unreachable', detail: 'Error(ECONNREFUSED)' });
+    mockedBackendFetch.mockImplementation(async (_t: unknown, _p: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') throw leaky;
+      return jsonResponse(EDITABLE);
+    });
+    expect(await (await PATCH(makeEvent())).json()).toEqual({ error: 'upstream_unreachable', detail: 'Error(ECONNREFUSED)' });
+  });
+
   it('passes an upstream write failure through with its status', async () => {
     mockedBackendFetch.mockImplementation(async (_t: unknown, _p: string, init?: RequestInit) =>
       init?.method === 'PATCH'

@@ -50,6 +50,7 @@ import { startEmbeddingJanitor } from './lib/embeddingJanitor'
 import { safeErrMessage, safeErrSerializer } from './lib/errorSummary'
 import { startGraphOrphanJanitor } from './lib/graph/orphanJanitor'
 import { startIngestRecoveryJanitor } from './lib/ingestRecovery'
+import { announceJanitorsDisabled } from './lib/janitorScheduler'
 import { ensureEcosystemBudgets } from './lib/provisionEcosystem'
 import { registerPlatformSettings } from './lib/platformSettings'
 import { startPublishJanitor } from './lib/publishJanitor'
@@ -347,6 +348,10 @@ export default buildConfig({
         )
       }
     }
+
+    // 4b. Every janitor below returns silently under EDC_JANITORS_DISABLED=1
+    //     (the test setup); one line here says so, once per boot.
+    announceJanitorsDisabled(payload)
 
     // 5. Session janitor: arm the recurring stale-session reaper. Disabled by
     //    default (SESSION_JANITOR_ENABLED); the first sweep is one interval

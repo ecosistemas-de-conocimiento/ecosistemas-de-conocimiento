@@ -206,15 +206,14 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
     });
   });
 
-  it('network failure → 502 upstream_unreachable', async () => {
-    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('ECONNREFUSED'));
+  it('network failure → 502 upstream_unreachable, with the error\'s name and code only', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      Object.assign(new Error('connect ECONNREFUSED 10.0.0.9:3002'), { code: 'ECONNREFUSED' }),
+    );
     const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(502);
-    expect(await res.json()).toMatchObject({
-      error: 'upstream_unreachable',
-      detail: expect.stringContaining('ECONNREFUSED'),
-    });
+    expect(await res.json()).toEqual({ error: 'upstream_unreachable', detail: 'Error(ECONNREFUSED)' });
   });
 
   it('upstream 200 but missing doc.id → 502 media_id_missing', async () => {
