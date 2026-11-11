@@ -440,11 +440,12 @@ async function recordTransitionFailure(
   try {
     const reason = isRateLimited(err)
       ? rateLimitedError(action)
-      : transitionFailedError(action, err instanceof Error ? err.message : String(err))
+      : // `publicationError` reaches the browser; a database error's text quotes the row.
+        transitionFailedError(action, safeErrMessage(err))
     await failPublish(doc, deps, reason)
   } catch (writeErr) {
     loggerOf(deps)?.warn(
-      { documentId: String(doc.id), action, err: String(writeErr) },
+      { documentId: String(doc.id), action, err: writeErr },
       '[publish] could not record the transition failure on the row — it stays in an in-flight ' +
         'state with no visible error. The publish janitor is the remaining safety net.',
     )
@@ -483,7 +484,7 @@ async function recordLostIngestId(
   cause: unknown,
 ): Promise<void> {
   loggerOf(deps)?.warn(
-    { documentId: String(doc.id), action, ingestId, err: String(cause) },
+    { documentId: String(doc.id), action, ingestId, err: cause },
     '[publish] the ingest was accepted but its id could not be stored — the completion ' +
       'callback will not match this row and it must be reconciled by hand.',
   )

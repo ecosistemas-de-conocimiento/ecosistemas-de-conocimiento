@@ -9,12 +9,23 @@
 // So `log.error({ err }, …)` on a failed write of chunk text puts that text in
 // the container log.
 //
-// What is safe: the class name, the Postgres SQLSTATE (`23505`, `57014`…) and
-// the stack FRAMES. Any other error keeps its message too, truncated, because
-// an upstream or validation error is useless without it.
+// What is safe: the class name, the Postgres SQLSTATE (`23505`, `57014`…),
+// a Node system error's `code`, `errno` and `syscall` (`ECONNREFUSED`, -111,
+// `connect`) and the stack FRAMES. Any other error keeps its message too,
+// truncated, because an upstream or validation error is useless without it.
 
 /** A Postgres SQLSTATE: five characters, digits and capitals. */
 const SQLSTATE = /^[0-9A-Z]{5}$/;
+
+/**
+ * A Node system error code (`ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`…). Until
+ * 2026-11-10 only a SQLSTATE was kept, so `db/migrate.ts`'s fatal on a
+ * database it could not reach said `Error` and nothing else.
+ */
+const NODE_CODE = /^E[A-Z0-9_]+$/;
+
+/** A Node `syscall` (`connect`, `getaddrinfo`): one lowercase word. */
+const SYSCALL = /^[a-z_]{1,32}$/;
 
 /** How much of a non-database message reaches the log. */
 const MAX_MESSAGE_CHARS = 500;
@@ -34,12 +45,21 @@ function className(err: object): string {
   return typeof name === 'string' && name ? name : ctorName || 'Error';
 }
 
-/** The SQLSTATE of this error or of anything in its `cause` chain. */
-function pgCode(err: unknown): string | undefined {
+/**
+ * The SQLSTATE or Node system error code of this error or of the first error
+ * in its `cause` chain that has one, with that error's `errno` and `syscall`.
+ */
+function errCode(err: unknown): { code: string; errno?: number; syscall?: string } | undefined {
   let cur: unknown = err;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH && cur && typeof cur === 'object'; depth++) {
-    const code = (cur as { code?: unknown }).code;
-    if (typeof code === 'string' && SQLSTATE.test(code)) return code;
+    const { code, errno, syscall } = cur as { code?: unknown; errno?: unknown; syscall?: unknown };
+    if (typeof code === 'string' && (SQLSTATE.test(code) || NODE_CODE.test(code))) {
+      return {
+        code,
+        ...(Number.isInteger(errno) ? { errno: errno as number } : {}),
+        ...(typeof syscall === 'string' && SYSCALL.test(syscall) ? { syscall } : {}),
+      };
+    }
     cur = (cur as { cause?: unknown }).cause;
   }
   return undefined;
@@ -82,8 +102,8 @@ const REDACTED = '[database error text withheld]';
 
 /**
  * A pino serializer for the `err` key. A DATABASE error (see
- * {@link isDatabaseError}) keeps only `type`, `code` (SQLSTATE) and the stack
- * frames: no `message`, `detail`, `query`, `parameters`, `cause` or any other
+ * {@link isDatabaseError}) keeps only `type`, `code` (SQLSTATE or Node code),
+ * `errno`, `syscall` and the stack frames: no `message`, `detail`, `query`, `parameters`, `cause` or any other
  * own property. Any other error keeps its message as well, truncated. A string
  * the caller chose passes, unless it is drizzle's query text.
  */
@@ -91,11 +111,14 @@ export function safeErrSerializer(err: unknown): unknown {
   if (err === null || err === undefined) return err;
   if (typeof err === 'string') return QUERY_TEXT.test(err) ? REDACTED : err;
   if (typeof err !== 'object') return { type: typeof err };
-  const out: { type: string; code?: string; message?: string; stack?: string } = {
-    type: className(err),
-  };
-  const code = pgCode(err);
-  if (code) out.code = code;
+  const out: {
+    type: string;
+    code?: string;
+    errno?: number;
+    syscall?: string;
+    message?: string;
+    stack?: string;
+  } = { type: className(err), ...errCode(err) };
   if (!isDatabaseError(err)) {
     const message = (err as { message?: unknown }).message;
     if (typeof message === 'string') out.message = message.slice(0, MAX_MESSAGE_CHARS);
@@ -103,6 +126,30 @@ export function safeErrSerializer(err: unknown): unknown {
   const stack = framesOnly((err as { stack?: unknown }).stack);
   if (stack) out.stack = stack;
   return out;
+}
+
+/**
+ * For a `console` line, or a log message built as text: the class name and
+ * code (`PostgresError(23505)`, `Error(ECONNREFUSED)`). NEVER the message.
+ */
+export function errSummary(err: unknown): string {
+  if (err === null || err === undefined) return String(err);
+  if (typeof err !== 'object') return typeof err;
+  const code = errCode(err)?.code;
+  const name = className(err);
+  return code ? `${name}(${code})` : name;
+}
+
+/**
+ * For a line that used to print `err.message`: {@link errSummary} alone for a
+ * database error, and with the message (truncated) for any other.
+ */
+export function safeErrMessage(err: unknown, max = 300): string {
+  if (typeof err === 'string') return QUERY_TEXT.test(err) ? REDACTED : err.slice(0, max);
+  if (isDatabaseError(err)) return errSummary(err);
+  const message = (err as { message?: unknown } | null)?.message;
+  if (typeof message !== 'string' || message === '') return errSummary(err);
+  return `${errSummary(err)}: ${message.slice(0, max)}`;
 }
 
 /**

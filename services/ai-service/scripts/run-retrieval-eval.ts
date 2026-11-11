@@ -19,6 +19,7 @@
 // script would refuse to start unless the caller had already exported
 // DATABASE_URL by hand. Same reason `src/test/integration-setup.ts` does it.
 
+import { safeErrMessage } from '../src/errors/log-safe.js';
 import type { ConfigReport } from '../src/eval/types.js';
 
 // Fallback matches `docker-compose.yml` (POSTGRES_DB=ai_service_test). The
@@ -125,7 +126,7 @@ async function main(): Promise<void> {
       console.log(`\n── ${r.config.name}: ${failed.length} failing ──`);
       for (const f of failed) {
         console.log(`  ${f.itemId} [${f.tags.join(',')}] docs=${f.retrievedDocs.join('/')}`);
-        for (const reason of f.failures) console.log(`      ${reason}`);
+        for (const failure of f.failures) console.log(`      ${failure}`);
       }
     }
   }
@@ -151,6 +152,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  console.error(err);
+  console.error('[eval] fatal:', safeErrMessage(err));
   process.exit(1);
 });

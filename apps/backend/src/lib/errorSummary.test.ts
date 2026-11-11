@@ -11,7 +11,7 @@ import { DrizzleQueryError } from '@payloadcms/db-postgres/drizzle'
 import { defaultLoggerOptions, type Config } from 'payload'
 import { describe, expect, it } from 'vitest'
 
-import { errSummary, isDatabaseError, safeErrSerializer } from './errorSummary'
+import { errSummary, isDatabaseError, safeErrMessage, safeErrSerializer } from './errorSummary'
 
 const SECRET = 'Me llamo Lucía Hernández y vivo con mi hermano Tomás Ruiz'
 
@@ -68,6 +68,36 @@ describe('errSummary', () => {
   it('a code that is not a SQLSTATE is not printed (it could be anything)', () => {
     const e = Object.assign(new Error(SECRET), { code: SECRET })
     expect(errSummary(e)).toBe('Error')
+  })
+})
+
+/** What Node's `net` throws for a refused connection (`errno` -111 on Linux). */
+function refused(): Error {
+  return Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), {
+    code: 'ECONNREFUSED',
+    errno: -111,
+    syscall: 'connect',
+    address: '127.0.0.1',
+    port: 5432,
+  })
+}
+
+describe('a Node system error keeps its code (2026-11-10)', () => {
+  it('🔴 an ECONNREFUSED is summarised with its code, also from the cause chain', () => {
+    expect(errSummary(refused())).toBe('Error(ECONNREFUSED)')
+    expect(errSummary(new DrizzleQueryError('select 1', [], refused()))).toBe('DrizzleQueryError(ECONNREFUSED)')
+  })
+
+  it('🔴 the serializer keeps code, errno and syscall, and still drops a database error\'s text', () => {
+    const viaDb = safeErrSerializer(new DrizzleQueryError('select $1', [SECRET], refused())) as Record<string, unknown>
+    expect(viaDb).toMatchObject({ type: 'DrizzleQueryError', code: 'ECONNREFUSED', errno: -111, syscall: 'connect' })
+    expect(viaDb.message).toBeUndefined()
+    expect(JSON.stringify(viaDb)).not.toContain('Lucía')
+
+    const db = safeErrSerializer(dbError('23505')) as Record<string, unknown>
+    expect(db.code).toBe('23505')
+    expect(db.message).toBeUndefined()
+    expect(JSON.stringify(db)).not.toContain('Lucía')
   })
 })
 
@@ -130,5 +160,21 @@ describe('safeErrSerializer', () => {
       destination: defaultLoggerOptions,
     }
     expect(logger).toBeTruthy()
+  })
+})
+
+describe('safeErrMessage', () => {
+  it('🔴 a string carrying drizzle’s text (another service’s error message) is withheld', () => {
+    const s = safeErrMessage(`Failed query: insert into "chunks" values ($1)\nparams: ${SECRET}`)
+    expect(s).not.toContain(SECRET)
+  })
+
+  it('keeps an ordinary string and an ordinary error’s message', () => {
+    expect(safeErrMessage('document text is empty')).toBe('document text is empty')
+    expect(safeErrMessage(new Error('fetch failed'))).toBe('fetch failed')
+  })
+
+  it('a database error is its summary', () => {
+    expect(safeErrMessage(dbError())).toBe('DrizzleQueryError(57P01)')
   })
 })

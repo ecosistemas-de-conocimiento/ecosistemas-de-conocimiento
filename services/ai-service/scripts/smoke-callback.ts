@@ -38,6 +38,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 
 import Fastify, { type FastifyInstance } from 'fastify';
 
+import { safeErrMessage } from '../src/errors/log-safe.js';
 import { startFakeProvider } from '../test-support/fake-provider/server.mjs';
 
 // ---------------------------------------------------------------------------
@@ -328,7 +329,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('[smoke-callback] fatal:', err);
+  console.error('[smoke-callback] fatal:', safeErrMessage(err));
   process.exit(1);
 });
 

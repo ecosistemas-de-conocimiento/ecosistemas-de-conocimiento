@@ -641,7 +641,8 @@ export async function ingestConversationTurns(args: {
     })
     ingestId = result.ingestId
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
+    // `corpusError` is a column a reader can fetch: never a failed query's text.
+    const reason = safeErrMessage(err)
     await Promise.all(
       enqueuedIds.map((id) =>
         finishTurn(db, id, token, {
@@ -836,7 +837,7 @@ async function anonymiseTurn(args: {
   } catch (err) {
     const owned = await finishTurn(db, messageId, token, {
       corpusStatus: 'held-gate',
-      corpusError: `gate_crashed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500),
+      corpusError: `gate_crashed: ${safeErrMessage(err)}`.slice(0, 500),
       redactedText: null,
     })
     if (owned) console.warn(`[conversation] gate crashed on turn msg-${String(messageId)}; held, not embedded.`)

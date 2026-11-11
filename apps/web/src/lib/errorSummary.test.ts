@@ -14,6 +14,19 @@ function drizzleError(): Error {
   return err;
 }
 
+describe('a Node system error keeps its code (2026-11-10)', () => {
+  it('an ECONNREFUSED is summarised with its code; a database error still drops its message', () => {
+    const refused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:3000'), {
+      code: 'ECONNREFUSED',
+      errno: -111,
+      syscall: 'connect',
+    });
+    expect(errSummary(refused)).toBe('Error(ECONNREFUSED)');
+    expect(safeErrMessage(refused)).toBe('Error(ECONNREFUSED): connect ECONNREFUSED 127.0.0.1:3000');
+    expect(safeErrMessage(drizzleError())).not.toContain('Ana');
+  });
+});
+
 describe('errSummary', () => {
   it('keeps the type and the code, from the cause chain too', () => {
     const fetchFailed = new TypeError('fetch failed', { cause: Object.assign(new Error('x'), { code: 'ECONNREFUSED' }) });

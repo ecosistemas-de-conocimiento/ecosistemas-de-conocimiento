@@ -27,6 +27,21 @@ import { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
 import { processIngestJob as rawProcessIngestJob, type IngestBudget } from './ingest.worker.js';
+
+// Every `rootLogger` line this file's code writes, through the shared `err`
+// serializer (`errors/log-safe.ts`), so a test can read what reached the log.
+const logged = vi.hoisted(() => ({ lines: [] as string[] }));
+vi.mock('../logger.js', async () => {
+  const { capturedLog } = await import('../testing/captured-log.js');
+  const { log, lines } = capturedLog();
+  logged.lines = lines;
+  return { rootLogger: log };
+});
+
+/** A Postgres error whose message quotes the row, as a unique violation's does. */
+const ROW_TEXT = 'Juana Pérez declaró en la audiencia';
+const rowError = () =>
+  Object.assign(new Error(`duplicate key value violates unique constraint: ${ROW_TEXT}`), { code: '23505' });
 import { WhereRecorder } from '../test/where-recorder.js';
 import { BudgetExceeded } from '../services/budget/errors.js';
 
@@ -1291,6 +1306,27 @@ describe('processIngestJob — budget (AIS-7)', () => {
     expect(budget.calls.map((c) => c.op)).toEqual(['reserve', 'refund']);
     expect(budget.calls[1]!.amountUsd).toBe(budget.calls[0]!.amountUsd);
     expect(budget.calls[1]!.traceId).toBe(budget.calls[0]!.traceId);
+  });
+
+  it('🔴 a refund that fails with a database error logs its code, not the row', async () => {
+    state.corpora.push(makeCorpus());
+    logged.lines.length = 0;
+    const budget = makeFakeBudget();
+    budget.refund = async () => {
+      throw rowError();
+    };
+    const embedder = vi.fn(async () => {
+      throw new Error('upstream embedding 500');
+    });
+
+    await expect(
+      processIngestJob({ id: 'q-1', data: jobData() }, { db, embedder: embedder as never, budget }),
+    ).rejects.toThrow('upstream embedding 500');
+
+    const line = logged.lines.find((l) => l.includes('refunding the embed hold failed'));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!)).toMatchObject({ component: 'ingest-worker', err: { code: '23505' } });
+    expect(logged.lines.join('')).not.toContain('Juana');
   });
 
   it('charges, not refunds, once the provider answered — even if the vectors are then rejected', async () => {

@@ -21,6 +21,9 @@ async function flagged(code: string): Promise<number[]> {
 const prelude = `
 declare const payload: { logger: { warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void } }
 declare const opts: { log?: { warn: (...a: unknown[]) => void } }
+type Log = { warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void; child: (b: object) => Log }
+declare const ingestLog: Log
+declare function loggerOf(d: unknown): Log | undefined
 declare function errSummary(e: unknown): string
 declare function safeErrMessage(e: unknown): string
 declare const err: Error, error: Error, e: Error, cause: Error, writeErr: Error, updateError: Error, ex: Error, reason: Error
@@ -72,6 +75,12 @@ describe('edc/no-raw-error-log', () => {
     `console.error('[x]', err.cause)`,
     `results.forEach((outcome) => console.warn('[x]', outcome.reason))`,
     `payload.logger.warn(\`[x] \${error.cause}\`)`,
+    // A logger under any name, a logger a call returns, a child (2026-11-10).
+    `ingestLog.warn(\`[x] failed: \${err instanceof Error ? err.message : String(err)}\`)`,
+    `ingestLog.error({ id: 1, err: e instanceof Error ? e.message : String(e) }, '[x]')`,
+    `loggerOf(job)?.warn({ id: 1, err: String(writeErr) }, '[x]')`,
+    `payload.logger.child({ c: 1 }).error({ detail: err }, '[x]')`,
+    `ingestLog.child({ c: 1 }).warn('[x] ' + err.message)`,
   ])('🔴 rejects %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([lines(body)])
   })
@@ -101,6 +110,9 @@ describe('edc/no-raw-error-log', () => {
     `const n = 1; console.log('[x]', n.toString())`,
     // A domain reason, not a rejection.
     `const decision = { reason: 'tier' }; payload.logger.info(\`[x] \${decision.reason}\`)`,
+    `ingestLog.error({ id: 1, err }, '[x]')`,
+    `loggerOf(job)?.warn({ id: 1, err: writeErr }, '[x]')`,
+    `ingestLog.child({ c: 1 }).warn(\`[x] \${errSummary(err)}\`)`,
   ])('allows %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([])
   })

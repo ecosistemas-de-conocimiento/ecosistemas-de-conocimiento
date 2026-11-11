@@ -22,6 +22,7 @@
  * is NOT mocked — the corpus name it builds is the thing under test.
  */
 
+import { DrizzleQueryError } from '@payloadcms/db-postgres/drizzle'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
@@ -488,5 +489,18 @@ describe('enqueue when ai-service is rate-limiting', () => {
 
     expect(enqueue).toHaveBeenCalledTimes(1)
     expect(JSON.stringify(updates)).toContain('ingest_enqueue_failed')
+  })
+
+  it('🔴 a database error is written as its summary, never its params', async () => {
+    const ROW_TEXT = 'Me llamo Lucía Hernández y vivo con mi hermano Tomás Ruiz'
+    enqueue.mockImplementation(async () => {
+      throw new DrizzleQueryError('update "documents" set "ingest_id" = $1', [ROW_TEXT], new Error('deadlock'))
+    })
+
+    await run()
+
+    const failed = updates.at(-1)!.data as Record<string, unknown>
+    expect(failed.ingestError).toBe('ingest_enqueue_failed: DrizzleQueryError')
+    expect(JSON.stringify(updates)).not.toContain(ROW_TEXT)
   })
 })

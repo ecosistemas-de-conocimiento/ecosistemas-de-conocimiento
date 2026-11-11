@@ -27,6 +27,7 @@ import { enqueueCallback } from '../callbacks/emit.js';
 import { getEventBus, type EventBus } from '../events/bus.js';
 import type { CancelBus } from './cancel-bus.js';
 import { BudgetEnforcer } from '../budget/enforcer.js';
+import { rootLogger } from '../../logger.js';
 import {
   CANCELLED_LOST_ERROR,
   WORKER_LOST_CODE,
@@ -175,10 +176,7 @@ export async function cancelGeneration(
       // `jobId` closes the ledger rows too — otherwise the reaper's next sweep
       // still sees a live hold for a job `/cancel` already settled.
       await budget.refund({ org: ctx.org, amountUsd: refundUsd, jobId: j.id }).catch((err: unknown) => {
-        console.warn(
-          `cancel: refunding the lost reserve for job ${j.id} failed: ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-        );
+        rootLogger.warn({ jobId: j.id, err }, 'cancel: refunding the lost reserve failed');
       });
     }
   }
@@ -236,9 +234,7 @@ export async function cancelGeneration(
       },
       { db },
     ).catch((err) => {
-      console.warn(
-        `cancel: enqueueCallback (request.cancelled) failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      rootLogger.warn({ err }, 'cancel: enqueueCallback (request.cancelled) failed');
     });
   }
 

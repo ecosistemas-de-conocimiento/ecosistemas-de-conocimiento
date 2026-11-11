@@ -6,8 +6,7 @@
  * `util.format` prints both for `console.error('…', err)`, and a string the
  * caller built from them reaches the logger as plain text, past the `err`
  * serializer (`src/lib/errorSummary.ts`). So, in a `console.*` call or a
- * logger call (`logger.*`, `log.*`, `payload.logger.*`, `opts.log?.*`), this
- * rejects an argument that is, or interpolates:
+ * logger call, this rejects an argument that is, or interpolates:
  *   · an identifier named `err`, `error`, `e`, `ex`, `cause` or `reason`, or
  *     ending in `Err` or `Error`;
  *   · any identifier bound by `catch (x)`, by `.catch((x) => …)` or by the
@@ -20,6 +19,12 @@
  *     `.reason` elsewhere is a domain string (`decision.reason`), left alone;
  *   · `String(<any of these>)`, `JSON.stringify(<any of these>)` or
  *     `<any of these>.toString()`.
+ * A logger call is any call to a member named `info`, `warn`, `error`,
+ * `debug`, `fatal` or `trace`, whatever its receiver is called (`ingestLog.*`,
+ * `payload.logger.*`, `opts.log?.*`, `logger.child({…}).*`), and `.log` on a
+ * receiver named `logger` or `log`. Until 2026-11-10 only receivers named
+ * `logger`, `log` or `console` counted, and a child logger under any other
+ * name went unchecked.
  * Allowed: `errSummary(…)`, `safeErrMessage(…)`, a member such as `err.name`
  * or `err.code`, and in a logger call the error itself under the `err` key or
  * as a whole argument, which the serializer redacts.
@@ -29,7 +34,7 @@ const ERRORISH = /^(?:err|error|e|ex|cause|reason)$|(?:Err|Error)$/
 const LEAKY_MEMBERS = new Set(['message', 'stack'])
 const SETTLED = /^(?:r|res|result|outcome|settled)$|(?:Result|Outcome|Settled)$/
 const SAFE_CALLS = new Set(['errSummary', 'safeErrMessage'])
-const LEVELS = new Set(['log', 'info', 'warn', 'error', 'debug', 'trace', 'fatal'])
+const LEVELS = new Set(['info', 'warn', 'error', 'debug', 'trace', 'fatal'])
 
 /** The last name in `a.b.c` / `a?.b`: `c` / `b`. */
 function tailName(node) {
@@ -46,10 +51,12 @@ function tailName(node) {
 function logKind(callee) {
   if (callee.type === 'ChainExpression') return logKind(callee.expression)
   if (callee.type !== 'MemberExpression' || callee.computed) return undefined
-  if (callee.property.type !== 'Identifier' || !LEVELS.has(callee.property.name)) return undefined
+  if (callee.property.type !== 'Identifier') return undefined
+  const method = callee.property.name
   const receiver = tailName(callee.object)
   if (receiver === 'console') return 'console'
-  if (receiver === 'logger' || receiver === 'log') return 'logger'
+  if (LEVELS.has(method)) return 'logger'
+  if (method === 'log' && (receiver === 'logger' || receiver === 'log')) return 'logger'
   return undefined
 }
 

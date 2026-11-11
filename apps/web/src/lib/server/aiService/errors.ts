@@ -303,5 +303,8 @@ export function httpStatusFor(
   if (err instanceof BadRequestError) return { status: 400, message: err.message };
   if (err instanceof AIServiceUnavailableError) return { status: 503, message: err.message };
   if (err instanceof AIServiceError) return { status: 502, message: err.message };
-  return { status: 500, message: err instanceof Error ? err.message : 'Internal error' };
+  // ⚠ Not ours to show: the route hands this message to the browser, and an
+  // unknown throw can be a backend body or a failed query quoting a row (a
+  // `SyntaxError` quotes the body it could not parse). Its class and code only.
+  return { status: 500, message: `Internal error (${errSummary(err)})` };
 }

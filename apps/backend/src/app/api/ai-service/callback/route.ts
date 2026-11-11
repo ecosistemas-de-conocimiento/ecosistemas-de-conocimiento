@@ -472,16 +472,19 @@ async function dispatchCallback(
               { ingestStatus: 'ready', ingestError: null }
             : {
                 ingestStatus: 'failed',
-                ingestError: `${envelope.error?.code ?? 'ingest_failed'}: ${
-                  envelope.error?.message ?? 'ai-service reported a failure'
-                }`.slice(0, 500),
+                // ⚠ ai-service's message can be a failed query's text, and the
+                // web hands this column to the browser.
+                ingestError: `${envelope.error?.code ?? 'ingest_failed'}: ${safeErrMessage(
+                  envelope.error?.message ?? 'ai-service reported a failure',
+                )}`.slice(0, 500),
               },
       })
       if (envelope.event === 'ingest.failed') {
         console.warn(
           '[callback] ingest.failed for doc',
           docIdRaw,
-          envelope.error ?? '<no error payload>',
+          envelope.error?.code ?? '<no error code>',
+          safeErrMessage(envelope.error?.message ?? ''),
         )
         // A failed write throws to `POST`, which answers 500 so the sender retries.
         return
@@ -535,7 +538,7 @@ async function dispatchCallback(
         return
       }
       const code = envelope.error?.code ?? 'transcription_failed'
-      const message = envelope.error?.message ?? 'audio-service reported a failure'
+      const message = safeErrMessage(envelope.error?.message ?? 'audio-service reported a failure')
       console.warn('[callback] transcription failed for doc', docId, code, message)
       await payload.update({
         collection: 'documents',
@@ -635,9 +638,9 @@ async function dispatchConversationTurn(
           corpusStatus: 'failed',
           // Cleared so the next run's guard cannot be satisfied by a stale id.
           corpusIngestId: null,
-          corpusError: `${envelope.error?.code ?? 'ingest_failed'}: ${
-            envelope.error?.message ?? 'ai-service reported a failure'
-          }`.slice(0, 500),
+          corpusError: `${envelope.error?.code ?? 'ingest_failed'}: ${safeErrMessage(
+            envelope.error?.message ?? 'ai-service reported a failure',
+          )}`.slice(0, 500),
         } as const)
   // A failed write throws to `POST`, which answers 500 so the sender retries.
   await payload.update({
@@ -971,15 +974,21 @@ async function dispatchPublishMove(
   const wasPublishing = doc.publicationStatus === 'publishing'
 
   if (envelope.event === 'ingest.failed') {
+    // ⚠ Stored as `publicationError`, which the web hands to the browser: the
+    // code and a safe summary, never ai-service's raw text. An empty reason is
+    // `failPublish`'s "no detail" sentence.
     const reason =
-      typeof envelope.error === 'string' ? envelope.error : JSON.stringify(envelope.error ?? {})
+      typeof envelope.error === 'string'
+        ? safeErrMessage(envelope.error)
+        : [envelope.error?.code, envelope.error?.message && safeErrMessage(envelope.error.message)]
+            .filter(Boolean)
+            .join(': ')
     console.error(
       '[callback] the re-embed for doc',
       doc.id,
       'failed; leaving it in',
       String(doc.publicationStatus),
       'so it stays visible and retryable:',
-      // ai-service's own error text, which can quote the document.
       safeErrMessage(reason),
     )
     await failPublish(doc as never, { payload }, reason)
@@ -1040,7 +1049,8 @@ async function dispatchPublishMove(
       await confirmUnpublish(doc as never, { payload })
     }
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
+    // A database error here quotes the row: `publicationError` reaches the browser.
+    const reason = safeErrMessage(err)
     console.error('[callback] could not finish the publish move for doc', doc.id, safeErrMessage(err))
     await failPublish(doc as never, { payload }, reason)
   }

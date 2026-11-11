@@ -25,6 +25,9 @@ const prelude = `
 declare function errSummary(e: unknown): string
 declare function safeErrMessage(e: unknown): string
 declare const err: Error, error: Error, ex: Error, reason: Error
+type Log = { warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void; child: (b: object) => Log }
+declare const routeLog: Log
+declare function logFor(name: string): Log
 declare const job: Promise<void>
 declare const results: PromiseSettledResult<void>[]
 `;
@@ -47,6 +50,10 @@ describe('edc/no-raw-error-log in apps/web', () => {
     `job.then(() => undefined, (boom) => console.error('[x]', boom))`,
     `for (const r of results) if (r.status === 'rejected') console.warn('[x]', r.reason)`,
     `console.error('[x]', error.cause)`,
+    // A logger under any name, a logger a call returns, a child (2026-11-10).
+    `routeLog.warn(\`[x] failed: \${(err as Error).message}\`)`,
+    `logFor('x').error({ id: 1, err: String(err) }, '[x]')`,
+    `routeLog.child({ c: 1 }).error({ detail: error }, '[x]')`,
   ])('🔴 rejects %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([lines(body)]);
   });
@@ -60,6 +67,7 @@ describe('edc/no-raw-error-log in apps/web', () => {
     `job.then(() => undefined, (boom) => console.error('[x]', safeErrMessage(boom)))`,
     `for (const r of results) if (r.status === 'rejected') console.warn('[x]', safeErrMessage(r.reason))`,
     `console.error('[x]', err.cause instanceof Error ? err.cause.name : 'x')`,
+    `routeLog.warn('[x] failed', safeErrMessage(err))`,
     `const n = 1; console.log('[x]', n.toString())`,
   ])('allows %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([]);

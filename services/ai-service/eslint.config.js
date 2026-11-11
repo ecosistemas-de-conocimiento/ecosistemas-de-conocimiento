@@ -29,27 +29,12 @@ export default tseslint.config(
   // P-07: a raw error's text can quote a database row. The backend's rule,
   // shared by path (`apps/backend/eslint/noRawErrorLog.js`); here it accepts
   // `{ err }` because every pino logger carries `errors/log-safe.ts`. Tests
-  // are exempt, they log nothing that ships.
-  //
-  // ⚠ PENDING: the files below still log a raw error (27 sites, measured with
-  // `eslint .` on 2026-11-10), and the rule skips them whole until they are
-  // fixed. Each leaves this list once `eslint .` is clean without it.
+  // are exempt, they log nothing that ships. No source file is skipped: the
+  // 27 sites in 11 files once listed here were fixed on 2026-11-10 (count
+  // measured with `eslint .` that day).
   {
     files: ['**/*.ts', '**/*.mjs'],
-    ignores: [
-      '**/*.test.ts',
-      'scripts/run-retrieval-eval.ts',
-      'scripts/schema-gate.mjs',
-      'scripts/set-budget.ts',
-      'scripts/smoke-callback.ts',
-      'src/server.ts',
-      'src/services/budget/enforcer.ts',
-      'src/services/callbacks/emit.ts',
-      'src/services/callbacks/sweeper.ts',
-      'src/services/generation/cancel.ts',
-      'src/services/jobs/reaper.ts',
-      'src/workers/generation.worker.ts',
-    ],
+    ignores: ['**/*.test.ts'],
     plugins: { edc: { rules: { 'no-raw-error-log': noRawErrorLog } } },
     rules: { 'edc/no-raw-error-log': 'error' },
   },

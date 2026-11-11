@@ -37,6 +37,7 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 
+import { safeErrMessage } from '../src/errors/log-safe.js';
 import { computeNextResetAt } from '../src/services/budget/reset.js';
 
 // Connect straight from DATABASE_URL — deliberately NOT through
@@ -136,6 +137,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('set-budget failed:', err);
+  console.error('set-budget failed:', safeErrMessage(err));
   process.exit(1);
 });

@@ -46,6 +46,7 @@
 import { sql } from 'drizzle-orm';
 
 import type { Db } from '../../db/client.js';
+import { safeErrMessage } from '../../errors/log-safe.js';
 import { BudgetExceeded, BudgetNotConfigured } from './errors.js';
 import { shouldResetNow } from './reset.js';
 
@@ -297,7 +298,7 @@ export class BudgetEnforcer {
       console.warn(
         `[budget] budget_reservations insert failed for org=${input.org} ` +
           `traceId=${input.traceId ?? '-'} jobId=${input.jobId ?? '-'}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+          safeErrMessage(err),
       );
       return undefined;
     }
@@ -327,7 +328,7 @@ export class BudgetEnforcer {
       console.warn(
         `[budget] budget_reservations close-out (${state}) failed for ` +
           `traceId=${key.traceId ?? '-'} jobId=${key.jobId ?? '-'}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+          safeErrMessage(err),
       );
     }
   }
