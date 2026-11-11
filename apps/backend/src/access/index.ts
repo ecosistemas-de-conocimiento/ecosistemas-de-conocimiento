@@ -26,6 +26,10 @@
  * not storing a denormalized org list on the user row that could go stale. If
  * it ever shows up in a profile, cache it on `req` — do NOT replace it with a
  * cheaper boolean.
+ *
+ * ⚠ AND IT GOES THROUGH `req`. An access rule runs inside the write's
+ * transaction; a lookup on a second pool connection deadlocks the pool under
+ * concurrent writes (see `findAll` in `lib/permissions.ts`).
  */
 
 import type { Access, FieldAccess, PayloadRequest, Where } from 'payload'
@@ -131,7 +135,7 @@ export const withinMyOrganizations =
     const id = principalId(req)
     if (id === null || !isActiveUser(req.user)) return false
 
-    const organizationIds = await organizationIdsForUser(req.payload, id)
+    const organizationIds = await organizationIdsForUser(req.payload, id, req)
     if (organizationIds.length === 0) return false
 
     return { [field]: { in: organizationIds } } satisfies Where
@@ -152,7 +156,7 @@ export const withinMyOrganizationsWithRole =
     const id = principalId(req)
     if (id === null || !isActiveUser(req.user)) return false
 
-    const organizationIds = await organizationIdsForUserWithMinRole(req.payload, id, minRole)
+    const organizationIds = await organizationIdsForUserWithMinRole(req.payload, id, minRole, req)
     if (organizationIds.length === 0) return false
 
     return { [field]: { in: organizationIds } } satisfies Where

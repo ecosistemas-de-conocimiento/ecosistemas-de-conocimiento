@@ -47,7 +47,7 @@
  * the grant resolves to nothing.
  */
 
-import type { CollectionSlug, Payload, Where } from 'payload'
+import type { CollectionSlug, Payload, PayloadRequest, Where } from 'payload'
 
 // ---------------------------------------------------------------------------
 // The role model
@@ -355,24 +355,37 @@ const uniqueIds = (ids: Id[]): Id[] => {
  * CLOSED and should read as if it does. Every
  * `isActive` field carries `defaultValue: true`, so a row without it is an
  * anomaly, and an anomaly resolving to "no access" is the outcome we want.
+ *
+ * ⚠ PASS `req` FROM AN ACCESS RULE OR A HOOK. A write holds one pool
+ * connection for its transaction; a read here without `req` asks the pool for a
+ * second. Ten concurrent `POST /api/miembros` on the default pool of 10 then
+ * waited on each other for good (measured 2026-11-10,
+ * `miembros.concurrentAdds.pg.test.ts`). With `req` the read rides the
+ * write's own transaction.
  */
-async function findAll<T>(payload: Payload, collection: CollectionSlug, where: Where): Promise<T[]> {
+async function findAll<T>(
+  payload: Payload,
+  collection: CollectionSlug,
+  where: Where,
+  req?: PayloadRequest,
+): Promise<T[]> {
   const result = await payload.find({
     collection,
     where,
     depth: 0,
     pagination: false,
     overrideAccess: true,
+    req,
   })
   return result.docs as unknown as T[]
 }
 
 /** The user row, or null when there is no such person or they are switched off. */
-async function loadActiveUser(payload: Payload, email: string): Promise<UserRow | null> {
+async function loadActiveUser(payload: Payload, email: string, req?: PayloadRequest): Promise<UserRow | null> {
   const normalized = email.trim().toLowerCase()
   if (!normalized) return null
 
-  const rows = await findAll<UserRow>(payload, 'users', { email: { equals: normalized } })
+  const rows = await findAll<UserRow>(payload, 'users', { email: { equals: normalized } }, req)
   const user = rows[0]
   // `= true`, like every filter here: a NULL flag is no access.
   if (!user || user.isActive !== true) return null
@@ -415,10 +428,11 @@ function roleOf(membership: MembershipRow): OrgRole {
 export async function membershipsForUser(
   payload: Payload,
   userId: Id,
+  req?: PayloadRequest,
 ): Promise<Array<{ organization: OrganizationRow; role: OrgRole }>> {
   const memberships = await findAll<MembershipRow>(payload, 'memberships', {
     and: [{ user: { equals: userId } }, { isActive: { equals: true } }],
-  })
+  }, req)
   if (memberships.length === 0) return []
 
   const orgIds = uniqueIds(
@@ -430,7 +444,7 @@ export async function membershipsForUser(
 
   const organizations = await findAll<OrganizationRow>(payload, 'organizations', {
     and: [{ id: { in: orgIds } }, { isActive: { equals: true } }],
-  })
+  }, req)
   const byId = new Map(organizations.map((org) => [keyOf(org.id), org]))
 
   // Highest role wins if two membership rows somehow point at the same org.
@@ -458,8 +472,8 @@ export async function membershipsForUser(
  * asks. Returns `[]` for a user with no active memberships — which callers must
  * treat as "sees nothing", never as "sees everything".
  */
-export async function organizationIdsForUser(payload: Payload, userId: Id): Promise<Id[]> {
-  const rows = await membershipsForUser(payload, userId)
+export async function organizationIdsForUser(payload: Payload, userId: Id, req?: PayloadRequest): Promise<Id[]> {
+  const rows = await membershipsForUser(payload, userId, req)
   return rows.map((row) => row.organization.id)
 }
 
@@ -476,8 +490,9 @@ export async function organizationIdsForUserWithMinRole(
   payload: Payload,
   userId: Id,
   minRole: OrgRole,
+  req?: PayloadRequest,
 ): Promise<Id[]> {
-  const rows = await membershipsForUser(payload, userId)
+  const rows = await membershipsForUser(payload, userId, req)
   return rows
     .filter((row) => ROLE_RANK[row.role] >= ROLE_RANK[minRole])
     .map((row) => row.organization.id)
@@ -492,8 +507,9 @@ export async function roleInOrganization(
   payload: Payload,
   userId: Id,
   organizationId: Id,
+  req?: PayloadRequest,
 ): Promise<OrgRole | null> {
-  const rows = await membershipsForUser(payload, userId)
+  const rows = await membershipsForUser(payload, userId, req)
   return rows.find((row) => keyOf(row.organization.id) === keyOf(organizationId))?.role ?? null
 }
 
@@ -514,8 +530,9 @@ export async function organizationIdsForUserWithPermission(
   payload: Payload,
   userId: Id,
   permission: Permission,
+  req?: PayloadRequest,
 ): Promise<Id[]> {
-  const rows = await membershipsForUser(payload, userId)
+  const rows = await membershipsForUser(payload, userId, req)
   return rows
     .filter((row) => ROLE_PERMISSIONS[row.role].includes(permission))
     .map((row) => row.organization.id)

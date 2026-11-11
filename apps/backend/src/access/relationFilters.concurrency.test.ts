@@ -9,6 +9,7 @@
 import type { PayloadRequest } from 'payload'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { DB_POOL_CONNECTION_TIMEOUT_MS } from '../lib/dbPool'
 import { resetRateLimits } from '../lib/rateLimit'
 import {
   constrainRelationQueries,
@@ -144,6 +145,24 @@ describe('🔴 filters through a relation: per-person concurrency', () => {
     vi.advanceTimersByTime(RELATION_SLOT_LEASE_MS - 1)
     expect(relationSlotsHeld(2)).toBe(1)
     vi.advanceTimersByTime(1)
+    expect(relationSlotsHeld(2)).toBe(0)
+  })
+
+  it('🔴 a request still running past 30 s keeps its slot: a third is refused', async () => {
+    // The lease was 30 s, and a stuck pool held live requests past it: three
+    // ran at once at 30.5 s (audit 2026-11-10). Each checkout now fails after
+    // the pool's timeout, and a request at the caps makes about 36 of them in
+    // a row (5 terms × count and find, each with its access lookups, then the
+    // query; inferred from the code), so the lease sits above that.
+    expect(RELATION_SLOT_LEASE_MS).toBeGreaterThan(36 * DB_POOL_CONNECTION_TIMEOUT_MS)
+    vi.useFakeTimers()
+    const first = await begin(fakeReq())
+    const second = await begin(fakeReq())
+    vi.advanceTimersByTime(36 * DB_POOL_CONNECTION_TIMEOUT_MS)
+    expect(relationSlotsHeld(2)).toBe(2)
+    await expect(begin(fakeReq())).rejects.toMatchObject({ status: 429 })
+    end(first)
+    end(second)
     expect(relationSlotsHeld(2)).toBe(0)
   })
 

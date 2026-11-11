@@ -148,12 +148,21 @@ export const relationFilterLimits = {
 export const RELATION_BUSY_RETRY_AFTER_SECONDS = 1
 
 /**
- * 30 s: a slot nothing gave back is freed after this long. Only a local-API
- * call that throws after `beforeOperation` gets here (REST has `afterError`).
- * An at-cap request answers in under 1.1 s (measured, above), so no live
- * request is cut short at 30 s (inferred).
+ * 10 min: a slot nothing gave back is freed after this long. Only a call that
+ * throws after `beforeOperation` and never reaches `afterError` gets here (the
+ * local API, or an endpoint that catches the error itself).
+ *
+ * ⚠ IT MUST OUTLIVE ANY LIVE REQUEST, or the bound above is gone. At 30 s it
+ * did not: with the pool stuck, three ran at once at 30.5 s (audit
+ * 2026-11-10). A request at the caps answers in under 1.1 s (measured, above),
+ * but on a starved pool each of its checkouts may wait the pool's timeout
+ * (`lib/dbPool.ts`, 10 s) before it fails, and it makes about 36 in a row
+ * (inferred from the code: 5 terms × count and find, each with its access
+ * lookups, then the query): 6 min. A leaked slot costs its owner one of 2
+ * filters through a relation, which the web does not send, so erring long is
+ * cheap. `relationFilters.concurrency.test.ts` pins lease > 36 × timeout.
  */
-export const RELATION_SLOT_LEASE_MS = 30_000
+export const RELATION_SLOT_LEASE_MS = 10 * 60_000
 
 /**
  * A filter past {@link relationFilterLimits}. Public, so REST answers 400 with the message.
