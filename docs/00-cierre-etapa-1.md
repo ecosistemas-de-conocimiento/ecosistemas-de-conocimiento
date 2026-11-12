@@ -24,15 +24,15 @@ Estados: **Implementado** (en `f971d54c`, desplegado en dev), **Planeado** (con 
 | # | Entregable (brief v1 §4) | Qué hace | Ruta en dev · docs · código principal | Estado |
 |---|---|---|---|---|
 | 1 | Registro y autenticación | Correo y contraseña; el registro público está cerrado desde el 2026-10-21 y las cuentas las crea un admin o se invitan desde Miembros | `/sign-in` (`/sign-up` redirige a `/sign-in?registro=cerrado`) · [Matriz de roles](02-requisitos/matriz-roles-y-permisos.md) · `apps/web/src/routes/sign-up/+server.ts`, `apps/backend/src/collections/Users.ts` | **Implementado**, distinto del brief (sin registro abierto ni QR) |
-| 2 | Captura multiformato | Documentos (PDF, DOCX, XLSX, XLS, CSV, HTML, Markdown, texto), notas, audio y video; transcripción en español; micrófono en vivo | `/documentos` y el chat (`/`) · [Historias de usuario](02-requisitos/historias-de-usuario.md) · `apps/backend/src/collections/Documents.ts`, `Media.ts`, `apps/web/src/lib/components/MicButton.svelte` | **Implementado** en parte. Video: **Implementado** (se almacena y se transcribe su audio; la imagen del video no se procesa, `Media.ts`). Imagen: **Pendiente** |
+| 2 | Captura multiformato | Documentos (PDF, DOCX, XLSX, XLS, CSV, HTML, Markdown, texto), notas, audio y video; transcripción en español; micrófono en vivo | `/documentos` y el chat (`/`) · [Historias de usuario](02-requisitos/historias-de-usuario.md) · `apps/backend/src/collections/Documents.ts`, `Media.ts`, `apps/web/src/lib/components/MicButton.svelte` | **Implementado**. Video: **Implementado** (se almacena y se transcribe su audio; la imagen del video no se procesa, `Media.ts`). Imagen: **Pendiente** |
 | 3 | Resonancia individual | Pestaña **Resonancias** (entrevistadora) y modo «Hazme preguntas» en **Generales** | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/components/ChatWorkspace.svelte`, `apps/web/src/lib/sessionKind.ts` | **Implementado** |
-| 4 | Resonancia de corpus (Uso A) | Chat con citas [n] sobre el acervo, estilo de respuesta por ecosistema y «panorama del corpus»; sin salida dedicada a talleres | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/server/engine/prompt.ts` | **Implementado** en parte |
+| 4 | Resonancia de corpus (Uso A) | Chat con citas [n] sobre el acervo, estilo de respuesta por ecosistema y «panorama del corpus»; sin salida dedicada a talleres | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/server/engine/prompt.ts` | **Implementado** |
 | 5 | Mini-formulario de perfil | Enrutar a una sub-base por vínculo con el fenómeno | — | **Pendiente** |
-| 6 | Categorización por tipo y temática | `contentKind`, `tema`, `lengua` y temas extraídos al grafo; sin menú de temáticas por ecosistema | `/biblioteca` · [Modelo de datos](04-datos/modelo-de-datos.md) · `Documents.ts` | **Implementado** en parte |
+| 6 | Categorización por tipo y temática | `contentKind`, `tema`, `lengua` y temas extraídos al grafo; sin menú de temáticas por ecosistema | `/biblioteca` · [Modelo de datos](04-datos/modelo-de-datos.md) · `Documents.ts` | **Implementado** |
 | 7 | Comprobante ético (consentimiento, folio, PDF) | — | [Aviso y consentimiento](06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) |
 | 8 | Suscripción a notificaciones | — | — | **Pendiente** |
 | 9 | Panel del participante con historial | «Mis documentos», lista de conversaciones, vista de estudiante | `/documentos`, `/`, `/estudiante` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/estudiante/` | **Implementado** |
-| 10 | Vista administrativa | Resumen del ecosistema, aportes y documentos con filtros; sin distribución por perfil | `/admin` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/admin/` | **Implementado** en parte |
+| 10 | Vista administrativa | Resumen del ecosistema, aportes y documentos con filtros; sin distribución por perfil | `/admin` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/admin/` | **Implementado** |
 | 11 | Multi-ecosistema con roles | Cada ecosistema es una organización aislada, con su acervo en el servicio de IA y cinco roles | `/miembros`, `/ajustes` · [Actores y glosario](01-proyecto/actores-y-glosario.md) · `apps/backend/src/collections/Organizations.ts`, `Memberships.ts`, `apps/backend/src/lib/permissions.ts` | **Implementado** |
 | 12 | Figura del capturador | Subir a nombre de otra persona registrando de quién es la voz | — | **Pendiente** (en tensión con «Voces sin sujeto», [Visión y alcance](01-proyecto/vision-y-alcance.md) §7) |
 
@@ -51,12 +51,12 @@ Entregado sin que el brief lo pidiera ([Visión y alcance](01-proyecto/vision-y-
 | Paso (brief v1 §4) | Estado | Evidencia |
 |---|---|---|
 | 1. Acervo mínimo cargado | **Implementado** | Corpus sintético v1 (250 piezas) y v2 (dengue 70, discapacidad 40), y documentos reales en los ecosistemas 6, 7 y 8 (citado de [Corpus y datos de prueba](04-datos/corpus-y-datos-de-prueba.md)) |
-| 2. Instrucción al modelo para el Uso A | **Implementado** en parte | Prompts de Generales y Resonancias; sin instrucción dedicada a insumos de taller |
+| 2. Instrucción al modelo para el Uso A | **Implementado** | Prompts de Generales y Resonancias; sin instrucción dedicada a insumos de taller |
 | 3. Salida generada | **Implementado** como demostración | Videos V1, V2 y V3 del 2026-10-28 (ver §3) |
 | 4. Sesión de auditoría comunitaria | **Pendiente** | No consta ninguna sesión ([Visión y alcance](01-proyecto/vision-y-alcance.md) §6.2) |
 | 5. Veredicto comunitario documentado | **Pendiente** | Depende del paso 4 |
 
-Criterios de éxito: contribución de punta a punta **parcial** (sin comprobante), acervo por temática **parcial** (sin perfil), ciclo voz-resonancia-auditoría-veredicto **no cumplido** (citado de [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.3).
+Criterios de éxito: contribución de punta a punta **implementado** (sin comprobante), acervo por temática **implementado** (sin perfil), ciclo voz-resonancia-auditoría-veredicto **no cumplido** (citado de [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.3).
 
 ## 3. Evidencia
 
