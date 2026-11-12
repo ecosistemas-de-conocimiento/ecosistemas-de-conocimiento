@@ -3288,6 +3288,25 @@ export const Documents: CollectionConfig = {
       required: true,
       defaultValue: false,
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      /**
+       * 🔴 NEVER IN A PAYLOAD UPDATE. Payload 3.88 hands the adapter the whole
+       * merged row and `@payloadcms/drizzle` writes every column that is not
+       * `undefined`, so an unrelated edit would write back the value it read:
+       * a hold that committed in between would be lifted. The hold's only
+       * writer is raw SQL (`lib/consentHold.ts`). Dropped here, so the column
+       * is left out of the UPDATE; the validator below lets it be absent.
+       * `Documents.consentHeldStaleWrite.pg.test.ts`.
+       */
+      hooks: {
+        beforeChange: [
+          ({ operation, siblingData }) => {
+            if (operation === 'update') delete (siblingData as { consentHeld?: unknown }).consentHeld
+            return undefined
+          },
+        ],
+      },
+      validate: (value: unknown, { operation }: { operation?: string }) =>
+        (operation === 'update' && value === undefined) || typeof value === 'boolean' || 'Retenido: verdadero o falso.',
       admin: {
         readOnly: true,
         position: 'sidebar',
