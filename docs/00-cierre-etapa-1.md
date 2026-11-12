@@ -3,7 +3,7 @@
 - **Versión:** 1.0
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Código documentado:** código en `f971d54c` (2026-11-12), la Etapa 1 con correcciones; `main`, `etapa-2` y la etiqueta `etapa-1-con-correcciones` en `e491b5c9` (mismo código, solo agrega documentación)
+- **Código documentado:** código en `f971d54c` (2026-11-12), la Etapa 1 con correcciones; la etiqueta `etapa-1-con-correcciones` marca esta versión de los docs (mismo código, solo agrega documentación)
 - **Fuentes:** [Visión y alcance](01-proyecto/vision-y-alcance.md), [Roadmap](01-proyecto/roadmap.md), [Cronología e hitos](01-proyecto/cronologia-e-hitos.md), [Seguridad](06-privacidad-y-seguridad/seguridad.md), [Protección de datos](06-privacidad-y-seguridad/proteccion-de-datos.md), [Evaluaciones de IA](07-calidad/evaluaciones-de-ia.md), [Estrategia de pruebas](07-calidad/estrategia-de-pruebas.md); `git log` y el árbol de `apps/` en `f971d54c`, leídos el 2026-11-12
 
 Resumen para quien redacte el informe de la Etapa 1. Cada fila remite al documento o al código que la respalda.
@@ -123,9 +123,9 @@ No hay entorno de producción ni testimonio real de personas externas (citado de
 |---|---|---|
 | `etapa-1` | `52a4a1a1` | La Etapa 1 sin correcciones: todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después |
 | Código de la Etapa 1 con correcciones | `f971d54c` (2026-11-12) | La línea de corte del código |
-| `main` | `e491b5c9` (2026-11-12) | La Etapa 1 con correcciones: el código de `f971d54c` más commits que solo cambian `docs/` e `infra/fleet/` |
-| `etapa-1-con-correcciones` (etiqueta fija) | `e491b5c9` | Igual que `main` al 2026-11-12 |
-| `etapa-2` | `e491b5c9` al 2026-11-12 | Trabajo nuevo; hoy es igual a `main` |
+| `main` | código en `f971d54c` | La Etapa 1 con correcciones: el código de `f971d54c` más commits que solo cambian `docs/` e `infra/fleet/` |
+| `etapa-1-con-correcciones` (etiqueta fija) | esta versión de los docs | `main` al entregar los docs, 2026-11-12 |
+| `etapa-2` | igual a `main` al 2026-11-12 | Trabajo nuevo |
 | Desplegado en dev | `f971d54c` (2026-11-12) | Antes: `6c0f65ad`, y antes `a6026876`, `c4f53632` y `367c2698`. Staging sigue en su imagen del 2026-10-17 |
 
 Lo encontrado después de `f971d54c` va a la Etapa 2.

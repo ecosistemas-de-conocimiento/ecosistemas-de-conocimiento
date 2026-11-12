@@ -11,7 +11,7 @@ Este documento es para quien planee y ejecute las etapas siguientes del proyecto
 
 Lo construido en la Etapa 1 está en [Visión y alcance](vision-y-alcance.md) §6 y en [Historias de usuario](../02-requisitos/historias-de-usuario.md). La secuencia de hechos está en [Cronología e hitos](cronologia-e-hitos.md).
 
-Ramas: `etapa-1` (52a4a1a1) es la Etapa 1 sin correcciones; `main` es la Etapa 1 con correcciones: código en f971d54c, la línea de corte; `main`, `etapa-2` y la etiqueta `etapa-1-con-correcciones` en e491b5c9 (2026-11-12, mismo código, solo agrega documentación); la rama `etapa-2` lleva la funcionalidad nueva. Lo que quedó abierto al cierre está en [Lo que quedó abierto al cierre de la Etapa 1](#lo-que-quedó-abierto-al-cierre-de-la-etapa-1). Lo que la revisión del 2026-11-10 clasificó como funcionalidad nueva está en la sección [Etapa 2](#etapa-2), al final.
+Ramas: `etapa-1` (52a4a1a1) es la Etapa 1 sin correcciones; `main` es la Etapa 1 con correcciones: código en f971d54c, la línea de corte; la etiqueta `etapa-1-con-correcciones` marca la versión entregada de los docs (2026-11-12, mismo código, solo agrega documentación); la rama `etapa-2` lleva la funcionalidad nueva. Lo que quedó abierto al cierre está en [Lo que quedó abierto al cierre de la Etapa 1](#lo-que-quedó-abierto-al-cierre-de-la-etapa-1). Lo que la revisión del 2026-11-10 clasificó como funcionalidad nueva está en la sección [Etapa 2](#etapa-2), al final.
 
 ## 1. Punto de partida
 

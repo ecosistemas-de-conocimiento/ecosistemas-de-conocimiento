@@ -43,7 +43,7 @@ Cuando el código deja de cumplir lo que un ADR describe, el ADR no se reescribe
 
 ## Índice
 
-Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplegado en dev significa en `f971d54c`, lo que corre en dev desde el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz). Código en `f971d54c`; `main` está en `e491b5c9` (2026-11-12), mismo código más documentación.
+Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplegado en dev significa en `f971d54c`, lo que corre en dev desde el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz). Código en `f971d54c`; los commits posteriores de `main` solo agregan documentación.
 
 | ADR | Decisión | Estado | Fecha |
 |---|---|---|---|
