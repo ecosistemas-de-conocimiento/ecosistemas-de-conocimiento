@@ -218,6 +218,35 @@ const PLACE_WORDS: ReadonlySet<string> = new Set([
   'escuela', 'esc', 'primaria', 'prim', 'secundaria', 'sec', 'colegio', 'instituto', 'hospital', 'mercado',
   'plaza', 'jardin', 'parque', 'puente', 'estacion', 'metro', 'estadio', 'teatro',
 ])
+/**
+ * Words that make what follows a NUMBERED REFERENCE, not a date (folded, no
+ * dot): "art. 3-IV-2020", "capítulo 3-V-12", "grupo 3-sep-12". Read only by the
+ * ola 11 forms (Roman month, month glued by a separator, abbreviated month);
+ * those are the ones a reference number looks like. ⚠ Never "no" or "ver":
+ * "el 3-V-1990, no 3-VI-1990" is two dates.
+ */
+const REFERENCE_WORDS: ReadonlySet<string> = new Set([
+  'art', 'arts', 'articulo', 'articulos', 'cap', 'caps', 'capitulo', 'capitulos', 'grupo', 'grupos',
+  'seccion', 'secc', 'fraccion', 'fracc', 'fr', 'inciso', 'numeral', 'num', 'tomo', 'vol', 'volumen',
+  'libro', 'titulo', 'parrafo', 'apartado', 'anexo', 'tabla', 'figura', 'fig', 'cuadro', 'expediente',
+  'exp', 'folio', 'oficio', 'salon', 'aula',
+])
+/** The word right before `at` is a {@link REFERENCE_WORDS} one. */
+const afterReferenceWord = (whole: string, at: number): boolean => {
+  const before = WORD_BEFORE.exec(whole.slice(Math.max(0, at - 40), at))?.[1]
+  return before !== undefined && REFERENCE_WORDS.has(fold(before.replace(/\.$/u, '')))
+}
+/**
+ * Count nouns after a bare "mayo 15 2000": an amount, not a year ("en mayo 15
+ * 2000 personas"). Folded. A list, not "any word", on purpose: an unknown word
+ * after the year still reads as a date (fail closed).
+ */
+const COUNT_NOUNS: ReadonlySet<string> = new Set([
+  'personas', 'gente', 'habitantes', 'alumnos', 'alumnas', 'estudiantes', 'ninos', 'ninas', 'jovenes',
+  'mujeres', 'hombres', 'familias', 'trabajadores', 'trabajadoras', 'asistentes', 'participantes',
+  'vecinos', 'vecinas', 'votos', 'firmas', 'casos', 'muertos', 'heridos', 'pesos', 'dolares', 'ejemplares',
+  'copias', 'metros', 'kilometros', 'km', 'hectareas', 'toneladas', 'litros', 'kilos', 'veces',
+])
 /** `de|del` + a 2- or 4-digit year right after the month: a date, never a street name. */
 const YEAR_AFTER_MONTH = new RegExp(
   String.raw`^(?:${MONTHS.join('|')})\s+de[l]?\s+(?:\d{2}|\d{4})(?!\d)`,
@@ -731,7 +760,7 @@ export function structuralPass(
   })
 
   out = out.replace(ROMAN_DATE, (m: string, day: string, sep: string, month: string, year: string, at: number, whole: string) => {
-    if (!validDayMonth(day, '1')) return m
+    if (!validDayMonth(day, '1') || afterReferenceWord(whole, at)) return m
     dates += 1
     if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
     return `${month}${sep}${year}`
@@ -741,7 +770,7 @@ export function structuralPass(
     SEP_MONTH_DATE,
     (m: string, day: string, sep: string, month: string, year: string | undefined, at: number, whole: string) => {
       const abbreviation = !MONTHS.includes(month.toLowerCase() as (typeof MONTHS)[number])
-      if (!validDayMonth(day, '1') || (abbreviation && year === undefined)) return m
+      if (!validDayMonth(day, '1') || (abbreviation && year === undefined) || afterReferenceWord(whole, at)) return m
       dates += 1
       if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
       return year === undefined ? month : `${month}${sep}${year}`
@@ -777,14 +806,17 @@ export function structuralPass(
     return ''
   })
 
-  out = out.replace(DAY_ABBREVIATION, (m: string, day: string) => {
-    if (!validDayMonth(day, '1')) return m
+  out = out.replace(DAY_ABBREVIATION, (m: string, day: string, at: number, whole: string) => {
+    if (!validDayMonth(day, '1') || afterReferenceWord(whole, at)) return m
     dates += 1
     return ''
   })
 
-  out = out.replace(MONTH_DAY_YEAR, (m: string, month: string, day: string, space: string) => {
+  out = out.replace(MONTH_DAY_YEAR, (m: string, month: string, day: string, space: string, at: number, whole: string) => {
     if (!validDayMonth(day, '1')) return m
+    // "en mayo 15 2000 personas": no comma, no "de", and an amount noun after.
+    const next = /^\d{4}\s+([\p{L}\p{M}]+)/u.exec(whole.slice(at + m.length))?.[1]
+    if (!m.includes(',') && next !== undefined && COUNT_NOUNS.has(fold(next))) return m
     dates += 1
     return `${month}${space}`
   })
