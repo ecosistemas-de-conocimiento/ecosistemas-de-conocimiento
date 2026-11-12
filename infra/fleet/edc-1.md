@@ -3023,6 +3023,54 @@ and `20261112T1523Z`, `sha256sum -c` OK on both sides after; staging's 7 unchang
 
 ---
 
+### 4zzzzzzzzzzz. Done 2026-11-12 19:34-19:50 UTC: dev only - no migration; stale whole-row writes never put back a documents field
+
+Measured by the deploy agent from the owner's laptop and on edc-1. Staging not touched (no read either). Range
+`6c0f65ad` (§4zzzzzzzzzz) -> `f971d54c`, 8 commits: a stale whole-row write never puts back any `documents`
+field (gate verdicts, keep switches, titles, ingest ids, `ingestStatus`), a text edit's status reset is deferred to
+the guarded write, and docs. No file under `apps/backend/src/migrations` and no `infra/docker-compose.yml` change in
+the range, so no variable check (§4 footgun 1).
+
+Pre-check: `docker ps` web, backend and ai-service on `6c0f65ad`; `GET /api/v1/deployments` empty (before the backup
+and again right before the deploy); GitHub `main` = `f971d54c` (`git ls-remote`); 0 active queries on
+`edc_backend`; `payload_migrations` 25, last batch 17; 15 users, 1106 documents; 184 rows with `consent_held`.
+
+Backup `/root/backups/20261112T1934Z/` under `umask 077`: `edc_ai` 313 MB, `edc_backend` 19 MB, plus `documents`,
+`organizations`, `platform_settings` and `anonymisation_setting_changes` alone, 17 MB; `pg_restore -l` 152 / 507 / 75
+lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's `cide/backups/edc-1/20261112T1934Z/`
+under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
+
+| deploy | uuid | queued -> finished (UTC) |
+|---|---|---|
+| first | `x3o9j5ymeozbz8hrlvvcmrz1` | 19:36:15 -> 19:42:24 |
+
+**No migration** at start, 19:42:28: "Reading migration files", `Done.`, "Ready in 808ms". `payload_migrations` 25,
+last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `f971d54c`, 7 with a healthcheck all
+healthy; 0 `error`/`fatal` lines in all 9 from 19:42:00 to 19:46:05.
+
+**Smoke**
+
+| check | result |
+|---|---|
+| health | `dev.` and `api.dev.` `/api/health` 200 (after the deploy and again after cleanup); ai-service `/health` 200 inside its container |
+| login, estudiante1, web `POST /api/auth/login` with `Origin` | 200 |
+| chat, estudiante1, org 8, "¿Qué es un signo según Peirce?" (`POST /api/generate`) | 200 in 13.9 s; 934 characters, 2 `[n]` markers, 4 `provenance.chunks`; session 357 deleted (200) |
+| document write, estudiante1, `PATCH /api/documents/<id>` `{name}`: rename, then back to the stored name | doc 823 (draft, gate `n/a`): 200 and 200. Doc 995 (published, gate `ready`, graph `ready`): 200 and 200. On both, `psql` before / between / after (20 s later for 995): only the name hash changed in between and it is back after; `anonymisation_status`, `publication_status`, `ingest_status`, `graph_status`, `consent_held`, body, redacted and held text hashes, `held_text_hash`, `ingest_id` and `publish_ingest_id` unchanged |
+
+Spend: `usage_logs` since 19:34 UTC, all from this run: 2 `edc-eco-8` `router.route` `deepseek/deepseek-chat-v3.1`
+rows, $0.002382. The renames made no model call.
+
+**Cleanup** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): `docker rmi` of dev's
+`a6026876` images (backend, ai-service, web); the `6c0f65ad` images stay for rollback. `docker builder prune -af`
+(14.97 GB). **Disk**, `df -h /` free: 51 GB before, 36 GB after the build, 51 GB after the cleanup.
+
+**Retention** (§7 step 7), dev only: with the new stamp dev held 8; `20261029T0439Z` deleted in `/root/backups/` and
+in the laptop copy, 331.1 MB freed on each side (`du -sb`). Dev keeps `20261029T0643Z`, `20261110T0538Z`,
+`20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z` and `20261112T1934Z`, `sha256sum -c` OK on
+both sides after; staging's 7 unchanged.
+
+---
+
 ## 5. Where secrets live (names only)
 
 | store | holds |
