@@ -1,6 +1,6 @@
-# Rama `hasta-2026-10-28`
+# Rama `etapa-1`
 
-Esta rama reúne el trabajo hecho hasta el 28 de octubre de 2026.
+Esta rama es la Etapa 1 sin correcciones: reúne el trabajo hecho hasta el 28 de octubre de 2026.
 
 Su base es `727bb808`, el último commit integrado el 28 de octubre. Sobre ella se agregaron los
 commits escritos el 28 o antes que se integraron después:
