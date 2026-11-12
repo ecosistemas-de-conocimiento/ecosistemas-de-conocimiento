@@ -3083,6 +3083,12 @@ Result: 375 held (draft, ingest failed = not ingested, waits in Revisión); 377 
 both graph pending. Neither republished. Spend: detector on the Spark (no usage_logs row); 1 edc-eco-6 bge-m3 row,
 $0.000007. 0 error/fatal lines 20:29-20:32 in backend, ai-service, web, postgres, redis, rustfs.
 
+### 4zzzzzzzzzzzzz. Done 2026-11-12 20:44 UTC: dev only - doc 377 republished
+
+Measured by an agent on edc-1, dev only, owner-authorised. Doc 377 (org 6, uploader user 1) had `anonymise` on and gate `ready` but was left `draft` by the re-gate script. As the seed admin (= user 1; credentials read from the backend container's env by node, never printed): `POST /api/users/login` 200, `POST /api/documents/377/publish` 202 at 20:44:01.
+`psql` 20:44:14: `publication_status` published, `publication_error` empty, `ingest_status` ready, `publish_ingest_id` NULL; `edc_ai` holds the row in corpus `eco-6` (1 chunk, open validity), and the `eco-6-draft-1` copy has `valid_to` 20:44:08. `graph_status` still `pending` (not followed).
+Doc 375 not touched (still `held`/`draft`, waiting for Revisión). 0 `error`/`fatal` lines in the 9 dev containers from 20:43:30, apart from the agent's own mistyped read-only `psql` query on postgres.
+
 ---
 
 ## 5. Where secrets live (names only)
