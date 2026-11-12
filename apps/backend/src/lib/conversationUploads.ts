@@ -703,6 +703,13 @@ async function freshTxStatus(payload: Payload, xid: string): Promise<string | nu
 /**
  * Poll `txid_status(xid)` until the transaction ends or the budget runs out.
  * Exported for `lib/conversationTurnErasure.ts`, which waits the same way.
+ *
+ * ⚠ A STATUS READ THAT THROWS IS "UNKNOWN", NOT A FAILURE. On a saturated pool
+ * the fresh connection waits out `DB_POOL_CONNECTION_TIMEOUT_MS` (10 s,
+ * `lib/dbPool.ts`) and throws; the delete it follows has already answered.
+ * So keep polling, and stop on the clock as well as the count: ten timed-out
+ * reads would otherwise stretch the 60 s budget past ten minutes. Running out
+ * is `gave-up`, which the caller logs and leaves alone.
  */
 export async function waitForOutcome(
   xid: string,
@@ -711,9 +718,20 @@ export async function waitForOutcome(
   const status = deps.txStatus ?? ((x: string) => freshTxStatus(deps.payload, x))
   const attempts = deps.attempts ?? 240
   const intervalMs = deps.intervalMs ?? 250
-  for (let i = 0; i < attempts; i += 1) {
+  const deadline = Date.now() + attempts * intervalMs
+  let warned = false
+  for (let i = 0; i < attempts && Date.now() < deadline; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs))
-    const s = await status(xid)
+    let s: string | null
+    try {
+      s = await status(xid)
+    } catch (err) {
+      if (!warned) {
+        warned = true
+        deps.payload?.logger?.warn({ xid, err: errSummary(err) }, '[uploads] txid_status unavailable; still waiting')
+      }
+      continue
+    }
     if (s === 'committed') return 'committed'
     if (s === 'aborted') return 'aborted'
     // 'in progress', or null (xid too old to know) → keep waiting, then give up.

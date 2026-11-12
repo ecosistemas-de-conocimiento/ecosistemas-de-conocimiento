@@ -112,6 +112,7 @@ export const AnonymisationReviews: CollectionConfig = {
         req.payload,
         user.id,
         PERMISSIONS.holdsReview,
+        req,
       )
       if (ids.length === 0) return false
       return { organization: { in: ids } }

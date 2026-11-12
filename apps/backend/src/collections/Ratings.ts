@@ -4,6 +4,7 @@ import type {
   Endpoint,
   FieldAccess,
   Payload,
+  PayloadRequest,
 } from 'payload'
 import { ValidationError } from 'payload'
 
@@ -218,11 +219,13 @@ export async function resolveRateableTarget(args: {
   declaredOrganization?: unknown
   /** Organization ids the caller is an active member of. */
   memberOrganizationIds: Array<number | string>
+  /** From a hook: the write's own transaction (see `findAll` in `lib/permissions.ts`). */
+  req?: PayloadRequest
 }): Promise<RateableTarget> {
-  const { payload, messageId, userId, declaredOrganization, memberOrganizationIds } = args
+  const { payload, messageId, userId, declaredOrganization, memberOrganizationIds, req } = args
 
   const message = (await payload
-    .findByID({ collection: 'messages', id: messageId, depth: 0, overrideAccess: true })
+    .findByID({ collection: 'messages', id: messageId, depth: 0, overrideAccess: true, disableErrors: true, req })
     .catch(() => null)) as unknown as MessageShape | null
 
   if (!message) {
@@ -244,7 +247,7 @@ export async function resolveRateableTarget(args: {
   }
 
   const session = (await payload
-    .findByID({ collection: 'sessions', id: sessionId, depth: 0, overrideAccess: true })
+    .findByID({ collection: 'sessions', id: sessionId, depth: 0, overrideAccess: true, disableErrors: true, req })
     .catch(() => null)) as unknown as SessionShape | null
 
   if (!session) {
@@ -346,7 +349,8 @@ const stampAndValidate: CollectionBeforeValidateHook = async ({
       messageId,
       userId: user.id,
       declaredOrganization: merged.organization,
-      memberOrganizationIds: await organizationIdsForUser(req.payload, user.id),
+      memberOrganizationIds: await organizationIdsForUser(req.payload, user.id, req),
+      req,
     })
     next.message = target.messageId
     next.session = target.sessionId
@@ -436,6 +440,7 @@ export const canReadRatingComment: FieldAccess = async ({ req, doc, data, siblin
         req.payload,
         user.id,
         PERMISSIONS.ratingsReadComments,
+        req,
       )
     ).map(String)
     cache.__ratingCommentOrgs[cacheKey] = allowed
@@ -642,7 +647,8 @@ function ratingUpsertEndpoint(): Endpoint {
           messageId,
           userId: user.id,
           declaredOrganization: body.organization,
-          memberOrganizationIds: await organizationIdsForUser(req.payload, user.id),
+          memberOrganizationIds: await organizationIdsForUser(req.payload, user.id, req),
+          req,
         })
       } catch (err) {
         if (err instanceof NotRateableError) return fail(403, err.message)

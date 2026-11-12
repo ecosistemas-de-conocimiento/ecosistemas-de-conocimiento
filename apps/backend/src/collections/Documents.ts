@@ -132,7 +132,7 @@ export const visibleToCaller: Access = async ({ req }) => {
   if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
 
-  const organizationIds = await organizationIdsForUser(req.payload, user.id)
+  const organizationIds = await organizationIdsForUser(req.payload, user.id, req)
 
   const mine: Where = { uploadedBy: { equals: user.id } }
   // ⚠ No memberships ⇒ only your own documents. NOT an empty `in: []`, which
@@ -775,7 +775,7 @@ const uploaderMayDelete: Access = async ({ req }) => {
   if (isPlatformAdminUser(user)) return true
   const own: Where = { uploadedBy: { equals: user.id } }
   const draft: Where = { publicationStatus: { equals: 'draft' } }
-  const seats = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.documentsWrite)
+  const seats = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.documentsWrite, req)
   if (seats.length === 0) return { and: [own, draft] }
   return { and: [own, { or: [draft, { organization: { in: seats } }] }] }
 }
@@ -797,7 +797,7 @@ const uploaderWithWriteSeat: Access = async ({ req }) => {
   const { user } = req
   if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
-  const seats = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.documentsWrite)
+  const seats = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.documentsWrite, req)
   if (seats.length === 0) return false
   const own: Where = { uploadedBy: { equals: user.id } }
   const seated: Where = { organization: { in: seats } }
@@ -913,6 +913,7 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
           req.payload,
           sessionId,
           user.id,
+          req,
         ))
       } catch (err) {
         if (err instanceof SessionNotOwnedError) throw sessionError(err.message)
@@ -987,7 +988,7 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
   } else if (operation === 'create') {
     // No session — an upload straight into the ecosistema, with no conversation
     // attached (Mis documentos).
-    const organizationIds = await organizationIdsForUser(req.payload, user.id)
+    const organizationIds = await organizationIdsForUser(req.payload, user.id, req)
     // 🔴 A NAMED ECOSISTEMA IS A REQUEST, CHECKED AGAINST MEMBERSHIP. The web
     // app sends the one selected in its switcher, so a person in several
     // ecosistemas can upload without a conversation. A tenant the caller is
@@ -1438,7 +1439,7 @@ async function enforceVocesUploadRights(args: {
   if (declared === 'documento' && !next.anonymise && next.kind !== 'audio') {
     const organizationId = relationId(next.organization)
     const role =
-      organizationId === null ? null : await roleInOrganization(req.payload, user.id, organizationId)
+      organizationId === null ? null : await roleInOrganization(req.payload, user.id, organizationId, req)
     if (anonymiseParticipantUpload({ role, platformAdmin: isPlatformAdminUser(user) })) next.anonymise = true
   }
 
@@ -1451,7 +1452,7 @@ async function enforceVocesUploadRights(args: {
   if (declared === 'documento' && next.kind === 'audio') {
     const organizationId = relationId(next.organization)
     const role =
-      organizationId === null ? null : await roleInOrganization(req.payload, user.id, organizationId)
+      organizationId === null ? null : await roleInOrganization(req.payload, user.id, organizationId, req)
     if (fileParticipantAudioAsTestimonio({ declared, kind: next.kind, role, platformAdmin: isPlatformAdminUser(user) })) {
       next.contentKind = 'testimonio'
       return
@@ -1477,6 +1478,7 @@ async function enforceVocesUploadRights(args: {
     req.payload,
     user.id,
     PERMISSIONS.vocesUpload,
+    req,
   )
   if (!allowed.some((id) => String(id) === String(organizationId))) {
     refuse(
@@ -1745,7 +1747,7 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
 
   if (!isIngestable(row)) return doc
   // 🔴 Retenido por consentimiento, a revision's original's too: `runExtractAndIngest` checks the fresh row again.
-  if (await isConsentHeldNow(req.payload, row)) return doc
+  if (await isConsentHeldNow(req.payload, row, req)) return doc
 
   // Run async to avoid blocking the Payload response, AND defer one tick
   // so the create transaction is fully committed before we re-read the row
@@ -4218,7 +4220,7 @@ async function hasWriteSeatInDocumentEcosystem(
   if (isPlatformAdminUser(req.user)) return true
   const organizationId = relationId(doc.organization)
   if (!req.user || organizationId == null) return false
-  const allowed = await organizationIdsForUserWithPermission(req.payload, req.user.id, PERMISSIONS.documentsWrite)
+  const allowed = await organizationIdsForUserWithPermission(req.payload, req.user.id, PERMISSIONS.documentsWrite, req)
   return allowed.some((id) => String(id) === String(organizationId))
 }
 
@@ -4289,7 +4291,7 @@ function documentActionEndpoint(
       // 🔴 "Publicar cambios": a student's PUBLISHED note whose body changed
       // (owner ruling 2026-10-28). Handled below, once the client is built.
       const noteChanges =
-        action === 'publish' && state === 'published' && (await isStudentNote(req.payload, doc as never))
+        action === 'publish' && state === 'published' && (await isStudentNote(req.payload, doc as never, req))
       if (action === 'publish' && state === 'published' && !noteChanges) {
         return json({ ok: true, publicationStatus: 'published', alreadyDone: true }, 200)
       }
@@ -4330,7 +4332,7 @@ function documentActionEndpoint(
        * `autoPublishMembers`. `beginPublish` here would share text no gate saw.
        * `lib/studentNotes.ts`.
        */
-      if (noteChanges || (action === 'publish' && state === 'draft' && (await isStudentNote(req.payload, doc as never)))) {
+      if (noteChanges || (action === 'publish' && state === 'draft' && (await isStudentNote(req.payload, doc as never, req)))) {
         try {
           const out = await (noteChanges ? publishStudentNoteChanges : publishStudentNote)({
             payload: req.payload,
@@ -4397,8 +4399,10 @@ async function deleteOwnReviewRowsHook({ id, req }: Parameters<CollectionBeforeD
 
 /**
  * A note's pending "Publicar cambios" revision goes with it. ⚠ BEFORE the
- * delete: the FK is `set null`, so afterwards the revision could no longer be
- * found and would surface as a stray draft. Its own delete hooks retire its
+ * delete: the FK is `ON DELETE cascade`
+ * (`migrations/20261028_231948_documents_note_revisions.ts:41`), so afterwards
+ * Postgres would already have removed the revision without running its hooks.
+ * Deleting it here runs them, and its own delete hooks retire its
  * draft-corpus copy.
  */
 async function deleteRevisionsHook({ id, req }: Parameters<CollectionBeforeDeleteHook>[0]): Promise<void> {

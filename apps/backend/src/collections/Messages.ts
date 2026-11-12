@@ -164,7 +164,7 @@ export const protectMessageCorpusState: CollectionBeforeValidateHook = async ({
 
   let evalRun: number | null
   try {
-    ;({ evalRun } = await assertSessionOwnedBy(req.payload, sessionId, user.id))
+    ;({ evalRun } = await assertSessionOwnedBy(req.payload, sessionId, user.id, req))
   } catch (err) {
     if (err instanceof SessionNotOwnedError) {
       // Same message for "not yours" and "does not exist" — see `lib/corpus.ts`.
@@ -180,7 +180,7 @@ export const protectMessageCorpusState: CollectionBeforeValidateHook = async ({
   // a platform admin cannot keep chatting in it (`endpoints/evals.ts`).
   if (evalRun !== null) {
     const run = (await req.payload
-      .findByID({ collection: 'eval-runs', id: evalRun, depth: 0, overrideAccess: true })
+      .findByID({ collection: 'eval-runs', id: evalRun, depth: 0, overrideAccess: true, disableErrors: true, req })
       .catch(() => null)) as { status?: unknown } | null
     if (run?.status !== 'running') {
       throw new APIError('Esta conversación es de una evaluación que ya no está en curso.', 403, undefined, true)

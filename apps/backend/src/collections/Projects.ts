@@ -14,9 +14,9 @@ export const refuseForeignProjectTeam = makeRefuseForeignOrganization(undefined,
   collection: 'projects',
   field: 'team',
   message: 'You can only put a project under a team of an ecosistema you administer.',
-  organizationOf: async (payload, team) => {
+  organizationOf: async (payload, team, req) => {
     const row = (await payload
-      .findByID({ collection: 'teams', id: team as never, depth: 0, overrideAccess: true })
+      .findByID({ collection: 'teams', id: team as never, depth: 0, overrideAccess: true, disableErrors: true, req })
       .catch(() => null)) as { organization?: unknown } | null
     return relationId(row?.organization)
   },

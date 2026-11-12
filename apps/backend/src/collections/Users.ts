@@ -74,7 +74,7 @@ export const attachMemberships: CollectionAfterMeHook = async ({ req, response }
   const body = response as { user?: { id?: number | string } | null } | null | undefined
   const user = body?.user
   if (!body || !user || user.id === undefined || user.id === null) return response
-  const memberships = await sessionMemberships(req.payload, user.id).catch(() => [])
+  const memberships = await sessionMemberships(req.payload, user.id, req).catch(() => [])
   return { ...body, user: { ...user, memberships } } as typeof response
 }
 

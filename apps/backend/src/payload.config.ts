@@ -24,6 +24,7 @@ import { StudentProfiles } from './collections/StudentProfiles'
 import { Suggestions } from './collections/Suggestions'
 import { EvalItems } from './collections/EvalItems'
 import { EvalRuns } from './collections/EvalRuns'
+import { withLockCheckOnReq } from './collections/hooks/lockCheckOnReq'
 import { withoutDuplicate } from './collections/hooks/refuseDuplicate'
 import { lockDownPayloadInternals } from './access/payloadInternals'
 import { applyRelationFilters } from './access/relationFilters'
@@ -208,7 +209,10 @@ export default buildConfig({
     EvalRuns,
     // Plumbing
     AiServiceCallbacks,
-  ].map(withoutDuplicate),
+  ]
+    .map(withoutDuplicate)
+    // 🔴 Payload's REST lock check reads without `req` (`hooks/lockCheckOnReq.ts`).
+    .map(withLockCheckOnReq),
   /**
    * The identity surface. Payload prefixes custom endpoints with `routes.api`,
    * so these answer at `/api/v1/identity/*`.

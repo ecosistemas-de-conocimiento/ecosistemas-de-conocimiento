@@ -34,7 +34,7 @@ export const manageableOrganizations: Access = async ({ req }) => {
   if (isPlatformAdminUser(req.user)) return true
   const id = principalId(req)
   if (id === null || !isActiveUser(req.user)) return false
-  const ids = await organizationIdsForUserWithPermission(req.payload, id, PERMISSIONS.organizationManage)
+  const ids = await organizationIdsForUserWithPermission(req.payload, id, PERMISSIONS.organizationManage, req)
   return ids.length === 0 ? false : { id: { in: ids } }
 }
 
@@ -51,7 +51,7 @@ export const ownerOnlyField: FieldAccess = async ({ req, id }) => {
   if (isPlatformAdminUser(req.user)) return true
   const userId = (req.user as { id?: number | string } | null | undefined)?.id
   if (userId === undefined || userId === null || id === undefined || id === null) return false
-  return (await roleInOrganization(req.payload, userId, id)) === 'owner'
+  return (await roleInOrganization(req.payload, userId, id, req)) === 'owner'
 }
 
 /**

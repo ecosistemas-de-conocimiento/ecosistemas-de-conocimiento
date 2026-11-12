@@ -32,7 +32,7 @@
 // in front of every module that imports it (measured 2026-11-10: six suites
 // that import `collections/Documents.ts` went past vitest's 5 s budget).
 import type { sql } from '@payloadcms/db-postgres'
-import type { Where } from 'payload'
+import type { PayloadRequest, Where } from 'payload'
 
 type Id = number | string
 type Sql = ReturnType<typeof sql>
@@ -75,12 +75,21 @@ export function isConsentHeld(row: ConsentRow | null | undefined): boolean {
  * {@link isConsentHeld}, with a revision's original read now when the row
  * carries only its id. An original that cannot be read holds the revision
  * (fail closed), and so does a handle with no `db.drizzle` (a unit-test fake).
+ *
+ * ⚠ FROM A HOOK, PASS `req`: the read runs on the write's own connection.
+ * `db.drizzle` is a second pool checkout while the write holds the first
+ * (see `findAll` in `lib/permissions.ts`).
  */
-export async function isConsentHeldNow(payload: unknown, row: ConsentRow | null | undefined): Promise<boolean> {
+export async function isConsentHeldNow(
+  payload: unknown,
+  row: ConsentRow | null | undefined,
+  req?: PayloadRequest,
+): Promise<boolean> {
   const original = row?.revisionOf
   if (row?.consentHeld === true || (typeof original !== 'number' && typeof original !== 'string')) return isConsentHeld(row)
   if (typeof row?.revisionOfConsentHeld === 'boolean') return isConsentHeld(row)
-  const db = drizzleOf(payload)
+  const tx = req?.transactionID ? await (await import('./conversationUploads')).transactionHandle(req) : null
+  const db = tx ?? drizzleOf(payload)
   if (!db) return true
   const sql = await drizzleSql()
   const rows = rowsOf(await db.execute(sql`SELECT consent_held FROM documents WHERE id = ${asId(original)}`))

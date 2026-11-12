@@ -26,7 +26,7 @@ export const refuseDisabledAudioUpload: CollectionBeforeValidateHook = async ({ 
   const before = (originalDoc ?? {}) as Record<string, unknown>
   if (operation === 'update' && before.kind === 'audio') return data
   const organizationId = relationId(next.organization ?? before.organization)
-  if (!(await featureEnabled(req.payload, organizationId, 'audioUpload'))) {
+  if (!(await featureEnabled(req.payload, organizationId, 'audioUpload', req))) {
     throw new APIError(AUDIO_UPLOAD_OFF, 403, undefined, true)
   }
   return data

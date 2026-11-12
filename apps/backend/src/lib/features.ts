@@ -37,7 +37,7 @@
  *                      citations (`anonymise/citedAuthorRestore.ts`). Default OFF.
  */
 
-import type { Payload } from 'payload'
+import type { Payload, PayloadRequest } from 'payload'
 
 export const FEATURE_DEFAULTS = {
   audioUpload: true,
@@ -147,11 +147,17 @@ type FeaturesPayload = Pick<Payload, 'findByID'>
  * One ecosistema's features. A failed read returns the DEFAULTS (today's
  * behaviour), never "all off": a database blip must not switch features off
  * across an ecosistema. ⚠ `studentView` therefore fails to `false`.
+ *
+ * ⚠ PASS `req` FROM A HOOK: the read rides the write's transaction instead of
+ * asking the pool for a second connection (see `findAll` in `lib/permissions.ts`).
+ * `disableErrors`: a missing row answers null, not a throw that rolls the
+ * write's transaction back.
  */
 export async function featuresFor(
   payload: FeaturesPayload,
   organizationId: number | string,
   now: () => number = Date.now,
+  req?: PayloadRequest,
 ): Promise<Features> {
   const key = String(organizationId)
   const hit = cache.get(key)
@@ -163,6 +169,8 @@ export async function featuresFor(
       depth: 0,
       overrideAccess: true,
       select: { features: true } as never,
+      disableErrors: true,
+      req,
     })) as { features?: unknown } | null
     const features = resolveFeatures(row?.features)
     cache.set(key, { at: now(), features })
@@ -176,9 +184,10 @@ export async function featureEnabled(
   payload: FeaturesPayload,
   organizationId: number | string | null | undefined,
   key: FeatureKey,
+  req?: PayloadRequest,
 ): Promise<boolean> {
   if (organizationId === null || organizationId === undefined || organizationId === '') {
     return FEATURE_DEFAULTS[key]
   }
-  return (await featuresFor(payload, organizationId))[key]
+  return (await featuresFor(payload, organizationId, Date.now, req))[key]
 }

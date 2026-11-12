@@ -91,7 +91,7 @@ export const mediaVisibleToCaller: Access = async ({ req }) => {
   // person who uploaded it — see the orphan note on `bindMediaToEcosystem`.
   const mine: Where = { uploadedBy: { equals: user.id } }
 
-  const organizationIds = await organizationIdsForUser(req.payload, user.id)
+  const organizationIds = await organizationIdsForUser(req.payload, user.id, req)
   // ⚠ No memberships ⇒ only your own files. NOT an empty `in: []`, which an ORM
   // may optimise away into "no constraint" — and the failure mode there is every
   // ecosistema's files returned to someone in none.
@@ -122,6 +122,7 @@ export const mediaVisibleToCaller: Access = async ({ req }) => {
     depth: 0,
     pagination: false,
     overrideAccess: true,
+    req,
   })
 
   // uploader id → the media ids they published in one of my ecosistemas.
@@ -428,7 +429,7 @@ export const bindMediaToEcosystem: CollectionBeforeValidateHook = async ({
 
   next.uploadedBy = user.id
 
-  const organizationIds = await organizationIdsForUser(req.payload, user.id)
+  const organizationIds = await organizationIdsForUser(req.payload, user.id, req)
   if (organizationIds.length === 1) {
     next.organization = organizationIds[0]
   } else {
