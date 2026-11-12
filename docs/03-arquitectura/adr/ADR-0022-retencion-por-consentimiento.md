@@ -1,9 +1,9 @@
 # ADR-0022. Retenido por consentimiento: una marca por documento que detiene todo procesamiento
 
 - **Versión:** 1.0
-- **Fecha del documento:** 2026-11-10
+- **Fecha del documento:** 2026-11-11
 - **Estado del documento:** propuesto
-- **Estado de la decisión:** aceptada; implementada en `main` (b7dc944f), pendiente de desplegar en dev (dev corre 367c2698, citado de `infra/fleet/edc-1.md`). La migración `20261110_181621_consent_held_reviews_keep` no está aplicada en dev
+- **Estado de la decisión:** aceptada; implementada y desplegada en dev (`c4f53632`, 2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11), con la migración `20261110_181621_consent_held_reviews_keep`
 - **Fecha de la decisión:** 2026-11-10
 - **Quién decidió:** responsable de desarrollo (decisión del 2026-11-10)
 - **Relación con [ADR-0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md):** no lo contradice. ADR-0019 descarta guardar un nivel de consentimiento de la persona que habla. Esta marca no dice quién consintió ni a qué: solo detiene el procesamiento de un documento mientras sus autores no consienten
@@ -37,7 +37,15 @@ Los materiales del taller del ecosistema Semiosis práctica quedaron en borrador
 - Todo camino nuevo que procese documentos debe filtrar con `NOT_CONSENT_HELD` o `notConsentHeldSql()`, o llegar a una función que ya lo haga. Un camino que no lo haga procesa filas retenidas sin error visible.
 - La cuenta de pendientes de nueva anonimización de un ecosistema excluye las filas retenidas; "Reintentar" nunca las alcanza.
 - Una persona que subió un documento retenido no puede publicarlo, reintentarlo ni editar su nota: recibe 409.
-- Pendiente de desplegar en dev; no consta que el script se haya aplicado en dev.
+- Desplegado en dev; no consta que el script se haya aplicado en dev.
+
+## Estado al 2026-11-11
+
+La decisión no cambia. En `main` (687ff21e), pendiente de desplegar en dev:
+
+- **Una revisión hereda la retención.** Una fila de "Publicar cambios" (`revisionOf`) está retenida si lo está su original, o si el original no se puede leer. La marca se escribe solo en el original, así que levantarla sigue siendo un `UPDATE` (commits b29c72ba y c12a0ab5).
+- **Más caminos guardados.** "Publicar cambios" de una nota retenida responde 409 antes de la compuerta; el trabajo del grafo y una ingesta en curso se detienen si la fila quedó retenida; los backfills de títulos y lengua, `regatePlaceHolds` y el seed del corpus la saltan (commits 17a5d985 y c12a0ab5).
+- **Borrar una conversación** que se lleva un documento retenido ya no borra las filas de revisión de otras personas: solo las de quien borra (commit 17a3ee49).
 
 ## Referencias
 

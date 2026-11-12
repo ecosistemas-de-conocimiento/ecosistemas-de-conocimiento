@@ -1,7 +1,7 @@
 # Infraestructura y entornos
 
-- **Versión:** 1.2
-- **Fecha:** 2026-11-10
+- **Versión:** 1.3
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
 - **Fuentes:** `infra/fleet/edc-1.md` (bitácora del servidor, hasta §4zzzzzzzz, 2026-11-10), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/fleet/backups.md`, `infra/fleet/runbook.md`, `infra/fleet/topology.md`, `plan/spark-ai-adopcion.md`, `plan/servidor-desarrollo.md`, `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, notas de contexto del equipo, `TESTING.md`, código de `main` en `b7dc944f` (2026-11-10).
 
@@ -212,7 +212,7 @@ Costo medido de una caída: si el Spark se cuelga (no responde, pero tampoco rec
 
 **Documentación de operación.** Las variables, la reversión y el arranque del Spark están en `infra/fleet/edc-1.md` §4y. La dirección del gateway no se versiona: el repositorio la escribe como `<spark-url>`.
 
-**Advertencia de privacidad.** Dev pasó el detector a `none` el 2026-11-06 y lo regresó a `hosted` el 2026-11-10, ya con ZDR en OpenRouter (decisión del responsable del 2026-11-09, citada de `edc-1.md` §4zzzzzzz). Con `hosted`, un texto con nombres reales puede salir a un proveedor hospedado cuando el Spark no responde, aunque ese proveedor no lo retenga. Antes del primer testimonio real falta decidir si se queda en `hosted` con ZDR o pasa a `none`, y obtener la autorización del responsable para procesar datos en un equipo que EDC no controla (Pendiente; ver [Protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md)).
+**Advertencia de privacidad.** Dev pasó el detector a `none` el 2026-11-06 y lo regresó a `hosted` el 2026-11-10, ya con ZDR en OpenRouter (decisión del responsable del 2026-11-09, citada de `edc-1.md` §4zzzzzzz). Con `hosted`, un texto con nombres reales puede salir a un proveedor hospedado cuando el Spark no responde, aunque ese proveedor no lo retenga. La decisión vigente es `hosted` con ZDR (del 2026-11-09, confirmada el 2026-11-10); `none` sigue disponible. Antes del primer testimonio real falta obtener la autorización del responsable para procesar datos en un equipo que EDC no controla (Pendiente; ver [Protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md)).
 
 ## 5. Entornos
 
@@ -225,11 +225,11 @@ Costo medido de una caída: si el Spark se cuelga (no responde, pero tampoco rec
 | IA | OpenRouter con ZDR para chat, condensación, expansión y grafo. Spark para embeddings, detector, transcripción y (inferido) rerank. Respaldo de embeddings en DeepInfra; respaldo del detector hospedado vía OpenRouter con ZDR | OpenRouter, más DeepInfra para rerank. Sin Spark ni audio | OpenRouter con llave local, o el proveedor falso `fake-provider` (perfil `fake`). Rerank apagado |
 | Ecosistemas | ids 1, 3, 6, 7 y 8 (citado, `edc-1.md` §4x y §4zp) | organización `Montaje` (id 1), creada a mano el 2026-10-17 | los del seed de `corpus-generativo` |
 | Usuarios demo (solo roles) | admin de plataforma; participante (rol `member`); `investigador`; dos `estudiante`; investigador de Semiosis; investigador de Dengue (citado, `edc-1.md` §4w y §4zq) | admin de plataforma; usuario de humo con rol `owner` de `Montaje` (citado, `edc-1.md` §3) | admin creado por el seed |
-| Versión desplegada | `367c2698`, desplegada el 2026-11-10 entre las 18:27 y las 18:33 UTC, con 24 migraciones de Payload (medido, `edc-1.md` §4zzzzzzzz). `main` (`b7dc944f`) lleva 40 commits más sin desplegar, con una migración nueva, `20261110_181621_consent_held_reviews_keep` (medido con `git log --no-merges 367c2698..b7dc944f` el 2026-11-10) | web y backend de la versión del 2026-10-17 ("Up 3 weeks"); ai-service "Up 3 days", etiqueta `97d5316a` (medido el 2026-11-10, `edc-1.md` §4zzzzzzzz) | lo que haya en el árbol de trabajo |
+| Versión desplegada | `c4f53632`, desplegada el 2026-11-10 a las 23:03 UTC, con 25 migraciones de Payload (citado del reporte de ese despliegue; no verificado en este documento). El despliegue anterior registrado es `367c2698`, de las 18:27 a las 18:33 UTC, con 24 (medido, `edc-1.md` §4zzzzzzzz). `main` (`687ff21e`) lleva 26 commits más sin desplegar, sin migraciones nuevas (medido con `git log --no-merges c4f53632..687ff21e` el 2026-11-11) | web y backend de la versión del 2026-10-17 ("Up 3 weeks"); ai-service "Up 3 days", etiqueta `97d5316a` (medido el 2026-11-10, `edc-1.md` §4zzzzzzzz) | lo que haya en el árbol de trabajo |
 | Propósito | Iteración y demostración. Los datos son desechables por decisión del responsable | Copia congelada para pruebas de aceptación | Desarrollo individual |
 | Quién despliega | Quien opera el despliegue, por la API o el panel de Coolify. "Auto-deploy" está encendido en Coolify, pero no existe webhook de GitHub, así que en la práctica es manual (citado, `edc-1.md` §3) | Igual; auto-deploy apagado | Cada desarrollador con `docker compose` |
 
-Consecuencia que conviene tener presente: el código de web y backend de staging es del 2026-10-17 y no ha vuelto a desplegarse (citado, `edc-1.md` §4zzzzzzzz). Ya no refleja lo que corre en dev, así que hoy no sirve para reproducir un problema de dev ni para probar una migración antes de dev.
+Consecuencia que conviene tener presente: el código de web y backend de staging es del 2026-10-17 y no ha vuelto a desplegarse (citado, `edc-1.md` §4zzzzzzzz); por ahora está fuera de alcance (decisión del 2026-11-10). Ya no refleja lo que corre en dev, así que hoy no sirve para reproducir un problema de dev ni para probar una migración antes de dev.
 
 Credenciales de los usuarios demo: viven fuera del repositorio, en el archivo local de secretos y en un archivo aparte de cuentas demo (modo 0600), ambos en equipo del equipo de desarrollo. Ver [Guía del desarrollador](../08-manuales/guia-del-desarrollador.md).
 
@@ -327,18 +327,23 @@ Hallazgo abierto: `infra/docker-compose.yml:918` todavía da a `AUDIO_SERVICE_AD
 
 ### 6.8 Límites, retención y tareas del backend
 
-Ninguna es secreta. Ninguna está en el compose ni en Coolify salvo que se indique: valen los del código. La columna "En dev" sigue la regla de [Despliegue y runbook](despliegue-y-runbook.md) §1.2: desplegado en `367c2698` o no.
+Ninguna es secreta. Ninguna está en el compose ni en Coolify salvo que se indique: valen los del código. La columna "En dev" sigue la regla de [Despliegue y runbook](despliegue-y-runbook.md) §1.2: desplegado en `c4f53632` o no.
 
 | Variable | Valor por omisión | Qué hace | Código | En dev |
 |---|---|---|---|---|
 | `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX`, `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S`, `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX` | 4, 3600 s, 100 por hora | Inicios de sesión fallidos por correo e IP y por IP. 4 queda uno por debajo del bloqueo de Payload (5 intentos, 10 min) | `apps/backend/src/lib/rateLimit.ts`, `apps/web/src/lib/server/loginRateLimit.ts` | Implementado |
-| `API_BODY_IDLE_TIMEOUT_MS`, `API_BODY_TOTAL_TIMEOUT_MS` | 30 000, 120 000 | Un cuerpo `/api/*` que no es subida y no manda nada, o tarda demasiado, recibe 408. El tope de 8 MiB (`API_BODY_MAX_BYTES`) es constante, no variable | `apps/backend/src/lib/bodyCap.ts` | Tope de 8 MiB: Implementado (medido con 413 en `edc-1.md` §4zzzzzzzz). Tiempos: Implementado (pendiente de desplegar en dev), `780f614d` |
-| `UPLOAD_MAX_CONCURRENT_PER_USER` | 2 | Subidas simultáneas por cuenta y proceso; la siguiente recibe 429 con `Retry-After: 5`. El archivo tiene tope de 200 MiB (`MAX_MEDIA_UPLOAD_BYTES`, constante) | `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/payload.config.ts` | Implementado (pendiente de desplegar en dev), `780f614d` |
-| `CALLBACK_RETENTION_JANITOR_ENABLED`, `CALLBACK_RETENTION_JANITOR_INTERVAL_MIN`, `CALLBACK_RETENTION_DAYS` | encendida, 1440 min, 30 días | Tarea diaria que vacía `ai_service_callbacks.raw_body` a los 30 días; la fila queda porque es la llave contra duplicados | `apps/backend/src/lib/callbackRetention.ts`, arrancada en `payload.config.ts` | Implementado (pendiente de desplegar en dev), `f8294d65` |
+| `API_BODY_IDLE_TIMEOUT_MS`, `API_BODY_TOTAL_TIMEOUT_MS` | 30 000, 120 000 | Un cuerpo `/api/*` que no es subida y no manda nada, o tarda demasiado, recibe 408. El tope de 8 MiB (`API_BODY_MAX_BYTES`) es constante, no variable | `apps/backend/src/lib/bodyCap.ts` | Tope de 8 MiB: Implementado (medido con 413 en `edc-1.md` §4zzzzzzzz). Tiempos: Implementado, `780f614d` |
+| `UPLOAD_MAX_CONCURRENT_PER_USER` | 2 | Subidas simultáneas por cuenta y proceso; la siguiente recibe 429 con `Retry-After: 5`. El archivo tiene tope de 200 MiB (`MAX_MEDIA_UPLOAD_BYTES`, constante) | `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/payload.config.ts` | Implementado, `780f614d` |
+| `CALLBACK_RETENTION_JANITOR_ENABLED`, `CALLBACK_RETENTION_JANITOR_INTERVAL_MIN`, `CALLBACK_RETENTION_DAYS` | encendida, 1440 min, 30 días | Tarea diaria que vacía `ai_service_callbacks.raw_body` a los 30 días; la fila queda porque es la llave contra duplicados | `apps/backend/src/lib/callbackRetention.ts`, arrancada en `payload.config.ts` | Implementado, `f8294d65` |
 | `GRAPH_ORPHAN_JANITOR_ENABLED`, `GRAPH_ORPHAN_JANITOR_INTERVAL_MIN` | encendida, 1440 min | Barrido diario de entidades del grafo que ya no menciona ningún documento | `apps/backend/src/lib/graph/orphanJanitor.ts`, arrancada en `payload.config.ts` | Implementado |
-| `CONSENT_IDS_FILE` | sin valor | Solo del script `scripts/hold-for-consent.ts`: archivo de ids por retener. Nunca en Coolify | `apps/backend/scripts/hold-for-consent.ts` | Implementado (pendiente de desplegar en dev), `7987c171` |
+| `CONSENT_IDS_FILE` | sin valor | Solo del script `scripts/hold-for-consent.ts`: archivo de ids por retener. Nunca en Coolify | `apps/backend/scripts/hold-for-consent.ts` | Implementado, `7987c171` |
+| `QUERY_RELATION_MAX_TERMS`, `QUERY_RELATION_MAX_IDS` | 5, 5000 | Tope por petición de un filtro a través de una relación; pasado, 400 | `apps/backend/src/access/relationFilters.ts` | Implementado (pendiente de desplegar en dev), `36bf6cf5` |
+| `QUERY_RELATION_MAX_CONCURRENT_PER_USER`, `QUERY_RELATION_RATELIMIT_USER_MAX` | 2, 30 por minuto | Peticiones así por persona a la vez y por minuto; pasado, 429 con `Retry-After` | `apps/backend/src/access/relationFilters.ts`, `apps/backend/src/lib/rateLimit.ts` | Implementado (pendiente de desplegar en dev), `490de211` |
+| `SESSION_RATELIMIT_CREATE_USER_MAX` | 60 por hora | Conversaciones nuevas por cuenta; la siguiente, 429 con `Retry-After` | `apps/backend/src/lib/rateLimit.ts` | Implementado (pendiente de desplegar en dev), `36bf6cf5` |
+| `MIEMBROS_RATELIMIT_ADD_USER_MAX` | 50 por hora | Altas por `/miembros` de una misma persona; la siguiente, 429 con `Retry-After` | `apps/backend/src/endpoints/miembros.ts`, `apps/backend/src/lib/rateLimit.ts` | Implementado (pendiente de desplegar en dev), `0c639102` |
+| `JANITOR_FIRST_SWEEP_MIN` | 2 | Minutos desde el arranque hasta el primer barrido de cada tarea programada, salvo el conserje de sesiones | `apps/backend/src/lib/janitorScheduler.ts` | Implementado (pendiente de desplegar en dev), `bb8852f1` |
 
-`env-manifests.md` documenta todas salvo `GRAPH_ORPHAN_JANITOR_*`, `ANONYMISE_REGATE_*` y `CONSENT_IDS_FILE` (leído el 2026-11-10).
+`env-manifests.md` documenta todas salvo `GRAPH_ORPHAN_JANITOR_*`, `ANONYMISE_REGATE_*` y `CONSENT_IDS_FILE` (leído el 2026-11-11).
 
 ### 6.9 Archivo local de secretos (fuera del repositorio)
 

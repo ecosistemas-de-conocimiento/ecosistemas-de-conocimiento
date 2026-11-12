@@ -14,7 +14,7 @@
 
 ## Para quién es y qué responde
 
-Este documento es para quien administra un ecosistema, para revisores que necesitan saber quién puede leer qué, y para quien desarrolle. Responde: qué roles existen en Ecosistemas de Conocimiento (EDC), cómo se ordenan, qué permiso otorga cada uno, qué capacidades dependen de otra cosa que no es un permiso, cómo decide el menú qué mostrar y qué ve cada rol en cada pantalla. Todo lo que dice se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10, salvo donde se indica otra procedencia. Lo que está en `main` pero aún no en dev (desplegado: 367c2698, citado de `infra/fleet/edc-1.md`) se marca **pendiente de desplegar en dev**.
+Este documento es para quien administra un ecosistema, para revisores que necesitan saber quién puede leer qué, y para quien desarrolle. Responde: qué roles existen en Ecosistemas de Conocimiento (EDC), cómo se ordenan, qué permiso otorga cada uno, qué capacidades dependen de otra cosa que no es un permiso, cómo decide el menú qué mostrar y qué ve cada rol en cada pantalla. Todo lo que dice se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10, salvo donde se indica otra procedencia. Lo que está en `main` pero aún no en dev (desplegado: c4f53632, 2026-11-10 a las 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11) se marca **pendiente de desplegar en dev**.
 
 ## Dos niveles de rol
 
@@ -32,7 +32,7 @@ Una cuenta inactiva (`isActive = false`) no tiene ningún rol: el servidor la tr
 | `estudiante` | estudiante | Est. | 0 | Conversa, sube y escribe notas. Con la función `studentView` tiene la vista Mi investigación. |
 | `member` | participante | Part. | 1 | Conversa, sube documentos y audio, valora respuestas. Lo que sube se publica solo si `autoPublishMembers` está encendida. Es el rol por defecto (`DEFAULT_ORG_ROLE`). |
 | `admin` | administra | (no aparece) | 2 | Lo del participante, más subir testimonios, revisar documentos retenidos, leer comentarios de valoraciones, borrar documentos y gestionar miembros. |
-| `investigador` | investigador | Inv. | 3 | Lo de `admin`, más la Administración acotada a sus ecosistemas. Desde el 2026-11-10 ya no guarda los ajustes del ecosistema (`/ajustes`); pendiente de desplegar en dev (commit 50bde2ae). |
+| `investigador` | investigador | Inv. | 3 | Lo de `admin`, más la Administración acotada a sus ecosistemas. Desde el 2026-11-10 ya no guarda los ajustes del ecosistema (`/ajustes`); desplegado (commit 50bde2ae). |
 | `owner` | responsable | Resp. | 4 | Lo de investigador, más los ajustes del ecosistema (`/ajustes`, `organization:manage`). El rango superior le deja gestionar investigadores, y solo él cambia la clave (`slug`) del ecosistema o lo apaga. |
 
 Un rol de rango 0 por debajo de participante tiene un propósito: un estudiante nunca puede otorgar el rol participante a nadie (comentario en `apps/backend/src/lib/permissions.ts`).
@@ -58,7 +58,7 @@ Los conjuntos de permisos se construyen por acumulación hacia arriba: cada rang
 | `ESTUDIANTE_PERMISSIONS` | Igual a participante. Lo que añade el estudiante es una vista (función `studentView`), no un permiso. |
 | `ADMIN_PERMISSIONS` | Participante más `voces:upload`, `ratings:read-comments`, `holds:review`, `documents:delete`, `members:manage` |
 | `INVESTIGADOR_PERMISSIONS` | Igual a `admin` |
-| `OWNER_PERMISSIONS` | Investigador más `organization:manage` (desde el 2026-11-10, commit 50bde2ae, pendiente de desplegar en dev; en dev el investigador todavía lo tiene) |
+| `OWNER_PERMISSIONS` | Investigador más `organization:manage` (desde el 2026-11-10, commit 50bde2ae, desplegado) |
 
 ## Matriz de capacidades por rol
 
@@ -93,12 +93,12 @@ Varias capacidades no salen de la tabla anterior. Dependen del rol directamente,
 | Vista docente, sugerencias | Investigador o responsable | mismo archivo |
 | Cambiar la clave (`slug`) o apagar el ecosistema | Solo `owner` | `apps/backend/src/collections/Organizations.ts` |
 | Asignar roles | Quien tiene `members:manage`, solo roles de rango igual o menor al propio | `outranks` en `permissions.ts`; `assignableRoles` en `apps/web/src/lib/miembros.ts`; tope en `collections/Memberships.ts` |
-| Interruptores de anonimización de un documento (`PATCH /api/documents/:id/anonimizacion`: `keepDocumentAuthor`, `keepCitedAuthors`) | Quien subió el documento; quien tiene `holds:review` en ese ecosistema (admin, investigador, owner), y desde el 2026-11-10 solo sobre filas retenidas o publicadas, nunca sobre el borrador privado de otra persona (A-07, commit 50bde2ae, pendiente de desplegar en dev); y el administrador de plataforma. Cada cambio deja una fila en `anonymisation-setting-changes` y, si hace falta, vuelve a pasar el documento por la compuerta. Implementado (commit 491841fb, desplegado) | `apps/backend/src/lib/anonymisationControls.ts`; [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) |
-| `keepPublicFigures` en un documento | Solo el administrador de plataforma, y solo en un `documento`; cualquier otra persona recibe 403. Implementado (commit 887fae32, desplegado). La vista dice qué interruptores puede cambiar quien la abre (`editable`, pendiente de desplegar en dev) | `apps/backend/src/lib/anonymisationControls.ts` |
+| Interruptores de anonimización de un documento (`PATCH /api/documents/:id/anonimizacion`: `keepDocumentAuthor`, `keepCitedAuthors`) | Quien subió el documento; quien tiene `holds:review` en ese ecosistema (admin, investigador, owner), y desde el 2026-11-10 solo sobre filas retenidas o publicadas, nunca sobre el borrador privado de otra persona (A-07, commit 50bde2ae, desplegado); y el administrador de plataforma. Cada cambio deja una fila en `anonymisation-setting-changes` y, si hace falta, vuelve a pasar el documento por la compuerta. Implementado (commit 491841fb, desplegado) | `apps/backend/src/lib/anonymisationControls.ts`; [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) |
+| `keepPublicFigures` en un documento | Solo el administrador de plataforma, y solo en un `documento`; cualquier otra persona recibe 403. Implementado (commit 887fae32, desplegado). La vista dice qué interruptores puede cambiar quien la abre (`editable`, desplegado) | `apps/backend/src/lib/anonymisationControls.ts` |
 | Interruptores de ecosistema solo de plataforma (`keepPublicFigures`, `studentTestimonios`) | Administrador de plataforma. El responsable los ve bloqueados. | `PLATFORM_ADMIN_ONLY_FEATURES` en `apps/backend/src/lib/features.ts`, aplicado en `Organizations` |
-| Interruptores de ecosistema `keepDocumentAuthor` y `keepCitedAuthors` | Responsable y administrador de plataforma (`organization:manage`); el investigador ya no (pendiente de desplegar en dev). Cada cambio queda en `anonymisation-setting-changes` y re-anonimiza lo que conservó un nombre | `apps/backend/src/collections/Organizations.ts` (`auditAnonymisationSwitches`) |
+| Interruptores de ecosistema `keepDocumentAuthor` y `keepCitedAuthors` | Responsable y administrador de plataforma (`organization:manage`); el investigador ya no (desplegado). Cada cambio queda en `anonymisation-setting-changes` y re-anonimiza lo que conservó un nombre | `apps/backend/src/collections/Organizations.ts` (`auditAnonymisationSwitches`) |
 | Respaldo del detector de datos personales (`PATCH /api/plataforma`) | Solo la marca `isPlatformAdmin`; ninguna membresía. Cada cambio queda auditado (commit 887fae32, desplegado) | `apps/backend/src/globals/PlatformSettings.ts` |
-| Ver el roster de un ecosistema (Miembros) | Todos ven el roster completo, salvo donde su rol es `estudiante`: ahí ve su propia fila, al personal (roles no estudiante) y a los compañeros que activaron `shareWithPeers`. Decisión del 2026-11-10; pendiente de desplegar en dev (commit f685923d) | `readMemberships` en `apps/backend/src/collections/Memberships.ts` |
+| Ver el roster de un ecosistema (Miembros) | Todos ven el roster completo, salvo donde su rol es `estudiante`: ahí ve su propia fila, al personal (roles no estudiante) y a los compañeros que activaron `shareWithPeers`. Decisión del 2026-11-10; desplegado (commit f685923d) | `readMemberships` en `apps/backend/src/collections/Memberships.ts` |
 | Estilos de respuesta por ecosistema | Administrador de plataforma (`answerStylesEditable`) | `apps/web/src/lib/answerStyle.ts`; `apps/backend/src/lib/answerStyle.ts` |
 | Ver cualquier ecosistema en Conexiones (`?eco=`) y correr evaluaciones (`/admin/evals`) | Administrador de plataforma | `apps/web/src/routes/grafo/+page.server.ts`; `apps/web/src/routes/admin/evals/+page.server.ts` |
 | Leer el original crudo de un testimonio o de un `documento` con compuerta | Quien lo subió y el administrador de plataforma | `mayReadGatedOriginal` en `apps/backend/src/collections/Documents.ts` |
@@ -186,7 +186,7 @@ Notas por pantalla:
 - **Conversaciones.** Participante y estudiante ven primero la pantalla Iniciar, con un solo botón. Los demás roles entran directo a la interfaz completa.
 - **Panel Documentos dentro de la conversación.** Con `voces:upload` aparecen el selector de tipo de aporte, la casilla "Anonimizar" y el botón de publicar.
 - **Estudiantes.** El administrador de plataforma tiene `canAdminOrg`, así que el backend le daría los reportes con consentimiento, pero el menú no le muestra la sección porque no es investigador ni responsable en ese ecosistema (inferido de `nav.ts` y de `seguimiento/+page.server.ts`; no verificado en una sesión real).
-- **Ajustes.** El responsable ve `keepPublicFigures` y `studentTestimonios` bloqueados. La pestaña de estilo y la sección de plataforma solo son editables por el administrador de plataforma. En dev (367c2698) el investigador todavía entra a Ajustes; con el despliegue de `main` recibe 403 «Esta sección es para quien es responsable de un ecosistema.»
+- **Ajustes.** El responsable ve `keepPublicFigures` y `studentTestimonios` bloqueados. La pestaña de estilo y la sección de plataforma solo son editables por el administrador de plataforma. El investigador recibe 403 «Esta sección es para quien es responsable de un ecosistema.»
 - **Administración.** Investigador y responsable solo ven sus ecosistemas; el administrador de plataforma ve el directorio completo.
 
 ## Anomalía: el rol `admin` de ecosistema

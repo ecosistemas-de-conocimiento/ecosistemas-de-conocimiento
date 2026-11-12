@@ -1,7 +1,7 @@
 # ADR-0014. Migraciones: baseline colapsada, `push` opcional e índices y llaves foráneas a mano
 
 - **Versión:** 1.1
-- **Fecha del documento:** 2026-11-03
+- **Fecha del documento:** 2026-11-11
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada e implementada
 - **Fecha de la decisión:** 2026-08-14 (`push` opcional y primera baseline); 2026-09-08 (segunda baseline)
@@ -42,7 +42,7 @@ El proyecto necesita SQL que Payload no sabe generar: índices compuestos y llav
 - 🔴 Una baseline regenerada no contiene los índices ni las llaves a mano. Hay que copiar el bloque.
 - 🔴 El `.json` sigue diciendo `set null` para las llaves reescritas. Las migraciones posteriores con el mismo defecto (por ejemplo `20261020_193707_ratings_fk_cascade` y `20261029_060304_evals`) repiten el patrón y lo documentan en su fila del README.
 - 🔴 El nombre `ai_service_callbacks_natural_key_unq` es parte de un contrato: el receptor de callbacks lo busca en el texto del error.
-- Al 2026-10-30 hay 21 migraciones más `index.ts` en `apps/backend/src/migrations/` (medido con `ls` el 2026-10-30).
+- Al 2026-10-30 hay 21 migraciones más `index.ts` en `apps/backend/src/migrations/` (medido con `ls` el 2026-10-30). Al 2026-11-11 hay 25; la última es `20261110_181621_consent_held_reviews_keep` (medido con `ls` en `main` 687ff21e).
 - En Coolify el comando previo al despliegue no corre; por eso las migraciones van en el `CMD` de la imagen (citado de `plan/deploy-and-local-demo.md` §7).
 
 ## Referencias

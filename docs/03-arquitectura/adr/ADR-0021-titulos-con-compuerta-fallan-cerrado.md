@@ -1,9 +1,9 @@
 # ADR-0021. El título de un `documento` con compuerta pasa por la compuerta y falla cerrado
 
 - **Versión:** 1.0
-- **Fecha del documento:** 2026-11-10
+- **Fecha del documento:** 2026-11-11
 - **Estado del documento:** propuesto
-- **Estado de la decisión:** aceptada; implementada en `main` (b7dc944f), pendiente de desplegar en dev (dev corre 367c2698, citado de `infra/fleet/edc-1.md`)
+- **Estado de la decisión:** aceptada; implementada y desplegada en dev (`c4f53632`, 2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11)
 - **Fecha de la decisión:** 2026-11-10
 - **Quién decidió:** responsable de desarrollo (decisión del 2026-11-10, a partir del hallazgo P-13 de la auditoría de privacidad del mismo día). La regla de que una columna `anonymise` NULL cuenta como con compuerta para el título salió de la coordinación de la revisión del 2026-11-10
 - **Reemplaza:** la regla del 2026-10-26 por la que "un `documento` marcado para anonimizar conserva su propio título"

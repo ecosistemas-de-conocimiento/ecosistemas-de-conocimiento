@@ -1,11 +1,11 @@
 # Manual de usuario
 
-- **Versión:** 1.3
-- **Fecha:** 2026-11-10
+- **Versión:** 1.4
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
-- **Fuentes:** `plan/funcionalidades.md` (inventario por pantalla, 2026-10-27), `plan/mapa-historias.md`, `apps/web/src/lib/nav.ts`, `apps/web/src/lib/miembros.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/routes/` (textos de cada pantalla, leídos en `main` b7dc944f), `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/holdReview.ts`, `apps/backend/src/lib/contentKind.ts`, `apps/backend/src/collections/Media.ts`, `apps/web/e2e/evidencia/`, `plan/ux-demo-backlog.md`, `TESTING.md`.
+- **Fuentes:** `plan/funcionalidades.md` (inventario por pantalla, 2026-10-27), `plan/mapa-historias.md`, `apps/web/src/lib/nav.ts`, `apps/web/src/lib/miembros.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/routes/` (textos de cada pantalla, leídos en `main` 687ff21e), `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/holdReview.ts`, `apps/backend/src/lib/contentKind.ts`, `apps/backend/src/collections/Media.ts`, `apps/web/e2e/evidencia/`, `plan/ux-demo-backlog.md`, `TESTING.md`.
 
-**Estados.** Lo que no lleva marca está **Implementado** y desplegado en dev (despliegue 367c2698 del 2026-11-10, citado de `infra/fleet/edc-1.md`). Lo marcado **Implementado (pendiente de desplegar en dev)** ya está en `main` pero dev todavía se comporta como antes. Lo que aún no existe está en [Etapa 2](#etapa-2).
+**Estados.** Lo que no lleva marca está **Implementado** y desplegado en dev (despliegue c4f53632 del 2026-11-10, citado del reporte de ese despliegue; no verificado en este documento). Lo marcado **Implementado (pendiente de desplegar en dev)** ya está en `main` pero dev todavía se comporta como antes. Lo que aún no existe está en [Etapa 2](#etapa-2).
 
 ## Para quién es y qué responde
 
@@ -44,7 +44,7 @@ Hay un rol más, "administra", que no se ofrece en la pantalla Miembros. Quien l
 
 Si no ves una sección, tu rol no la tiene o el ecosistema la apagó en Ajustes.
 
-**Ajustes es del responsable** (decisión del 2026-11-10; `apps/backend/src/lib/permissions.ts`, commit 50bde2ae). El investigador ya no ve ni guarda Ajustes. Implementado (pendiente de desplegar en dev): en dev el investigador todavía entra a Ajustes.
+**Ajustes es del responsable** (decisión del 2026-11-10; `apps/backend/src/lib/permissions.ts`, commit 50bde2ae). El investigador ya no ve ni guarda Ajustes.
 
 ## 1. Entrar y elegir ecosistema
 
@@ -101,6 +101,7 @@ El tipo se elige al crear la conversación y no cambia después.
   1. En el panel de conversaciones, elige la pestaña **Generales** o **Resonancias**.
   2. Pulsa **Nueva conversación**.
 - **Resultado:** aparece una conversación vacía.
+- **Notas:** cada cuenta abre como máximo 60 conversaciones nuevas por hora; pasado eso ves "No se pudo crear la conversación". Implementado (pendiente de desplegar en dev; `SESSION_RATELIMIT_CREATE_USER_MAX`, commit 36bf6cf5; el 60 es inferido, según el commit).
 
 ### 2.2 Hacer una pregunta
 
@@ -113,7 +114,8 @@ El tipo se elige al crear la conversación y no cambia después.
   - Una respuesta tarda de 8 a 14 s, a veces hasta 39 s (citado de `plan/ux-demo-backlog.md` #9, mediciones en dev).
   - **Esc** detiene una respuesta en curso.
   - Si la respuesta falla, la burbuja dice qué pasó y ofrece **Reintentar**, que vuelve a enviar la misma pregunta.
-  - Si la respuesta llega vacía, la burbuja dice "La respuesta llegó vacía." y ofrece **Reintentar**. No se guarda un mensaje vacío. Implementado (pendiente de desplegar en dev; commit c867ff43).
+  - Si la respuesta llega vacía, la burbuja dice "La respuesta llegó vacía." y ofrece **Reintentar**. No se guarda un mensaje vacío.
+  - Si la respuesta excede el límite de longitud, la burbuja dice "La respuesta excedió el límite de longitud." y no ofrece **Reintentar**. Implementado (pendiente de desplegar en dev; commit 6406fadb).
 
 ### 2.3 Ver las fuentes de una respuesta
 
@@ -155,7 +157,7 @@ El tipo se elige al crear la conversación y no cambia después.
 - **Notas:**
   - Solo reconoce español.
   - Las primeras palabras pueden tardar unos segundos en aparecer.
-  - El texto en vivo solo se ve mientras grabas. No se guarda ni se envía (`apps/web/src/lib/components/Composer.svelte`, commit aa73e01f). Implementado (pendiente de desplegar en dev): en dev, al detener, el texto todavía queda en el cuadro de mensaje.
+  - El texto en vivo solo se ve mientras grabas. No se guarda ni se envía (`apps/web/src/lib/components/Composer.svelte`, commit aa73e01f).
 
 ### 2.7 Pedir que te haga preguntas
 
@@ -209,7 +211,7 @@ El tipo se elige al crear la conversación y no cambia después.
   - Formatos de audio: MP3, M4A, AAC, WAV, OGG, Opus, WebM y FLAC. De un video MP4, MOV o WebM solo se usa el audio.
   - Un audio de 55 s quedó listo entre 79 y 127 s en el entorno de pruebas (medido, `TESTING.md`, 2026-10-17, transcripción en CPU). En dev puede variar.
   - Un audio que sube un participante o un estudiante se guarda como testimonio y pasa por la revisión automática de datos personales. Un documento que suben también pasa por ella (`apps/backend/src/lib/autoPublish.ts`, `anonymiseParticipantUpload`).
-  - Cada cuenta puede tener a la vez como máximo 2 subidas en curso; la siguiente espera unos segundos. Implementado (pendiente de desplegar en dev; `UPLOAD_MAX_CONCURRENT_PER_USER`, commit 780f614d; el 2 es inferido de que la app sube un archivo a la vez).
+  - Cada cuenta puede tener a la vez como máximo 2 subidas en curso; la siguiente espera unos segundos (`UPLOAD_MAX_CONCURRENT_PER_USER`, commit 780f614d; el 2 es inferido de que la app sube un archivo a la vez).
 
 ### 2.13 Escribir una nota
 
@@ -237,9 +239,9 @@ El tipo se elige al crear la conversación y no cambia después.
   3. Sube el archivo.
 - **Resultado:** un testimonio, o un documento con **Anonimizar**, pasa por la revisión automática de datos personales antes de poder publicarse.
 - **Notas:**
-  - **Anonimizar** encendido de entrada: Implementado (pendiente de desplegar en dev; commits aa73e01f y 2dda9a8b). En dev todavía arranca apagado.
+  - **Anonimizar** arranca encendido (commits aa73e01f y 2dda9a8b).
   - Se sustituyen todos los nombres, también el tuyo. Para conservar tu nombre o los autores que citas, ve a la tarea 3.6.
-  - El título también pasa por la anonimización. Quien no subió el documento ve el título anonimizado o, si todavía no lo hay, "Documento". Tú y la administración de la plataforma ven el nombre del archivo (`apps/backend/src/lib/contentKind.ts`, `titleFor`). Implementado (pendiente de desplegar en dev; commits b2a51aed y siguientes del 2026-11-10).
+  - El título también pasa por la anonimización. Quien no subió el documento ve el título anonimizado o, si todavía no lo hay, "Documento". Tú y la administración de la plataforma ven el nombre del archivo (`apps/backend/src/lib/contentKind.ts`, `titleFor`; commits b2a51aed y siguientes del 2026-11-10).
 
 ### 2.16 Fijar un documento como contexto
 
@@ -272,7 +274,7 @@ El tipo se elige al crear la conversación y no cambia después.
 
 - **Quién:** solo quien subió el archivo.
 - **Pasos:** pulsa **Descargar original** (el ícono de flecha hacia abajo).
-- **Resultado:** se descarga el archivo tal como lo subiste, con el nombre del documento. Implementado (pendiente de desplegar en dev) lo del nombre: desde el 2026-11-10 el archivo se guarda con un nombre neutro y la descarga le devuelve el del documento (commits 74306c42 y 28d84f03).
+- **Resultado:** se descarga el archivo tal como lo subiste, con el nombre del documento. Desde el 2026-11-10 el archivo se guarda con un nombre neutro y la descarga le devuelve el del documento (commits 74306c42 y 28d84f03).
 
 ### 3.4 Eliminar un documento
 
@@ -290,13 +292,13 @@ El tipo se elige al crear la conversación y no cambia después.
   - **Reintentar publicación**: la publicación falló.
   - **Preparar conexiones otra vez**: falló la extracción para Conexiones.
 - **Resultado:** el proceso vuelve a empezar.
-- **Notas:** un documento retenido por consentimiento no se vuelve a procesar ni se publica; el botón responde "Este documento está retenido hasta tener el consentimiento de sus autores. No se puede procesar ni publicar." (`apps/backend/src/lib/consentHold.ts`). Implementado (pendiente de desplegar en dev; commits 512dcc1f y ccce6281).
+- **Notas:** un documento retenido por consentimiento no se vuelve a procesar ni se publica; el botón responde "Este documento está retenido hasta tener el consentimiento de sus autores. No se puede procesar ni publicar." (`apps/backend/src/lib/consentHold.ts`; commits 512dcc1f y ccce6281).
 
 ### 3.6 Elegir qué nombres se conservan
 
 - **Quién:**
   - quien subió el documento o el testimonio;
-  - quien puede revisar (investigador, responsable y el rol "administra"), solo en documentos retenidos o publicados. Implementado (pendiente de desplegar en dev; commit 50bde2ae): en dev todavía entra también a borradores ajenos;
+  - quien puede revisar (investigador, responsable y el rol "administra"), solo en documentos retenidos o publicados (commit 50bde2ae);
   - el administrador de la plataforma.
 - **Pasos:**
   1. Pulsa **Anonimización** en **Mis documentos**, en la página del documento en la Biblioteca o en **Revisión**.
@@ -325,7 +327,7 @@ El tipo se elige al crear la conversación y no cambia después.
   2. Escribe en el buscador y pulsa Enter, o elige un filtro de tipo (voces, audios, PDF, Word, hojas de cálculo, páginas web, notas) o de lengua.
 - **Resultado:** la lista muestra solo lo que coincide.
 - **Notas:**
-  - El buscador busca por el título que muestra la tarjeta; en un testimonio, por su título automático. Un documento anonimizado no aparece al buscar por el nombre de su archivo (`apps/web/src/lib/server/biblioteca.ts`). Implementado (pendiente de desplegar en dev; commits 00326d1d y b2a51aed).
+  - El buscador busca por el título que muestra la tarjeta; en un testimonio, por su título automático. Un documento anonimizado no aparece al buscar por el nombre de su archivo (`apps/web/src/lib/server/biblioteca.ts`; commits 00326d1d y b2a51aed).
   - El filtro de lengua se refiere a la lengua de las personas de las que trata el documento. Al usarlo, se ocultan los testimonios.
 
 ### 4.2 Leer un documento publicado
@@ -333,7 +335,7 @@ El tipo se elige al crear la conversación y no cambia después.
 - **Quién:** todos.
 - **Pasos:** pulsa el título en la lista.
 - **Resultado:** ves el texto del documento. En testimonios y documentos anonimizados, ves la versión sin datos personales.
-- **Notas:** un testimonio se titula "Testimonio" o con su título automático. Un documento anonimizado muestra su título anonimizado, o "Documento" si aún no lo tiene; solo quien lo subió y la administración de la plataforma ven el nombre del archivo. Así aparece también en el chat, las citas, Conexiones y Mi investigación. Implementado (pendiente de desplegar en dev) para los documentos anonimizados (commits b2a51aed, 2dda9a8b, 2f21e91b, a2ba0e19, ed35b605).
+- **Notas:** un testimonio se titula "Testimonio" o con su título automático. Un documento anonimizado muestra su título anonimizado, o "Documento" si aún no lo tiene; solo quien lo subió y la administración de la plataforma ven el nombre del archivo. Así aparece también en el chat, las citas, Conexiones y Mi investigación (commits b2a51aed, 2dda9a8b, 2f21e91b, a2ba0e19, ed35b605).
 
 ## 5. Conexiones
 
@@ -440,6 +442,7 @@ Esta sección existe solo si el ecosistema tiene encendida la **Vista de estudia
   1. Edita la nota.
   2. Pulsa **Publicar cambios**.
 - **Resultado:** ves "Cambios publicados". Todos leen la versión nueva en la Biblioteca.
+- **Notas:** una nota retenida por consentimiento no publica cambios: ves "No se pudo iniciar la publicación". Implementado (pendiente de desplegar en dev; commit 17a5d985).
 
 ## 7. Estudiantes (docente)
 
@@ -491,9 +494,10 @@ Cuando la revisión automática no está segura de haber quitado todos los datos
   - No todas las retenciones se aprueban tal cual (`apps/backend/src/lib/holdReview.ts`, `mustEditToApprove`; la pantalla aplica la misma regla):
     - **La revisión automática no pudo terminar:** no hay texto revisado que aprobar. Solo puedes rechazarlo.
     - **El modelo detuvo el documento** (etapa de contenido): **Aprobar** solo aparece después de corregir el texto. Mientras tanto ves "Para aprobarlo, corrige el texto.".
-    - **La segunda revisión no pudo terminar:** igual que el caso anterior. Implementado (pendiente de desplegar en dev; commit 346b380d).
+    - **La segunda revisión no pudo terminar:** igual que el caso anterior (commit 346b380d).
+    - **La segunda revisión señaló un dato que no se pudo ubicar en el texto:** igual que el caso anterior. Implementado (pendiente de desplegar en dev; commit ec6c4520).
     - **El documento no llegó a producir texto:** no hay nada que aprobar. Puedes rechazarlo.
-  - Corregir significa cambiar palabras o números. Espacios, puntuación o mayúsculas no cuentan. Implementado (pendiente de desplegar en dev; commit 346b380d).
+  - Corregir significa cambiar palabras o números. Espacios, puntuación o mayúsculas no cuentan (commit 346b380d).
   - Si las opciones de anonimización del documento cambiaron después de la retención, no se puede aprobar. Vuelve a anonimizarlo desde **Anonimización** (tarea 3.6).
 
 ### 8.4 Retirar un documento publicado
@@ -533,7 +537,7 @@ Cuando la revisión automática no está segura de haber quitado todos los datos
 
 ### 10.1 Activar o desactivar funciones
 
-- **Quién:** responsable y administrador de la plataforma. Implementado (pendiente de desplegar en dev; commit 50bde2ae): en dev el investigador todavía guarda Ajustes.
+- **Quién:** responsable y administrador de la plataforma (commit 50bde2ae).
 - **Pasos:**
   1. Entra a **Ajustes**.
   2. Elige una pestaña: Conversación, Grafo, Publicación o Estudiantes.
@@ -641,7 +645,7 @@ flowchart TD
 En corto:
 
 1. **Todo empieza como borrador privado.** Nadie más lo ve. Solo se usa en la conversación donde lo subiste.
-2. **Los testimonios pasan por la revisión de datos personales.** También los documentos con **Anonimizar** y todo lo que suben participantes y estudiantes. El título del documento pasa por la misma revisión (pendiente de desplegar en dev). Se quitan todos los nombres, salvo los que elijas conservar (tarea 3.6). Si la revisión duda, el documento queda **En revisión** hasta que una persona lo apruebe o lo rechace.
+2. **Los testimonios pasan por la revisión de datos personales.** También los documentos con **Anonimizar** y todo lo que suben participantes y estudiantes. El título del documento pasa por la misma revisión. Se quitan todos los nombres, salvo los que elijas conservar (tarea 3.6). Si la revisión duda, el documento queda **En revisión** hasta que una persona lo apruebe o lo rechace.
 3. **Publicar lo comparte con todo el ecosistema.** Aparece en la Biblioteca, en Conexiones y como fuente en las respuestas de todos.
 4. **Lo de participantes se publica solo** cuando pasa la revisión, si el ecosistema tiene encendida la publicación automática.
 5. **Las conversaciones también alimentan el acervo.** Cada pregunta y respuesta pasa por la revisión de datos personales y se usa para orientar respuestas futuras del ecosistema, si está encendido **Conversaciones anteriores como contexto**.
@@ -687,7 +691,7 @@ Una respuesta suele tardar de 8 a 14 s y a veces hasta 39 s (citado de `plan/ux-
 
 ## Etapa 2
 
-Lo que sigue no existe en la plataforma. Está clasificado como funcionalidad nueva en la auditoría del 2026-11-10 (`plan/orchestration/auditoria-2026-11-10/login-y-permisos.md`) y, si se hace, irá en la rama `etapa-2`, no en `main`. Estado: Pendiente.
+Lo que sigue no existe en la plataforma. Está clasificado como funcionalidad nueva en la auditoría de login y permisos del 2026-11-10 y, si se hace, irá en la rama `etapa-2`, no en `main`. Estado: Pendiente.
 
 - **Cambiar tu contraseña** desde la plataforma, y el cambio obligatorio de la contraseña temporal en el primer acceso (A-04).
 - **Verificar el correo** cuando alguien lo cambia (A-03).

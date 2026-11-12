@@ -1,7 +1,7 @@
 # Visión y alcance de Ecosistemas de Conocimiento
 
-- **Versión:** 1.2
-- **Fecha:** 2026-11-10
+- **Versión:** 1.3
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
 - **Fuentes:** en el repositorio: `plan/anonimizacion-y-voces.md`, `plan/funcionalidades.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/servidor-desarrollo-build.csv`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md` y el código en `main` del 2026-10-29. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v1-brief-repositorio-voces-resonancias.md` (brief v1, 2026-05-11), `briefs/v0-brief-proyecto-plataforma-ia.md`, `docs/Textos del proyecto/Desarrollo (metodología)/Informe de reunión con desarrollo — 21 de octubre de 2026.docx` (informe del 21 de octubre), `docs/Textos del proyecto/Proyecto/` (carta SECIHTI, «Estado del Proyecto IH-2025-I-445») y la bitácora del proyecto (registros del 2026-10-21, 2026-10-27 y 2026-10-28).
 
@@ -206,7 +206,7 @@ Por decisión del brief v1 §6:
 Por decisiones posteriores del proyecto:
 
 - **Entorno de producción.** Solo existen dev y staging (llamado «montaje»); no hay producción (`infra/fleet/edc-1.md`, 2026-10-17). Los datos de dev son desechables y aún no hay usuarios reales.
-- **Testimonio real de personas externas.** No se ha recibido. Antes de recibirlo hay que cerrar el respaldo hospedado del detector de anonimización (ver [Registro de riesgos](registro-de-riesgos.md), R-01).
+- **Testimonio real de personas externas.** No se ha recibido. Antes de recibirlo hay que resolver el alojamiento del detector de anonimización (ver [Registro de riesgos](registro-de-riesgos.md), R-01 y R-02).
 - **Agentes autónomos.** «No construimos agentes» (decisión del responsable de desarrollo del 2026-10-17).
 - **Modelo de chat en hardware propio.** La evaluación del 2026-10-26 concluyó que el modelo local aún no iguala al hospedado en las respuestas del chat (`plan/spark-chat-eval-2026-10-26.md`).
 - **Interfaz en otros idiomas.** La interfaz solo existe en español; la transcripción solo acepta español.
