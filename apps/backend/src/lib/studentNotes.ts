@@ -374,6 +374,19 @@ function isUniqueViolation(err: unknown): boolean {
   return false
 }
 
+/**
+ * `reindex_ingest_id` of a re-index whose swap did NOT happen: its copy in the
+ * shared corpus is the revision's text and must not stay, whenever it lands.
+ */
+const RETIRE_REINDEX = 'retire:'
+export const reindexToRetire = (ingestId: string): string => `${RETIRE_REINDEX}${ingestId}`
+/** Is this callback the note's re-index? `live`: swapped; `retire`: not swapped; null: not it. */
+export function noteReindexMatch(column: unknown, ingestId: string): 'live' | 'retire' | null {
+  if (typeof column !== 'string' || !ingestId) return null
+  if (column === ingestId) return 'live'
+  return column === reindexToRetire(ingestId) ? 'retire' : null
+}
+
 /** Why a promotion did not happen now. `null` = promoted. */
 export type PromoteSkip = 'graph-pending' | 'busy' | 'not-cleared' | 'withdrawn' | 'consent-held'
 
@@ -556,6 +569,16 @@ export async function promoteRevision(args: {
     if (swapped !== true) {
       // Held or withdrawn between the check and the swap: the re-index above
       // already reached the shared corpus with the revision's text. Take it back out.
+      // 🔴 ai-service answers the enqueue when it QUEUES the job: its worker may
+      // land AFTER this retire and clear it (upsert, `validTo = null`). So the
+      // job is recorded first, marked to retire, and its callback retires again
+      // (`callback/route.ts` → `dispatchNoteReindex`).
+      if (result.ingestId) {
+        await updateDocumentColumns(payload as never, {
+          id: note.id as Id,
+          data: { reindexIngestId: reindexToRetire(result.ingestId) },
+        })
+      }
       const { retireFrom } = await import('./publishDocument')
       await retireFrom(client, publishedCorpus(organizationId), note.id as Id, new Date())
       if (swapped === 'consent-held' || (await noteOrRevisionHeld(payload, revision, note.id as Id))) {

@@ -416,8 +416,10 @@ async function dispatchCallback(
       }
 
       // 🔴 A "Publicar cambios" re-index landing (`lib/studentNotes.ts`).
-      if (typeof doc.reindexIngestId === 'string' && doc.reindexIngestId === envelope.ingestId) {
-        await dispatchNoteReindex(payload, doc, envelope)
+      const { noteReindexMatch } = await import('@/lib/studentNotes')
+      const reindex = noteReindexMatch(doc.reindexIngestId, envelope.ingestId)
+      if (reindex) {
+        await dispatchNoteReindex(payload, doc, envelope, reindex === 'retire')
         return
       }
 
@@ -900,9 +902,16 @@ async function dispatchNoteReindex(
   payload: Awaited<ReturnType<typeof getPayload>>,
   doc: DocumentSnapshot,
   envelope: Extract<CallbackEnvelope, { event: 'ingest.completed' | 'ingest.failed' }>,
+  /** The swap did not happen (held or withdrawn mid-re-index): this copy is the revision's text. */
+  notSwapped: boolean,
 ): Promise<void> {
   const { updateDocumentColumns } = await import('@/lib/documentColumns')
-  if (envelope.event === 'ingest.completed' && doc.publicationStatus !== 'published') {
+  // 🔴 RETIRE WHAT LANDED IF THE NOTE MAY NOT BE IN THE SHARED CORPUS: not
+  // swapped, no longer published, or held for consent (read now). The worker
+  // upsert clears an earlier retirement, so this runs after it. Both events: a
+  // partial landing is still a landing. Idempotent (`retireFrom`).
+  const { readConsentHeld } = await import('@/lib/consentHold')
+  if (notSwapped || doc.publicationStatus !== 'published' || (await readConsentHeld(payload, doc.id))) {
     const organizationId = relationId(doc.organization)
     if (organizationId != null) {
       const { getAdminAIClient } = await import('@/lib/aiClient')
@@ -918,7 +927,8 @@ async function dispatchNoteReindex(
   await updateDocumentColumns(payload as never, {
     id: doc.id,
     data: { reindexIngestId: null },
-    where: [{ reindexIngestId: { equals: envelope.ingestId } }],
+    // The value read (the plain id or its `retire:` mark), so a newer re-index is left alone.
+    where: [{ reindexIngestId: { equals: doc.reindexIngestId } }],
   })
 }
 

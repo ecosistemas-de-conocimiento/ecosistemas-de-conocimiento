@@ -44,7 +44,10 @@ vi.mock('@/lib/aiClient', () => {
         calls.push({ path: path.join('.'), args })
         const hook = (globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue
         if (path.join('.') === 'ingest.enqueue' && hook) await hook()
-        return { ok: true, ingestId: `ing-${calls.length}` }
+        // Unique for the whole file: the callback route dedupes by ingest id.
+        const g = globalThis as { __ingestSeq?: number }
+        g.__ingestSeq = (g.__ingestSeq ?? 0) + 1
+        return { ok: true, ingestId: `ing-${g.__ingestSeq}` }
       },
     })
   return { getAdminAIClient: () => client([]), getAppAIClient: () => client([]) }
@@ -695,7 +698,9 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
             // No swap: the note's text, gate columns and graph rows are the old ones.
             expect(await row(NOTE)).toEqual(before)
             expect(await noteLabels()).toEqual(labelsBefore)
-            expect(await reindexOf()).toEqual(reindexBefore)
+            // Not swapped: the column marks the re-index to retire when it lands, never as live.
+            expect(String(await reindexOf())).toMatch(/^retire:/)
+            expect(await reindexOf()).not.toEqual(reindexBefore)
             // The revision is kept and its claim handed back.
             const kept = await revisionOf(NOTE)
             expect([Number(kept?.id), kept?.p]).toEqual([rev, 'draft'])
@@ -805,6 +810,85 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         expect(retiresOf(NOTE)).toHaveLength(0)
         expect((await row(NOTE)).p).toBe('published')
       })
+
+      /**
+       * 🔴 THE LATE INGEST. ai-service answers the enqueue when it QUEUES the
+       * job; its worker upserts later (`validTo = null`), clearing the retire
+       * the promotion did. The re-index's callback, arriving after both, must
+       * retire it again. `stop` lands inside the enqueue (after the entry check).
+       */
+      const lateReindex = async (stop: () => Promise<unknown>, reason: 'consent-held' | 'withdrawn') => {
+        const rev = await changeAndWait()
+        let ingestId = ''
+        ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = async () => {
+          ingestId = `ing-${((globalThis as { __ingestSeq?: number }).__ingestSeq ?? 0) + 1}` // what the mocked enqueue answers next
+          await stop()
+        }
+        aiCalls.length = 0
+        try {
+          expect(await landDraftIngest(rev)).toEqual({ published: false, reason })
+        } finally {
+          ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = undefined
+        }
+        expect(retiresOf(NOTE)).toHaveLength(1) // the promotion's own retire
+        // ...then the worker lands (the copy is live again) and calls back.
+        aiCalls.length = 0
+        const res = await post({ event: 'ingest.completed', ingestId, docId: String(NOTE), corpus: 'eco-8' })
+        expect(res.status).toBe(200)
+        expect(retiresOf(NOTE)).toHaveLength(1) // retired again, after the landing
+        expect((await rowsOf(pg!.db, sql`SELECT reindex_ingest_id AS x FROM documents WHERE id = ${NOTE}`))[0]!.x).toBeNull()
+        return rev
+      }
+
+      it('🔴 held during the re-index, the ingest lands after the retire: the callback retires it again', async () => {
+        const holdNote = (on: boolean) => pg!.db.execute(sql`UPDATE documents SET consent_held = ${on} WHERE id = ${NOTE}`)
+        try {
+          await lateReindex(() => holdNote(true), 'consent-held')
+          expect((await row(NOTE)).p).toBe('published') // the note itself is left as it was
+        } finally {
+          await holdNote(false)
+        }
+        // The kept revision, released, is promoted (and clears the column for the next test).
+        const kept = Number((await revisionOf(NOTE))!.id)
+        expect(await landDraftIngest(kept)).toEqual({ published: true })
+        await pg!.db.execute(sql`UPDATE documents SET reindex_ingest_id = NULL WHERE id = ${NOTE}`)
+      }, 60_000)
+
+      it('🔴 the REVISION held during the re-index, note still published and not held: retired again on landing', async () => {
+        let revId = 0
+        const holdRev = (on: boolean) =>
+          pg!.db.execute(sql`UPDATE documents SET consent_held = ${on} WHERE revision_of_id = ${NOTE}`)
+        try {
+          revId = await lateReindex(() => holdRev(true), 'consent-held')
+        } finally {
+          await holdRev(false)
+        }
+        expect(await landDraftIngest(revId)).toEqual({ published: true })
+        await pg!.db.execute(sql`UPDATE documents SET reindex_ingest_id = NULL WHERE id = ${NOTE}`)
+      }, 60_000)
+
+      it('🔴 withdrawn during the re-index, the ingest lands after the retire: the callback retires it again', async () => {
+        await lateReindex(
+          () => pg!.db.execute(sql`UPDATE documents SET publication_status = 'unpublishing' WHERE id = ${NOTE}`),
+          'withdrawn',
+        )
+        await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published' WHERE id = ${NOTE}`)
+      }, 60_000)
+
+      it('🔴 swapped, then held before the re-index landed: the callback retires it', async () => {
+        const rev = await changeAndWait()
+        expect(await landDraftIngest(rev)).toEqual({ published: true })
+        const reindex = String((await rowsOf(pg!.db, sql`SELECT reindex_ingest_id AS x FROM documents WHERE id = ${NOTE}`))[0]!.x)
+        await pg!.db.execute(sql`UPDATE documents SET consent_held = true WHERE id = ${NOTE}`)
+        try {
+          aiCalls.length = 0
+          expect((await post({ event: 'ingest.completed', ingestId: reindex, docId: String(NOTE), corpus: 'eco-8' })).status).toBe(200)
+          expect(retiresOf(NOTE)).toHaveLength(1)
+          expect((await row(NOTE)).p).toBe('published')
+        } finally {
+          await pg!.db.execute(sql`UPDATE documents SET consent_held = false WHERE id = ${NOTE}`)
+        }
+      }, 60_000)
 
       it('🔴 the note was deleted: a shared-corpus ingest for a missing row is ERASED (audit 2026-10-28)', async () => {
         aiCalls.length = 0
