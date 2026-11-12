@@ -354,7 +354,7 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
       return original(...a)
     })
     try {
-      // Control: the whole-row write IS clobbered under the same interleaving.
+      // The whole-row write under the same interleaving.
       await insertNote(500, SEMIOSIS, ANA)
       const user = await payload!.findByID({ collection: 'users', id: ANA, overrideAccess: true })
       const old = payload!.update({
@@ -376,9 +376,9 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
     } finally {
       spy.mockRestore()
     }
-    // Clobbered: the bug, on `ingest_status`. `publication_status` is no longer
-    // written back from a stale read (`collections/hooks/writtenOnlyWhenSent.ts`).
-    expect([(await row(500)).p, (await row(500)).i]).toEqual(['publishing', 'n/a'])
+    // Neither column is written back from a stale read any more, by the
+    // whole-row write either (`collections/hooks/writtenOnlyWhenSent.ts`).
+    expect([(await row(500)).p, (await row(500)).i]).toEqual(['publishing', 'ready'])
     const r = await row(501)
     expect([r.p, r.i, r.b]).toEqual(['publishing', 'ready', `${BODY} dos`])
     expect(paused).toBe(1) // only the control went through `updateOne`

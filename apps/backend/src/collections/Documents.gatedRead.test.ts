@@ -618,17 +618,42 @@ describe('🔴 gateResetForTextEdit — new text re-runs the gate', () => {
     expect(gateResetForTextEdit({ ...original, extractedText: 'nuevo' }, original)).toBeNull()
   })
 
-  it('is applied by bindDocumentToEcosystem on a user PATCH', async () => {
+  // The write's transaction, as `transactionHandle` finds it (`payload.db.sessions[id].db`).
+  const inTransaction = () =>
+    ({
+      user: ana,
+      context: {},
+      transactionID: 'tx1',
+      payload: { db: { sessions: { tx1: { db: { execute: async () => ({ rows: [] }) } } } } },
+    }) as unknown as PayloadRequest
+
+  it('is applied by bindDocumentToEcosystem on a user PATCH; the status is deferred to a guarded write', async () => {
     const original = storedTestimonio('approved')
+    const req = inTransaction()
     const out = (await bindDocumentToEcosystem({
       data: { ...original, extractedText: 'texto corregido' },
       originalDoc: original,
       operation: 'update',
-      req: { user: ana } as unknown as PayloadRequest,
+      req,
     } as never)) as Record<string, unknown>
-    expect(out.anonymisationStatus).toBe('n/a')
+    // 🔴 Left at the value read, so `writtenOnlyWhenSent` drops it from the
+    // UPDATE; `applyStatusReset` sets `n/a` WHERE it is still `approved`.
+    expect(out.anonymisationStatus).toBe('approved')
+    expect((req.context as Record<string, unknown>).__textEditStatusReset).toEqual({ [String(original.id)]: 'approved' })
     expect(out.redactedText).toBeNull()
     expect(out.extractedText).toBe('texto corregido')
+  })
+
+  it('🔴 refused (409) on a user PATCH with no transaction: the guarded write could not roll the edit back', async () => {
+    const original = storedTestimonio('approved')
+    await expect(
+      bindDocumentToEcosystem({
+        data: { ...original, extractedText: 'texto corregido' },
+        originalDoc: original,
+        operation: 'update',
+        req: { user: ana, context: {} } as unknown as PayloadRequest,
+      } as never),
+    ).rejects.toMatchObject({ status: 409 })
   })
 
   it('is NOT applied to a server-side write (the extractor feeds the gate)', async () => {
