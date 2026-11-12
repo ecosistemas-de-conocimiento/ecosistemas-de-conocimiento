@@ -2909,6 +2909,64 @@ $0.005182, 2 `baai/bge-m3` rows $0.000002.
 
 ---
 
+### 4zzzzzzzzz. Done 2026-11-12 02:14-02:31 UTC: dev only - no migration; consent hold on the workshop, stale AI titles
+
+Measured by the deploy agent from the owner's laptop and on edc-1 (box clock 2026-11-12 UTC, 2026-11-11 in Mexico).
+Staging untouched: web and backend "Up 3 weeks", ai-service "Up 5 days", tag `97d5316a` (`docker ps` after). Range
+`c4f53632` (the 2026-11-10 22:57 build, backup `20261110T2256Z`; it has no entry here) -> `a6026876`, 43 commits:
+waves 10-11 (filters and sorts only reach readable rows and fields, bounded relation filters and new conversations
+per account, consent gaps, raw errors kept out of every logger) and docs. No file under `apps/backend/src/migrations`
+and no `infra/docker-compose.yml` change in the range, so no variable check (§4 footgun 1).
+
+Pre-check: `docker ps` web, backend and ai-service on `c4f53632`; `GET /api/v1/deployments` empty; GitHub `main` =
+`a6026876` (`git ls-remote`); 0 active queries on `edc_backend`; `payload_migrations` 25; 15 users, 1106 documents;
+last document write 2026-11-07 00:37; 0 rows with `consent_held`.
+
+Backup `/root/backups/20261112T0214Z/` under `umask 077`: `edc_ai` 313 MB, `edc_backend` 19 MB, plus `documents`,
+`organizations`, `platform_settings` and `anonymisation_setting_changes` alone, 17 MB; `pg_restore -l` 152 / 507 / 75
+lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's `cide/backups/edc-1/20261112T0214Z/`
+under `umask 077`, `sha256sum -c` passed, files 600, folder 700. Retention (§7 step 7) not applied in this run: dev
+now holds 9 stamps on each side.
+
+| deploy | uuid | queued -> finished (UTC) |
+|---|---|---|
+| first | `oasz1bbobuf3ongfycrneh0q` | 02:16:40 -> 02:22:48 |
+
+**No migration** at start, 02:22:52: "Reading migration files", `Done.`, "Ready in 811ms". `payload_migrations` 25,
+last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `a6026876`, healthy (postgres, redis and
+rustfs were recreated too, same volumes); 0 `error`/`fatal` lines in 8 of 9 after 02:22; postgres 2, one from the
+deploy agent's own bad query and one from a read-only query of stored error columns run by another session at 02:28.
+
+**Smoke**
+
+| check | result |
+|---|---|
+| health | `dev.` and `api.dev.` `/api/health` 200; ai-service `/health` 200 inside its container |
+| login, estudiante1, web `POST /api/auth/login` with `Origin` | 200 |
+| deactivated account | not run: 0 users with `is_active = false` on dev |
+| chat, estudiante1, org 8, "¿Qué es un signo según Peirce?" (`POST /api/generate`) | 200 in 12.2 s; 926 characters, 5 citation markers, 6 `provenance.chunks`; session deleted (200) |
+
+**Data scripts**, inside the backend container with `node_modules/.bin/payload run`, dry run first each time:
+
+| script | dry run | applied |
+|---|---|---|
+| `hold-for-consent.ts`, `CONSENT_ORG=8`, `CONSENT_IDS_FILE` = the workshop list (`plan/orchestration/taller-2026-11-10/consent-ids.txt`, copied in and removed after) | 184 ids read, the 3 `EXTRA-NO-TALLER` lines left out; selected 184, all `draft` documentos, 0 already held, 0 refused, 0 `notDraft`, 0 revisions; the ids equal the file's minus those 3 | yes: `consent_held` true on 184 rows, all org 8, all `draft`; a second dry run reads `alreadyHeld` 184 |
+| `refresh-ai-titles.ts`, all ecosistemas | selected 233; 52 distinct stale ids (eco-6 20, eco-7 10, eco-8 22), 104 counting both ai-service copies; eco-1 and eco-3 0; 0 of the 52 held | yes: `written` 104; a second dry run reads `stale` 0 |
+| `backfill-provenance-titles.ts`, `PROVENANCE_ORG` 1, 3, 6, 7, 8 | scanned 17 / 3 / 9 / 7 / 9 messages; 0 stale citations in every org; org 8: 1 message skipped as `consentHeld`; `missingDocument` 12 (org 6) and 14 (org 7) | no: nothing to write |
+| `clear-legacy-held-text.ts`, all | 2 rows would be cleared (docs 1039, 1129) | no: no expected count, and its `held_text_hash` handling is still being changed on an unlanded branch |
+
+`clean-stored-errors.ts` is not in `a6026876` (it is on `fix/filas-viejas-2026-11-11`): not run.
+
+Spend: `usage_logs` since 02:14 UTC, all from this run: 2 `edc-eco-8` `router.route` `deepseek/deepseek-chat-v3.1`
+rows, $0.002384. The scripts made no model call.
+
+**Cleanup** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): `docker rmi` of dev's
+`367c2698` and `3f14306b` images (backend, ai-service, web); the `c4f53632` images stay for rollback.
+`docker builder prune -af` (14.97 GB). **Disk**, `df -h /` free: 50 GB before, 34 GB after the build, 50 GB after
+the cleanup.
+
+---
+
 ## 5. Where secrets live (names only)
 
 | store | holds |
