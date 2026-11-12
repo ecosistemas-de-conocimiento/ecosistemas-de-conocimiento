@@ -4399,8 +4399,10 @@ async function deleteOwnReviewRowsHook({ id, req }: Parameters<CollectionBeforeD
 
 /**
  * A note's pending "Publicar cambios" revision goes with it. ⚠ BEFORE the
- * delete: the FK is `set null`, so afterwards the revision could no longer be
- * found and would surface as a stray draft. Its own delete hooks retire its
+ * delete: the FK is `ON DELETE cascade`
+ * (`migrations/20261028_231948_documents_note_revisions.ts:41`), so afterwards
+ * Postgres would already have removed the revision without running its hooks.
+ * Deleting it here runs them, and its own delete hooks retire its
  * draft-corpus copy.
  */
 async function deleteRevisionsHook({ id, req }: Parameters<CollectionBeforeDeleteHook>[0]): Promise<void> {
