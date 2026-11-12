@@ -2967,6 +2967,62 @@ the cleanup.
 
 ---
 
+### 4zzzzzzzzzz. Done 2026-11-12 15:22-15:40 UTC: dev only - no migration; legacy held text cleared, stored errors already clean
+
+Measured by the deploy agent from the owner's laptop and on edc-1. Staging not touched. Range `a6026876`
+(§4zzzzzzzzz) -> `6c0f65ad`, 32 commits: consent holds that land mid-run in publish, graph and notes re-index,
+whole-row updates never write `consent_held` or gate columns back, stored reasons and log guards withhold every
+Postgres message that quotes its input (backend and ai-service), `clear-legacy-held-text.ts` keeps
+`held_text_hash`. No file under `apps/backend/src/migrations` and no `infra/docker-compose.yml` change in the range,
+so no variable check (§4 footgun 1).
+
+Pre-check: `docker ps` web, backend and ai-service on `a6026876`; `GET /api/v1/deployments` empty; GitHub `main` =
+`6c0f65ad` (`git ls-remote`); 0 active queries on `edc_backend`; `payload_migrations` 25; 15 users, 1106 documents;
+184 rows with `consent_held`.
+
+Backup `/root/backups/20261112T1523Z/` under `umask 077`: `edc_ai` 313 MB, `edc_backend` 19 MB, plus `documents`,
+`organizations`, `platform_settings` and `anonymisation_setting_changes` alone, 17 MB; `pg_restore -l` 152 / 507 / 75
+lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's `cide/backups/edc-1/20261112T1523Z/`
+under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
+
+| deploy | uuid | queued -> finished (UTC) |
+|---|---|---|
+| first | `sdxkgvtdyleewihtbq1scq5i` | 15:25:01 -> 15:31:18 |
+
+**No migration** at start, 15:31:22: "Reading migration files", `Done.`, "Ready in 864ms". `payload_migrations` 25,
+last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `6c0f65ad`, 7 with a healthcheck all
+healthy; 0 `error`/`fatal` lines from 15:31:00 to 15:33:50 in 8 of 9; postgres 1, the deploy agent's own bad query
+(a wrong column name on `usage_logs`) at 15:32:36.
+
+**Smoke**
+
+| check | result |
+|---|---|
+| health | `dev.` and `api.dev.` `/api/health` 200 (after the deploy and again after cleanup); ai-service `/health` 200 inside its container |
+| login, estudiante1, web `POST /api/auth/login` with `Origin` | 200 |
+| chat, estudiante1, org 8, "¿Qué es un signo según Peirce?" (`POST /api/generate`) | 200 in 12.8 s; 1177 characters, 6 citation markers, 4 `provenance.chunks`; session deleted (200) |
+
+**Data scripts**, inside the backend container with `node_modules/.bin/payload run`, dry run first each time:
+
+| script | dry run | applied |
+|---|---|---|
+| `clear-legacy-held-text.ts`, all | 2 rows (docs 1039, 1129), as on 2026-11-12 02:30 | yes: `cleared` 2; a second dry run selects 0. `held_text_hash` was already NULL on both before the run (`psql`), so `/retry` refuses them whatever the script keeps |
+| `clean-stored-errors.ts`, all (org 8 included) | 0 in each of the 7 columns (`documents.ingest_error`, `publication_error`, `anonymisation_error`, `graph_error`, `messages.corpus_error`, `anonymisation_reviews.gate_reason`, `eval_runs.error`); non-null values 10 / 0 / 23 / 26 / 35 / 54 / 0, none matching the database-error pattern | no: nothing to write |
+
+Spend: `usage_logs` since 15:20 UTC, all from this run: 2 `edc-eco-8` `router.route` `deepseek/deepseek-chat-v3.1`
+rows, $0.002447. The scripts made no model call.
+
+**Cleanup** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): `docker rmi` of dev's
+`c4f53632` images (backend, ai-service, web); the `a6026876` images stay for rollback. `docker builder prune -af`
+(14.97 GB). **Disk**, `df -h /` free: 50 GB before, 35 GB after the build, 50 GB after the cleanup.
+
+**Retention** (§7 step 7), dev only: with the new stamp dev held 10; `20261028T1717Z`, `20261029T0016Z` and
+`20261029T0053Z` deleted in `/root/backups/` and in the laptop copy, 946.0 MB freed on each side (`du -sb`). Dev
+keeps `20261029T0439Z`, `20261029T0643Z`, `20261110T0538Z`, `20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`
+and `20261112T1523Z`, `sha256sum -c` OK on both sides after; staging's 7 unchanged.
+
+---
+
 ## 5. Where secrets live (names only)
 
 | store | holds |
