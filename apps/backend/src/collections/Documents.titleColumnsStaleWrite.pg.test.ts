@@ -28,6 +28,7 @@ vi.mock('@/lib/aiClient', () => {
   return { getAdminAIClient: () => anything, getAppAIClient: () => anything }
 })
 
+import { patchAnonimizacion } from '../lib/anonymisationControls'
 import { beginPublish } from '../lib/publishDocument'
 import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, type RealPostgres } from '../lib/testing/realPostgres'
 
@@ -40,7 +41,8 @@ const DOC = 61
 const row = async () =>
   (await rowsOf(pg.db, sql`SELECT publication_status p, anonymisation_status a, redacted_text r, held_text h,
     name n, testimonio_title tt, anonymisation_report rep, anonymisation_survivors sv, ingest_id iid,
-    ingest_status i, anonymise an, extracted_text x FROM documents WHERE id = ${DOC}`))[0]!
+    ingest_status i, anonymise an, extracted_text x, authors_kept ak, cited_authors_kept ck, public_figures_kept pk,
+    keep_document_author kda FROM documents WHERE id = ${DOC}`))[0]!
 
 const seed = (overrides: Record<string, string> = {}) => {
   const cols: Record<string, string> = {
@@ -113,11 +115,11 @@ async function retry(): Promise<{ status: number; body: unknown }> {
 }
 
 const recorder = () => {
-  const sent: Array<{ corpus: string; title: string }> = []
+  const sent: Array<{ corpus: string; title: string; text: string }> = []
   const client = {
     ingest: {
-      enqueue: async (req: { corpus: string; documents: Array<{ title?: string }> }) => {
-        sent.push({ corpus: req.corpus, title: req.documents[0]?.title ?? '' })
+      enqueue: async (req: { corpus: string; documents: Array<{ title?: string; text?: string }> }) => {
+        sent.push({ corpus: req.corpus, title: req.documents[0]?.title ?? '', text: req.documents[0]?.text ?? '' })
         return { ingestId: `i${sent.length}` }
       },
     },
@@ -224,6 +226,74 @@ describe.skipIf(!dockerOk)('🔴 title, report and pipeline columns vs a stale w
   it('🔴 a USER ingestId without a text edit (refused by field access) does not write the stale value back', async () => {
     await raced(`ingest_id = 'ingest-nuevo'`, () => userWrite({ name: 'x', ingestId: 'PUESTO-POR-USUARIO' }))
     expect(await row()).toMatchObject({ n: 'x', iid: 'ingest-nuevo' })
+  })
+
+  describe('🔴 K3: the keep logs (authorsKept, citedAuthorsKept, publicFiguresKept) vs a stale whole-row write', () => {
+    const LOG = (name: string) => `'[{"name":"${name}","model":null,"at":"2026-11-12T10:00:00.000Z"}]'::jsonb`
+    beforeEach(async () => {
+      await seed({ content_kind: `'documento'`, authors_kept: LOG('VIEJA'), cited_authors_kept: LOG('VIEJO'), public_figures_kept: LOG('VIEJA-PUBLICA') })
+    })
+
+    // One per column: the concurrent narrow write stands, the rename lands.
+    it.each([
+      ['authors_kept', `authors_kept = NULL`, { ak: null }],
+      ['authors_kept', `authors_kept = ${LOG('NUEVA')}`, { ak: [{ name: 'NUEVA' }] }],
+      ['cited_authors_kept', `cited_authors_kept = ${LOG('NUEVO')}`, { ck: [{ name: 'NUEVO' }] }],
+      ['public_figures_kept', `public_figures_kept = ${LOG('NUEVA-PUBLICA')}`, { pk: [{ name: 'NUEVA-PUBLICA' }] }],
+    ])('🔴 %s written concurrently is not written back by a rename (%s)', async (_col, narrow, expected) => {
+      for (const write of [() => serverWrite({ name: 'despues' }), () => userWrite({ name: 'despues' })]) {
+        await seed({ content_kind: `'documento'`, authors_kept: LOG('VIEJA'), cited_authors_kept: LOG('VIEJO'), public_figures_kept: LOG('VIEJA-PUBLICA') })
+        await raced(narrow, write)
+        expect(await row()).toMatchObject({ ...expected, n: 'despues' })
+      }
+    })
+
+    // One per column: a server write that SENDS the column still writes it, over the concurrent value.
+    it.each([
+      ['authorsKept', `authors_kept = ${LOG('NUEVA')}`, { authorsKept: null }, { ak: null }],
+      ['citedAuthorsKept', `cited_authors_kept = ${LOG('NUEVO')}`, { citedAuthorsKept: null }, { ck: null }],
+      ['publicFiguresKept', `public_figures_kept = NULL`, { publicFiguresKept: [{ name: 'VIEJA-PUBLICA', model: null, at: '2026-11-12T10:00:00.000Z' }] }, { pk: [{ name: 'VIEJA-PUBLICA' }] }],
+    ])('control: %s sent explicitly by a server write is written', async (_col, narrow, data, expected) => {
+      await raced(narrow, () => serverWrite(data))
+      expect(await row()).toMatchObject(expected)
+    })
+
+    it('control: no race, a rename leaves the keep logs as stored', async () => {
+      await serverWrite({ name: 'despues' })
+      expect(await row()).toMatchObject({ n: 'despues', ak: [{ name: 'VIEJA' }], ck: [{ name: 'VIEJO' }], pk: [{ name: 'VIEJA-PUBLICA' }] })
+    })
+
+    it('🔴 a USER keep log (refused by field access) is not written', async () => {
+      await raced(`authors_kept = ${LOG('NUEVA')}`, () => userWrite({ name: 'x', authorsKept: null }))
+      expect(await row()).toMatchObject({ n: 'x', ak: [{ name: 'NUEVA' }] })
+    })
+
+    it.each(['user', 'server'] as const)(
+      '🔴 K3 end to end (%s rename): racing the gate’s final write under keepDocumentAuthor, the switch turned off re-gates, and nothing with the name reaches eco-1',
+      async (who) => {
+        const FINAL = `anonymisation_status = 'ready', redacted_text = 'TEXTO CON AUTORA-X', authors_kept = ${LOG('AUTORA-X')},
+          anonymisation_report = '{"settings":{"keepDocumentAuthor":true,"keepCitedAuthors":false,"keepPublicFigures":false},"redactedTitle":"T"}'::jsonb`
+        await seed({ content_kind: `'documento'`, anonymisation_status: `'pending'`, redacted_text: 'NULL', keep_document_author: 'true' })
+        await raced(FINAL, () => (who === 'user' ? userWrite({ name: 'despues' }) : serverWrite({ name: 'despues' })))
+        expect(await row()).toMatchObject({ a: 'ready', n: 'despues', ak: [{ name: 'AUTORA-X' }] })
+
+        const startGate = vi.fn()
+        const fake = { admin: { setDocumentValidity: async () => ({}), deleteDocument: async () => ({}) }, ingest: { enqueue: async () => ({ ingestId: 'x' }) } }
+        const res = await patchAnonimizacion(payload, await userDoc(1), String(DOC), { keepDocumentAuthor: false }, {
+          clientFor: () => fake as never,
+          startGate,
+          purgeGraph: async () => undefined,
+        })
+        expect(res.status).toBe(200)
+        expect((res as { body: { regate?: unknown } }).body.regate).toBe('started')
+        expect(startGate).toHaveBeenCalledTimes(1)
+        expect(await row()).toMatchObject({ kda: false, r: null, ak: null })
+
+        const { sent, client } = recorder()
+        await beginPublish((await payload.findByID({ collection: 'documents', id: DOC, depth: 0, overrideAccess: true })) as never, { payload, client }).catch(() => null)
+        expect(sent.filter((s) => s.corpus === 'eco-1' && (s.text.includes('AUTORA-X') || s.title.includes('AUTORA-X')))).toEqual([])
+      },
+    )
   })
 
   describe('🔴 P4: POST /:id/retry vs a newer verdict', () => {

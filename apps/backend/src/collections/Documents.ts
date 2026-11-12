@@ -3846,6 +3846,8 @@ export const Documents: CollectionConfig = {
       name: 'publicFiguresKept',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      // 🔴 Never written back from a stale read (K3): `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('publicFiguresKept', jsonValidate),
       admin: {
         readOnly: true,
         description: 'Nombres conservados como figuras públicas: nombre, motivo, modelo y fecha.',
@@ -3862,6 +3864,8 @@ export const Documents: CollectionConfig = {
       name: 'authorsKept',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      // 🔴 Never written back from a stale read (K3): `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('authorsKept', jsonValidate),
       admin: {
         readOnly: true,
         description: 'Autoría conservada (quien subió el documento): nombre, modelo y fecha.',
@@ -3877,6 +3881,8 @@ export const Documents: CollectionConfig = {
       name: 'citedAuthorsKept',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      // 🔴 Never written back from a stale read (K3): `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('citedAuthorsKept', jsonValidate),
       admin: {
         readOnly: true,
         description: 'Autores citados conservados: nombre, modelo y fecha.',

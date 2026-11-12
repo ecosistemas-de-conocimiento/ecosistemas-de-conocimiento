@@ -32,6 +32,12 @@
  * under `keepDocumentAuthor`, whose `redactedTitle` the next publish sent with
  * the author's name. `Documents.titleColumnsStaleWrite.pg.test.ts`.
  *
+ * Also on the keep logs `authorsKept`, `citedAuthorsKept` and
+ * `publicFiguresKept` (audit 2026-11-12, K3): a rename racing the gate's final
+ * write under `keepDocumentAuthor` put back `authorsKept = NULL`, so turning
+ * the switch off only refreshed the report (`regatePlan`) and the author's
+ * name stayed in `redactedText` for the next publish. Same test file.
+ *
  * ⚠ Compared DEEPLY (`isDeepStrictEqual` over a JSON round trip): a `json`
  * column's fallback is a parsed object, never `===` to what was read.
  *
