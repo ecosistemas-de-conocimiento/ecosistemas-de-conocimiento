@@ -18,8 +18,44 @@
 const CODE = /^[A-Za-z0-9_.-]{2,40}$/;
 /** A Postgres SQLSTATE: five characters, digits and capitals. */
 const SQLSTATE = /^[0-9A-Z]{5}$/;
-/** drizzle's message shape, also when a wrapper copied it into its own message. */
-const QUERY_TEXT = /Failed query:|\nparams:/;
+/**
+ * Text that can only come from a database error and may quote a value:
+ * drizzle's shape, and every Postgres message, DETAIL or CONTEXT that cites
+ * its input (`Key (…)=(…)`, `invalid input value for enum x: "…"`,
+ * `malformed array literal: "…"`, JSON's `Token "…" is invalid`…). The
+ * backend's `ROW_TEXT_SOURCE` (`apps/backend/src/lib/errorSummary.ts`), copied:
+ * `errorSummary.test.ts` fails when the two differ.
+ */
+export const ROW_TEXT_SOURCE = [
+  'Failed query:',
+  '\\nparams:',
+  '\\)=\\(',
+  'Failing row contains \\(',
+  'DETAIL:',
+  'CONTEXT:',
+  'JSON data, line',
+  'invalid input (syntax|value) for ',
+  'malformed [a-z]+ literal',
+  'value too long for type',
+  'is out of range for type',
+  'out of range: "',
+  'Token "',
+  'but found "',
+  'Escape sequence "',
+  'invalid byte sequence for encoding',
+  'character with byte sequence',
+  'at or near "',
+  'in ts(query|vector): "',
+  'of jsonpath input',
+  'is not a valid [a-z]+ digit',
+  '" does not exist',
+  'unrecognized [a-z ]+ "',
+  'LINE [0-9]+:',
+  'invalid value "',
+  'invalid hexadecimal (digit|data)',
+  'violates (unique|foreign key|not-null|check|exclusion) constraint'
+].join('|');
+const QUERY_TEXT = new RegExp(ROW_TEXT_SOURCE);
 
 function className(err: object): string {
   const ctor = (err as { constructor?: { name?: unknown } }).constructor;

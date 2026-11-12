@@ -23,18 +23,10 @@
 import type { FieldHook } from 'payload'
 
 import type { ConsentDb } from './consentHold'
-import { REDACTED } from './errorSummary'
+import { REDACTED, ROW_TEXT_SOURCE } from './errorSummary'
 
-/**
- * Text that can only come from a database error, in a string. drizzle's shape
- * (also when a wrapper copied it), plus Postgres messages and details that
- * quote a value: `Key (email)=(…)`, `Failing row contains (…)`,
- * `invalid input syntax for type integer: "…"`, and constraint violations.
- * ⚠ Valid as both a JS and a Postgres (ARE) regex: the SQL prefilter is this
- * same source. No `\b`, which is a backspace in Postgres.
- */
-export const ROW_TEXT_SOURCE =
-  'Failed query:|\\nparams:|Key \\(.*\\)=\\(|Failing row contains \\(|invalid input syntax for type|violates (unique|foreign key|not-null|check|exclusion) constraint'
+/** The pattern lives with the log guards (`lib/errorSummary`): one class, every reader and writer. */
+export { ROW_TEXT_SOURCE }
 const ROW_TEXT = new RegExp(ROW_TEXT_SOURCE)
 
 /** The `code: ` our writers put first (`ingest_failed`, `verify`, `content`). */

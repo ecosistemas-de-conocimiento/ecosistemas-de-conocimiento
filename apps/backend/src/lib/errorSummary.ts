@@ -79,8 +79,57 @@ function framesOnly(stack: unknown): string | undefined {
   return frames.length ? frames.join('\n') : undefined
 }
 
-/** drizzle's message shape, also when a wrapper copied it into its own message. */
-const QUERY_TEXT = /Failed query:|\nparams:/
+/**
+ * Text that can only come from a database error and may quote a value: the
+ * row being written, a key, the input Postgres refused. drizzle's shape (also
+ * when a wrapper copied it into its own message), and every Postgres 16
+ * message, DETAIL or CONTEXT that cites its input:
+ *   · `Key (email)=(…)`, `Failing row contains (…)` (23505, 23503, 23502, 23514);
+ *   · `invalid input syntax for type integer: "…"`, `invalid input value for
+ *     enum x: "…"`, `malformed array|record|range literal: "…"` (22P02);
+ *   · `value "…" is out of range for type`, `…out of range: "…"`, `value too
+ *     long for type` (22003, 22008, 22001);
+ *   · JSON's `Token "…" is invalid`, `…but found "…"`, `Escape sequence "…"`,
+ *     `CONTEXT: JSON data, line 1: …`;
+ *   · `invalid byte sequence for encoding`, `syntax error at or near "…"`,
+ *     `syntax error in tsquery: "…"`, `invalid value "…" for`, and any text a
+ *     wrapper prefixed with `DETAIL:` or `CONTEXT:`; constraint violations.
+ * A clean reason (`no_audio_stream: the file has no audio`) matches none.
+ *
+ * ⚠ Valid as both a JS and a Postgres (ARE) regex: `scripts/clean-stored-errors.ts`
+ * prefilters in SQL with this same source (`lib/storedReason.ts`). No `\b`
+ * (a backspace in Postgres) and no `.` (it matches a newline only in Postgres).
+ */
+export const ROW_TEXT_SOURCE = [
+  'Failed query:',
+  '\\nparams:',
+  '\\)=\\(',
+  'Failing row contains \\(',
+  'DETAIL:',
+  'CONTEXT:',
+  'JSON data, line',
+  'invalid input (syntax|value) for ',
+  'malformed [a-z]+ literal',
+  'value too long for type',
+  'is out of range for type',
+  'out of range: "',
+  'Token "',
+  'but found "',
+  'Escape sequence "',
+  'invalid byte sequence for encoding',
+  'character with byte sequence',
+  'at or near "',
+  'in ts(query|vector): "',
+  'of jsonpath input',
+  'is not a valid [a-z]+ digit',
+  '" does not exist',
+  'unrecognized [a-z ]+ "',
+  'LINE [0-9]+:',
+  'invalid value "',
+  'invalid hexadecimal (digit|data)',
+  'violates (unique|foreign key|not-null|check|exclusion) constraint',
+].join('|')
+const QUERY_TEXT = new RegExp(ROW_TEXT_SOURCE)
 
 /**
  * Is this, or anything in its `cause` chain, a database error? Then its text

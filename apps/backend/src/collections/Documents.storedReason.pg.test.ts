@@ -37,6 +37,8 @@ const PLATFORM = 9
 
 const DOC = 20 // published documento: every member of the ecosistema reads it
 const MSG = 40
+const REVIEW = 60
+const EVAL = 70
 
 /** What drizzle stored: the query and the row it was writing. */
 const DRIZZLE = 'Failed query: update "documents" set "extracted_text" = $1 where "documents"."id" = $2\nparams: Juana Perez vive en Milpa Alta,20'
@@ -83,8 +85,12 @@ describe.skipIf(!dockerOk)('stored reason columns: no raw database text over RES
       INSERT INTO sessions (id, user_id, organization_id, title) VALUES (30, ${ANA}, 1, 'Riego');
       INSERT INTO messages (id, session_id, role, content, corpus_error)
         VALUES (${MSG}, 30, 'user', 'hola', E'ingest_failed: ${raw.replace(/\n/g, '\\n')}');
+      INSERT INTO anonymisation_reviews (id, organization_id, reviewer_id, decision, gate_reason)
+        VALUES (${REVIEW}, 1, ${PLATFORM}, 'approved', E'content: ${raw.replace(/\n/g, '\\n')}');
+      INSERT INTO eval_runs (id, organization_id, status, error)
+        VALUES (${EVAL}, 1, 'failed', 'invalid input value for enum enum_documents_kind: "Juana Perez vive en Milpa Alta"');
     `))
-    for (const t of ['users', 'organizations', 'memberships', 'documents', 'sessions', 'messages']) {
+    for (const t of ['users', 'organizations', 'memberships', 'documents', 'sessions', 'messages', 'anonymisation_reviews', 'eval_runs']) {
       await pg.db.execute(sql.raw(`SELECT setval(pg_get_serial_sequence('${t}', 'id'), 1000)`))
     }
     for (const id of [ANA, RITA, PLATFORM]) {
@@ -131,5 +137,21 @@ describe.skipIf(!dockerOk)('stored reason columns: no raw database text over RES
     const text = await res.text()
     expect(text).not.toMatch(ROW_TEXT)
     expect((JSON.parse(text) as { corpusError?: unknown }).corpusError).toBe('ingest_failed: [database error text withheld]')
+  })
+
+  it('🔴 GET /api/anonymisation-reviews/:id: gateReason withheld, the code kept', async () => {
+    const res = await rest(`/api/anonymisation-reviews/${REVIEW}?depth=0`, tokens.platform!)
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    expect(text).not.toMatch(ROW_TEXT)
+    expect((JSON.parse(text) as { gateReason?: unknown }).gateReason).toBe('content: [database error text withheld]')
+  })
+
+  it('🔴 GET /api/eval-runs/:id: error withheld (a Postgres message quoting its input)', async () => {
+    const res = await rest(`/api/eval-runs/${EVAL}?depth=0`, tokens.platform!)
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    expect(text).not.toMatch(ROW_TEXT)
+    expect((JSON.parse(text) as { error?: unknown }).error).toBe('[database error text withheld]')
   })
 })

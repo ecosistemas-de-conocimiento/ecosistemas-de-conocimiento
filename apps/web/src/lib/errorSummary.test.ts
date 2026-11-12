@@ -1,9 +1,11 @@
 /**
  * P-07 (re-audit 2026-11-10): what a log line may keep of an error.
  */
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
-import { errSummary, safeErrMessage } from './errorSummary';
+import { errSummary, ROW_TEXT_SOURCE, safeErrMessage, safeReason } from './errorSummary';
 
 const TESTIMONY = 'Me llamo Ana Pérez y en 2019 mi hermano';
 
@@ -80,5 +82,43 @@ describe('safeErrMessage', () => {
 
   it('truncates a long message', () => {
     expect(safeErrMessage(new Error('x'.repeat(1000)), 10)).toBe(`Error: ${'x'.repeat(10)}`);
+  });
+});
+
+/** Postgres 16 messages that quote their input (shapes from a real server, 2026-11-12). */
+const QUOTING = [
+  'invalid input value for enum enum_documents_publication_status: "Ana Pérez"',
+  'malformed array literal: "Ana Pérez"',
+  'malformed record literal: "Ana Pérez"',
+  'malformed range literal: "Ana Pérez"',
+  'invalid input syntax for type integer: "Ana Pérez"',
+  'invalid input syntax for type json Token "Ana" is invalid.',
+  'value "99999999999999" is out of range for type integer',
+  'date/time field value out of range: "2019-13-45"',
+  'duplicate key value violates unique constraint "users_email_idx" Key (email)=(Ana Pérez) already exists.',
+  'new row for relation "t" violates check constraint "t_v_check" Failing row contains (Ana Pérez).',
+  'syntax error in tsquery: "Ana Pérez &"',
+  'DETAIL: Ana Pérez'
+];
+
+describe('safeReason: any Postgres text that quotes a value (audit 2026-11-12)', () => {
+  it.each(QUOTING)('withholds %s, keeping the code', (msg) => {
+    expect(safeReason(`ingest_failed: ${msg}`)).toBe('ingest_failed: [database error text withheld]');
+    expect(safeReason(msg)).toBe('[database error text withheld]');
+    expect(safeErrMessage(msg)).not.toContain('Ana');
+  });
+
+  it('a clean reason passes unchanged', () => {
+    for (const v of ['no_audio_stream: the file has no audio', 'verify: 2 nombres', 'publish_failed: timeout', 'gate: 1 nombre']) {
+      expect(safeReason(v)).toBe(v);
+    }
+  });
+
+  it("is the backend's pattern, character for character", () => {
+    const backend = readFileSync(new URL('../../../backend/src/lib/errorSummary.ts', import.meta.url), 'utf8');
+    const list = /export const ROW_TEXT_SOURCE = \[([\s\S]*?)\]\.join/.exec(backend)?.[1];
+    expect(list).toBeTruthy();
+    const items = [...list!.matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1]!.replace(/\\\\/g, '\\'));
+    expect(items.join('|')).toBe(ROW_TEXT_SOURCE);
   });
 });
