@@ -1,7 +1,7 @@
 # Estrategia de pruebas
 
-- **Versión:** 1.3
-- **Fecha:** 2026-11-11
+- **Versión:** 1.4
+- **Fecha:** 2026-11-12
 - **Estado:** vigente
 - **Fuentes:** `TESTING.md`, notas de contexto del equipo (Etapa 1), `package.json` (raíz), `apps/web/package.json`, `apps/backend/package.json`, `apps/web/vite.config.ts`, `apps/web/playwright.config.ts`, `apps/web/e2e/`, `apps/web/e2e/evidencia/`, `apps/backend/e2e/`, `apps/backend/src/eval/RESULTS.md`, `services/ai-service/.github/workflows/`, `plan/mapa-historias.md`, `plan/orchestration/auditoria-2026-11-10/revision-ola4.md` (fuera del repositorio). Conteos de archivos medidos con `find` y `ls` sobre `main` en `b7dc944f` el 2026-11-10.
 
@@ -202,7 +202,9 @@ Estas reglas salen de incidentes reales. Cada una está anclada a su fuente.
 
 ## 5. Conteos de pruebas
 
-Último conteo, sobre `main` en la integración del 2026-11-11: `apps/backend` unas 6 195, `apps/web` unas 3 093, `services/ai-service` 2 164 unitarias y 383 de integración (citado del registro de esa integración; máquina y carga no constan aquí).
+Último conteo, sobre `main` en la integración del 2026-11-12 (línea de corte f971d54c): `apps/backend` 6 525 pruebas y 4 omitidas, `apps/web` 3 133, `services/ai-service` 2 176 unitarias y 383 de integración (citado del registro de esa integración; máquina y carga no constan aquí). El conteo anterior, de la integración del 2026-11-11, fue de unas 6 195, 3 093 y 2 164 más 383 (citado).
+
+Auditorías independientes por rama: las 9 ramas de correcciones integradas el 2026-11-11 y 2026-11-12 (`checkouts-anidados`, `grafo-retencion-carrera`, `publicacion-tardia`, `enmascarado-regla`, `filas-viejas` y las cuatro `escritura-vieja-*`) tuvieron cada una su auditoría independiente; todas terminaron CONFIRMED tras sus correcciones (citado del handoff del coordinador, fuera del repositorio; detalle en [Cronología e hitos](../01-proyecto/cronologia-e-hitos.md) §4.1).
 
 ### 5.1 Medición del 2026-11-10
 
@@ -315,7 +317,7 @@ No hay integración continua activa.
 
 ## 10. Recomendaciones
 
-1. **Medir los conteos que faltan y repetir en una máquina sin carga.** Backend y web se midieron el 2026-11-10 (§5.1), con carga alta. De `services/ai-service` solo hay el conteo citado del 2026-11-11 (§5); faltan los `packages/*`. Actualizar `TESTING.md` con fecha, máquina y carga, y anotar que `svelte-kit sync` es requisito de `src/eval/harness.test.ts`.
+1. **Medir los conteos que faltan y repetir en una máquina sin carga.** Backend y web se midieron el 2026-11-10 (§5.1), con carga alta. De `services/ai-service` solo hay el conteo citado del 2026-11-12 (§5); faltan los `packages/*`. Actualizar `TESTING.md` con fecha, máquina y carga, y anotar que `svelte-kit sync` es requisito de `src/eval/harness.test.ts`.
 2. **Correr la suite e2e completa en el stack falso aislado** y registrar resultado por suite, incluidas las cuatro sin resultado (`publish`, `storage`, `featuresLock`, `revision`) y los specs de grafo, micrófono y teléfono.
 3. **Activar una integración continua mínima.** Un workflow en la raíz que compile los tres paquetes y corra `pnpm typecheck` y `pnpm test`. Las `*.pg.test.ts` ya funcionan con docker en el runner. Los e2e pueden quedarse manuales al principio.
 4. **Actualizar `TESTING.md` y las notas de contexto del equipo.** Ambos dicen que la web no tiene DOM ni pruebas de render. Las notas de contexto además dicen que el umbral del grafo es 3 y que los límites de ai-service son por IP; las dos cosas cambiaron (ver [Guía del desarrollador](../08-manuales/guia-del-desarrollador.md), sección de reglas de privacidad).

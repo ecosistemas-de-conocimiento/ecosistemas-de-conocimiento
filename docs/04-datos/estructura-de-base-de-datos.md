@@ -1,9 +1,9 @@
 # Estructura de base de datos y almacenamiento
 
-- **Versión:** 1.3
-- **Fecha:** 2026-11-11
+- **Versión:** 1.4
+- **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** `apps/backend/src/migrations/` (25 migraciones en `main`, `index.ts`, `README.md`, snapshot `20261110_181621_consent_held_reviews_keep.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29, revisada contra `main` en `b7dc944f` el 2026-11-10 y en `687ff21e` el 2026-11-11. Estado de dev: `c4f53632`, desplegado el 2026-11-10 a las 23:03 UTC (versión medida con `docker ps` en edc-1 el 2026-11-11; la migración, citada del reporte del despliegue); "pendiente de desplegar en dev" se refiere a él.
+- **Fuentes:** `apps/backend/src/migrations/` (25 migraciones en `main`, `index.ts`, `README.md`, snapshot `20261110_181621_consent_held_reviews_keep.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29, revisada contra `main` en `b7dc944f` el 2026-11-10, en `687ff21e` el 2026-11-11 y en `f971d54c` el 2026-11-12. Estado de dev: `f971d54c`, desplegado el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), sin migración nueva; `payload_migrations` 25, último lote 17.
 
 ## Para quién es y qué responde
 
@@ -164,7 +164,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 - `sessions`: `user_id`, `organization_id`
 - `messages.session_id`
 - `suggestions.author_id` (aquí es intencional: la sugerencia sobrevive sin autor), `eval_runs.triggered_by_id`
-- `anonymisation_reviews.document_id`, desde `20261110_181621_consent_held_reviews_keep` (antes `cascade`). La columna pasa a admitir nulo y `document_id_snapshot` guarda el id del documento borrado. Así, borrar un documento conserva la decisión que tomó otra persona; solo se van con él las filas de revisión de quien lo borra (`deleteOwnReviewRows` en `Documents.ts`), también al borrar una conversación que se lo lleva (commit 17a3ee49). Implementado y desplegado, salvo lo de 17a3ee49 (en `main`, pendiente de desplegar en dev)
+- `anonymisation_reviews.document_id`, desde `20261110_181621_consent_held_reviews_keep` (antes `cascade`). La columna pasa a admitir nulo y `document_id_snapshot` guarda el id del documento borrado. Así, borrar un documento conserva la decisión que tomó otra persona; solo se van con él las filas de revisión de quien lo borra (`deleteOwnReviewRows` en `Documents.ts`), también al borrar una conversación que se lo lleva (commit 17a3ee49). Implementado y desplegado
 
 **Riesgo 23502.** Varias de esas columnas son `NOT NULL`, porque la relación es requerida. Al borrar al padre, Postgres intenta poner `NULL` y falla con el código 23502 (violación de no nulo). En consecuencia, un `DELETE` directo de un usuario o un ecosistema que tenga membresías, conversaciones o documentos falla en la base, salvo que la aplicación borre antes a los hijos. Este comportamiento está afirmado por una prueba automatizada (`apps/backend/src/collections/Ratings.deletePaths.pg.test.ts`, que espera `23502` al borrar un usuario con conversación y un ecosistema con filas), pero no se ha medido contra la base de dev. Para `messages.session_id` el código ya lo resuelve con el gancho `cascadeConversationDelete` de `Sessions.ts`. Para usuarios y ecosistemas no hay solución equivalente; la prueba lo marca como pendiente de una decisión de producto. Ver [../01-proyecto/registro-de-riesgos.md](../01-proyecto/registro-de-riesgos.md).
 
@@ -172,7 +172,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
 ### 2.7 Migraciones
 
-Hay 25 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído en `main` `b7dc944f` el 2026-11-10; sin cambio en `687ff21e`, 2026-11-11). `payload_migrations` pasó de 23 a 24 el 2026-11-10 a las 18:33 UTC (citado, `edc-1.md` §4zzzzzzzz) y a 25 con el despliegue de `c4f53632` a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
+Hay 25 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído en `main` `b7dc944f` el 2026-11-10; sin cambio en `687ff21e`, 2026-11-11, ni en `f971d54c`, 2026-11-12). `payload_migrations` pasó de 23 a 24 el 2026-11-10 a las 18:33 UTC (citado, `edc-1.md` §4zzzzzzzz) y a 25 con el despliegue de `c4f53632` a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). Los tres despliegues del 2026-11-12 (`a6026876`, `6c0f65ad`, `f971d54c`) no trajeron migración: siguen 25 (measured por el agente de despliegue, `edc-1.md` §4zzzzzzzzz a §4zzzzzzzzzzz). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
 
 | # | Migración | Fecha | Propósito |
 |---|---|---|---|
@@ -334,7 +334,7 @@ La lista es `MEDIA_MIME_TYPES` en `apps/backend/src/collections/Media.ts`.
 |---|---|---|
 | Documentos | `application/pdf`, DOCX, XLSX, `application/vnd.ms-excel` y `application/x-cfb` (.xls heredado), `text/csv`, `text/html`, `text/markdown`, `text/plain` | `textUploadsAreText` revisa que los de texto sean texto; `legacyExcelUploads` revisa los .xls |
 | Audio | mpeg y mp3; mp4, x-m4a, m4a y aac; wav, x-wav y wave; ogg; opus; webm; flac y x-flac | |
-| Video, solo por su pista de audio | `video/mp4`, `video/quicktime`, `video/webm` | `audioOnlyWebm` rechaza un WebM con pista de video real |
+| Video: se guarda y se transcribe su audio; la imagen no se procesa (Implementado) | `video/mp4`, `video/quicktime`, `video/webm` | `audioOnlyWebm` rechaza un WebM con pista de video real (el micrófono en vivo graba WebM de solo audio) |
 
 **Excluidos a propósito:** `application/octet-stream` (tipo genérico, no dice qué es), AMR, 3GPP, WMA, AIFF y MKV.
 

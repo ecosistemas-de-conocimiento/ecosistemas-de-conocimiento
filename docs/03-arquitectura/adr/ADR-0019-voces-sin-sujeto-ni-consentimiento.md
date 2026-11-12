@@ -69,7 +69,7 @@ El razonamiento, escrito en `apps/backend/src/collections/Documents.ts`:
 
 ## Estado al 2026-11-10
 
-[ADR-0022](ADR-0022-retencion-por-consentimiento.md) agrega `documents.consentHeld`, una marca que detiene todo procesamiento de un documento mientras sus autores no consienten. No es un nivel de consentimiento: no dice quién consintió ni a qué, y no cambia lo que este ADR decide. Pendiente de desplegar en dev.
+[ADR-0022](ADR-0022-retencion-por-consentimiento.md) agrega `documents.consentHeld`, una marca que detiene todo procesamiento de un documento mientras sus autores no consienten. No es un nivel de consentimiento: no dice quién consintió ni a qué, y no cambia lo que este ADR decide. Desplegado en dev.
 
 ## Referencias
 

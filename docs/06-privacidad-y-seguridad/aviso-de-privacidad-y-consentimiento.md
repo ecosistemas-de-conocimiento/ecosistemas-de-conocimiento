@@ -1,7 +1,7 @@
 # Aviso de privacidad y consentimiento
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-11
+- **Versión:** 1.5
+- **Fecha:** 2026-11-12
 - **Estado:** plantillas en borrador, sin validación jurídica y aún no publicadas en la interfaz
 - **Fuentes:** `apps/web/src/lib/consent.ts`, `apps/web/src/lib/estudiante.ts`, `apps/backend/src/lib/student/testimonioConsent.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/conversationTurnErasure.ts`, brief v1 del proyecto («Repositorio de Voces y Resonancias», documento externo al repo), `plan/anonimizacion-y-voces.md`, `infra/fleet/edc-1.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)
 
@@ -11,14 +11,14 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** está en `c4f53632` o antes, la versión que corre en dev desde el despliegue del 2026-11-10 a las 23:03 UTC (citado del reporte de ese despliegue; no verificado en este documento, y su entrada aún no está en `infra/fleet/edc-1.md`), con evidencia en código. **Implementado (pendiente de desplegar en dev):** está en `main` (`687ff21e`) pero no en `c4f53632`. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` el 2026-11-11. Staging sigue en su imagen del 2026-10-17, y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Los interruptores de nombres siguen [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md). Lo diferido está en [Etapa 2](#etapa-2).
+Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. Staging sigue en su imagen del 2026-10-17, y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Los interruptores de nombres siguen [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md). Lo diferido está en [Etapa 2](#etapa-2).
 
 | Control o procedimiento | Estado | Evidencia o nota |
 |---|---|---|
 | El aviso declara a quien sube documentos o testimonios que por omisión se quitan todos los nombres, qué nombres puede elegir conservar y quién más puede elegirlo (cláusulas 2 y 4; los interruptores están **Implementados** y corren en dev desde el 2026-11-10; el aviso sigue sin publicarse) | **Planeado** | `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts` |
 | Quien sube un documento o un testimonio ve y cambia qué nombres se conservan en él, en la pantalla de anonimización del documento | **Implementado** | `PATCH /api/documents/:id/anonimizacion` |
 | Los valores por omisión del ecosistema los cambian solo el responsable y la administración de plataforma; quien revisa cambia un documento solo si está retenido o publicado | **Implementado** | `lib/permissions.ts`; `lib/anonymisationControls.ts`; commit `50bde2ae` |
-| Un material cuyos autores no han dado su consentimiento queda retenido: no se vuelve a anonimizar, ingerir, extraer al grafo ni publicar | **Implementado** | `lib/consentHold.ts`; `scripts/hold-for-consent.ts`. En dev, los materiales del taller siguen en borrador. Que una revisión de un material retenido también quede retenida, y que publicar sus cambios responda 409: **Implementado (pendiente de desplegar en dev)** (commits `17a5d985`, `b29c72ba`, `c12a0ab5`) |
+| Un material cuyos autores no han dado su consentimiento queda retenido: no se vuelve a anonimizar, ingerir, extraer al grafo ni publicar | **Implementado** | `lib/consentHold.ts`; `scripts/hold-for-consent.ts`. En dev, 184 filas del taller quedaron retenidas el 2026-11-12 (measured por el agente de despliegue, `infra/fleet/edc-1.md` §4zzzzzzzzz). Una revisión de un material retenido también queda retenida, y publicar sus cambios responde 409 (commits `17a5d985`, `b29c72ba`, `c12a0ab5`). Dos casos límite conocidos, que hoy no ocurren, están en [protección de datos](proteccion-de-datos.md#limitaciones-conocidas) |
 | Tres consentimientos del estudiante, apagados por defecto | **Implementado** | `apps/web/src/lib/estudiante.ts`; `apps/web/src/lib/consent.ts` |
 | Fecha y versión del consentimiento de testimonios; rechazo de una versión distinta | **Implementado** | `lib/student/testimonioConsent.ts`; `StudentProfiles.ts` |
 | Retiro automático del consentimiento 3 al apagar `studentTestimonios` | **Implementado** | `clearTestimonioConsentWhenOff` en `Organizations.ts` |
@@ -79,7 +79,7 @@ Definiciones. **Implementado:** está en `c4f53632` o antes, la versión que cor
 
 Versión 1 · Fecha de última actualización: `[fecha de publicación]`
 
-**1. Responsable.** El Centro de Investigación y Docencia Económicas (CIDE), con domicilio en `[domicilio institucional del CIDE]`, es responsable del tratamiento de los datos personales que se recaban en la plataforma Ecosistemas de Conocimiento, parte del proyecto de investigación humanística IH-2025-I-445 financiado por la Secretaría de Ciencia, Humanidades, Tecnología e Innovación (SECIHTI). El responsable técnico del proyecto es [Responsable Técnico] (DEM-CIDE).
+**1. Responsable.** El Centro de Investigación y Docencia Económicas (CIDE), con domicilio en `[domicilio institucional del CIDE]`, es responsable del tratamiento de los datos personales que se recaban en la plataforma Ecosistemas de Conocimiento, parte del proyecto de investigación humanística IH-2025-I-445 financiado por la Secretaría de Ciencia, Humanidades, Tecnología e Innovación (SECIHTI). El responsable técnico del proyecto es `[nombre del responsable técnico]` (DEM-CIDE).
 
 **2. Qué datos personales recabamos.**
 

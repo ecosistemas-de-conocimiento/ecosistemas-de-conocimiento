@@ -65,6 +65,11 @@ RustFS entró en local y dev el 2026-08-14. El 2026-10-17 se fijó como regla pa
 - **Dev.** Corre c4f53632, desplegado el 2026-11-10 a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). El despliegue anterior, 367c2698, fue el mismo día a las 18:33 UTC (citado de `infra/fleet/edc-1.md`, entrada 4zzzzzzzz).
 - **Volcados.** Se conservan los 7 más recientes de cada entorno, en `/root/backups/` y en la copia fuera del servidor. Es un paso manual del procedimiento de despliegue, no una tarea programada. La primera purga, el 2026-11-10, borró 52 volcados de dev y liberó 1231.3 MB en cada lado (medido con `du -sb`; citado de `infra/fleet/edc-1.md`, §7 paso 7).
 
+## Estado al 2026-11-12
+
+- **Dev.** Corre `f971d54c`, desplegado el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz). Ese día hubo tres despliegues sin migración: `a6026876` (02:22 UTC), `6c0f65ad` (15:31 UTC) y `f971d54c` (citado de `infra/fleet/edc-1.md`, §4zzzzzzzzz a §4zzzzzzzzzzz).
+- **Volcados.** Dev conserva 7: `20261029T0643Z`, `20261110T0538Z`, `20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z` y `20261112T1934Z` (citado de `infra/fleet/edc-1.md`, §4zzzzzzzzzzz).
+
 ## Referencias
 
 - [Infraestructura y entornos](../../05-infraestructura/infraestructura-y-entornos.md).

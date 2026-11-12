@@ -37,15 +37,24 @@ Los materiales del taller del ecosistema Semiosis práctica quedaron en borrador
 - Todo camino nuevo que procese documentos debe filtrar con `NOT_CONSENT_HELD` o `notConsentHeldSql()`, o llegar a una función que ya lo haga. Un camino que no lo haga procesa filas retenidas sin error visible.
 - La cuenta de pendientes de nueva anonimización de un ecosistema excluye las filas retenidas; "Reintentar" nunca las alcanza.
 - Una persona que subió un documento retenido no puede publicarlo, reintentarlo ni editar su nota: recibe 409.
-- Desplegado en dev; no consta que el script se haya aplicado en dev.
+- El script se aplicó en dev el 2026-11-12: 184 filas del taller, todas borradores del ecosistema 8 (measured por el agente de despliegue, `infra/fleet/edc-1.md` §4zzzzzzzzz).
 
 ## Estado al 2026-11-11
 
-La decisión no cambia. En `main` (687ff21e), pendiente de desplegar en dev:
+La decisión no cambia. Desplegado en dev:
 
 - **Una revisión hereda la retención.** Una fila de "Publicar cambios" (`revisionOf`) está retenida si lo está su original, o si el original no se puede leer. La marca se escribe solo en el original, así que levantarla sigue siendo un `UPDATE` (commits b29c72ba y c12a0ab5).
 - **Más caminos guardados.** "Publicar cambios" de una nota retenida responde 409 antes de la compuerta; el trabajo del grafo y una ingesta en curso se detienen si la fila quedó retenida; los backfills de títulos y lengua, `regatePlaceHolds` y el seed del corpus la saltan (commits 17a5d985 y c12a0ab5).
 - **Borrar una conversación** que se lleva un documento retenido ya no borra las filas de revisión de otras personas: solo las de quien borra (commit 17a3ee49).
+
+## Estado al 2026-11-12
+
+La decisión no cambia. Desplegado en dev (`f971d54c`, desplegado el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz)):
+
+- **Retenciones a medio camino.** Una retención que llega mientras corre el modelo del grafo lo termina `skipped` y conserva las filas anteriores (commits 1ac2669e, ca5cf2b4). "Publicar cambios" de una nota revisa la retención bajo bloqueo de fila justo antes del cambio, y un re-índice que aterriza después se retira (commits 0d3f2de6, d97271fb, 6a9a3e45).
+- **Publicación tardía.** Una primera publicación que aterriza después de una retención o un retiro se retira, y una fila retenida nunca pasa a publicada (commit 3f5f2a29). Si el retiro falla, el aviso responde 500 y ai-service lo reenvía (commit dd7b7bce).
+- **La marca no vuelve por una escritura vieja.** `consentHeld` nunca va en una actualización de Payload (commit 4a6c77dc).
+- **Limitaciones conocidas.** Dos casos pueden dejar viva una copia compartida; ninguno ocurre hoy y su arreglo va a la Etapa 2 ([seguridad](../../06-privacidad-y-seguridad/seguridad.md#21-limitaciones-conocidas)).
 
 ## Referencias
 

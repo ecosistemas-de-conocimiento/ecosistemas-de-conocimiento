@@ -1,6 +1,6 @@
 # Documentación de Ecosistemas de Conocimiento (EDC)
 
-**Versión** 1.3 · **Fecha** 2026-11-11 · **Estado** vigente · **Código documentado** `main` en `687ff21e` (2026-11-11) · **Desplegado en dev** `c4f53632` (2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11)
+**Versión** 1.4 · **Fecha** 2026-11-12 · **Estado** vigente · **Código documentado** `main` en `f971d54c` (2026-11-12) · **Desplegado en dev** `f971d54c` (2026-11-12)
 
 Esta carpeta documenta la plataforma entregada en la Etapa 1 (agosto a octubre de 2026) del proyecto SECIHTI IH-2025-I-445 del CIDE, cuyo componente de software es la plataforma **Ecosistemas de Conocimiento** y cuyo marco conceptual se llama **Repositorio de Voces y Resonancias**.
 
@@ -10,6 +10,7 @@ La documentación se derivó del código, de las migraciones, de las pruebas, de
 
 | Si quieres… | Empieza por |
 |---|---|
+| Ver en una página qué entregó la Etapa 1 y dónde está la evidencia | [Cierre de la Etapa 1](00-cierre-etapa-1.md) |
 | Entender qué es el proyecto y qué se entregó | [Visión y alcance](01-proyecto/vision-y-alcance.md) |
 | Saber quién es quién y qué significa cada término | [Actores y glosario](01-proyecto/actores-y-glosario.md) |
 | Ver qué puede hacer cada rol en la plataforma | [Historias de usuario](02-requisitos/historias-de-usuario.md) y [Matriz de roles y permisos](02-requisitos/matriz-roles-y-permisos.md) |
@@ -22,6 +23,9 @@ La documentación se derivó del código, de las migraciones, de las pruebas, de
 | Programar en el repositorio | [Guía del desarrollador](08-manuales/guia-del-desarrollador.md) |
 
 ## Índice
+
+### 00 Cierre
+- [Cierre de la Etapa 1](00-cierre-etapa-1.md): entregables con su estado, evidencia, correcciones del 29 de octubre al 12 de noviembre, estado de privacidad, ramas y lo que quedó abierto.
 
 ### 01 Proyecto
 - [Visión y alcance](01-proyecto/vision-y-alcance.md): qué es, para quién, objetivos de la Etapa 1, lo entregado frente al brief, fuera de alcance.
@@ -71,8 +75,11 @@ La documentación se derivó del código, de las migraciones, de las pruebas, de
 - Español de México en la prosa; identificadores de código en inglés tal como aparecen en el repositorio.
 - Fechas absolutas (AAAA-MM-DD).
 - Procedencia en cada número: `medido` (cómo, cuándo, dónde), `inferido` (de qué) o `citado` (de qué documento y fecha). Un documento registra el estado del sistema en la fecha en que se escribió.
-- Estados visibles, sin comentarios ocultos, en toda la carpeta: **Implementado** (en el código y desplegado en dev), **Implementado (pendiente de desplegar en dev)** (en `main`, todavía no en `c4f53632`), **Planeado** (sin código, con plan) y **Pendiente** (sin código ni plan).
-- Desde el 2026-11-10, `main` solo recibe correcciones y la funcionalidad nueva va a la rama `etapa-2`. Lo diferido a esa etapa va en una sección "Etapa 2" del documento que corresponda.
+- Estados visibles, sin comentarios ocultos, en toda la carpeta: **Implementado** (en el código y desplegado en dev), **Implementado (pendiente de desplegar en dev)** (en `main`, todavía no en lo desplegado en dev; al 2026-11-12 nada queda así, porque dev corre `f971d54c`), **Planeado** (sin código, con plan) y **Pendiente** (sin código ni plan).
+- Ramas:
+  - `etapa-1` (`52a4a1a1`): la Etapa 1 sin correcciones, todo lo anterior al 2026-10-29.
+  - `main` (`f971d54c`, 2026-11-12): la Etapa 1 con correcciones, con la etiqueta fija `etapa-1-con-correcciones`. Desde el 2026-11-10 solo recibe correcciones; lo encontrado después de `f971d54c` va a la Etapa 2.
+  - `etapa-2`: la funcionalidad nueva; al 2026-11-12 es igual a `main`. Lo diferido a esa etapa va en una sección "Etapa 2" del documento que corresponda.
 - Nunca se escriben valores de secretos, direcciones IP, correos de usuarios ni contraseñas.
 
 ## Documentos de origen

@@ -3071,6 +3071,20 @@ both sides after; staging's 7 unchanged.
 
 ---
 
+### 4zzzzzzzzzzzz. Done 2026-11-12 20:29-20:32 UTC: dev only - no deploy; 3 test drafts deleted, 2 Dengue documentos gated
+
+Measured from the owner's laptop over ssh, on `f971d54c`; staging not touched; no backup (owner, disposable data).
+R26: docs 823, 824 (markdown, gate n/a) and 1425 (audio, gate rejected), all org 8 drafts, consent_held f (psql);
+`DELETE /api/documents/<id>` as the seed admin, 200 x3 at 20:29:56-58. After: 0 of those ids; documents 1106 -> 1103.
+R27: docs 375 (CSD pdf) and 377 (Res CSDengue docx), org 6, published, anonymise f, gate n/a, uploader user 1 (owner).
+`anonymise` takes no API write (gateWritesOnly), so set by psql (UPDATE 2), then `regate-documents-by-id.ts`
+REGATE_ORG=6 REGATE_IDS=375,377, dry run then apply 20:30:30-20:31:26: regated 2, refused 0, failed 0.
+Result: 375 held (draft, ingest failed = not ingested, waits in Revisión); 377 ready (draft, ingest ready in eco-6-draft-1);
+both graph pending. Neither republished. Spend: detector on the Spark (no usage_logs row); 1 edc-eco-6 bge-m3 row,
+$0.000007. 0 error/fatal lines 20:29-20:32 in backend, ai-service, web, postgres, redis, rustfs.
+
+---
+
 ## 5. Where secrets live (names only)
 
 | store | holds |

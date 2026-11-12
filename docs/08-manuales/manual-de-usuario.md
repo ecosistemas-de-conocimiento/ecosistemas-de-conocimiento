@@ -1,11 +1,11 @@
 # Manual de usuario
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-11
+- **Versión:** 1.5
+- **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** `plan/funcionalidades.md` (inventario por pantalla, 2026-10-27), `plan/mapa-historias.md`, `apps/web/src/lib/nav.ts`, `apps/web/src/lib/miembros.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/routes/` (textos de cada pantalla, leídos en `main` 687ff21e), `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/holdReview.ts`, `apps/backend/src/lib/contentKind.ts`, `apps/backend/src/collections/Media.ts`, `apps/web/e2e/evidencia/`, `plan/ux-demo-backlog.md`, `TESTING.md`.
+- **Fuentes:** `plan/funcionalidades.md` (inventario por pantalla, 2026-10-27), `plan/mapa-historias.md`, `apps/web/src/lib/nav.ts`, `apps/web/src/lib/miembros.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/routes/` (textos de cada pantalla, leídos en `main` 687ff21e y revisados en `f971d54c` el 2026-11-12), `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/holdReview.ts`, `apps/backend/src/lib/contentKind.ts`, `apps/backend/src/collections/Media.ts`, `apps/web/e2e/evidencia/`, `plan/ux-demo-backlog.md`, `TESTING.md`.
 
-**Estados.** Lo que no lleva marca está **Implementado** y desplegado en dev (despliegue c4f53632 del 2026-11-10, citado del reporte de ese despliegue; no verificado en este documento). Lo marcado **Implementado (pendiente de desplegar en dev)** ya está en `main` pero dev todavía se comporta como antes. Lo que aún no existe está en [Etapa 2](#etapa-2).
+**Estados.** Lo que no lleva marca está **Implementado** y desplegado en dev (dev = `f971d54c`, desplegado el 2026-11-12 (citado del coordinador del cierre; no verificado en este documento)). Todo lo que está en `main` `f971d54c` está desplegado en dev. Lo que aún no existe está en [Etapa 2](#etapa-2).
 
 ## Para quién es y qué responde
 
@@ -101,7 +101,7 @@ El tipo se elige al crear la conversación y no cambia después.
   1. En el panel de conversaciones, elige la pestaña **Generales** o **Resonancias**.
   2. Pulsa **Nueva conversación**.
 - **Resultado:** aparece una conversación vacía.
-- **Notas:** cada cuenta abre como máximo 60 conversaciones nuevas por hora; pasado eso ves "No se pudo crear la conversación". Implementado (pendiente de desplegar en dev; `SESSION_RATELIMIT_CREATE_USER_MAX`, commit 36bf6cf5; el 60 es inferido, según el commit).
+- **Notas:** cada cuenta abre como máximo 60 conversaciones nuevas por hora; pasado eso ves "No se pudo crear la conversación". Implementado (`SESSION_RATELIMIT_CREATE_USER_MAX`, commit 36bf6cf5; el 60 es inferido, según el commit).
 
 ### 2.2 Hacer una pregunta
 
@@ -115,7 +115,7 @@ El tipo se elige al crear la conversación y no cambia después.
   - **Esc** detiene una respuesta en curso.
   - Si la respuesta falla, la burbuja dice qué pasó y ofrece **Reintentar**, que vuelve a enviar la misma pregunta.
   - Si la respuesta llega vacía, la burbuja dice "La respuesta llegó vacía." y ofrece **Reintentar**. No se guarda un mensaje vacío.
-  - Si la respuesta excede el límite de longitud, la burbuja dice "La respuesta excedió el límite de longitud." y no ofrece **Reintentar**. Implementado (pendiente de desplegar en dev; commit 6406fadb).
+  - Si la respuesta excede el límite de longitud, la burbuja dice "La respuesta excedió el límite de longitud." y no ofrece **Reintentar**. Implementado (commit 6406fadb).
 
 ### 2.3 Ver las fuentes de una respuesta
 
@@ -228,7 +228,7 @@ El tipo se elige al crear la conversación y no cambia después.
   1. Abre la tarjeta del audio y la pestaña de transcripción.
   2. Pulsa editar, corrige el texto y guarda.
 - **Resultado:** el texto corregido reemplaza al anterior para las búsquedas.
-- **Notas:** una vez publicado, la transcripción ya no se puede corregir.
+- **Notas:** una vez publicado, la transcripción ya no se puede corregir. Si el documento cambió mientras guardabas (por ejemplo, llegó un veredicto de revisión), ves "No se pudo guardar la corrección" con "El documento cambió mientras se guardaba. Vuelve a intentarlo." (commit fdab9a5f).
 
 ### 2.15 Elegir el tipo de aporte y anonimizar
 
@@ -442,7 +442,7 @@ Esta sección existe solo si el ecosistema tiene encendida la **Vista de estudia
   1. Edita la nota.
   2. Pulsa **Publicar cambios**.
 - **Resultado:** ves "Cambios publicados". Todos leen la versión nueva en la Biblioteca.
-- **Notas:** una nota retenida por consentimiento no publica cambios: ves "No se pudo iniciar la publicación". Implementado (pendiente de desplegar en dev; commit 17a5d985).
+- **Notas:** una nota retenida por consentimiento no publica cambios: ves "No se pudo iniciar la publicación". Implementado (commit 17a5d985).
 
 ## 7. Estudiantes (docente)
 
@@ -495,7 +495,7 @@ Cuando la revisión automática no está segura de haber quitado todos los datos
     - **La revisión automática no pudo terminar:** no hay texto revisado que aprobar. Solo puedes rechazarlo.
     - **El modelo detuvo el documento** (etapa de contenido): **Aprobar** solo aparece después de corregir el texto. Mientras tanto ves "Para aprobarlo, corrige el texto.".
     - **La segunda revisión no pudo terminar:** igual que el caso anterior (commit 346b380d).
-    - **La segunda revisión señaló un dato que no se pudo ubicar en el texto:** igual que el caso anterior. Implementado (pendiente de desplegar en dev; commit ec6c4520).
+    - **La segunda revisión señaló un dato que no se pudo ubicar en el texto:** igual que el caso anterior. Implementado (commit ec6c4520).
     - **El documento no llegó a producir texto:** no hay nada que aprobar. Puedes rechazarlo.
   - Corregir significa cambiar palabras o números. Espacios, puntuación o mayúsculas no cuentan (commit 346b380d).
   - Si las opciones de anonimización del documento cambiaron después de la retención, no se puede aprobar. Vuelve a anonimizarlo desde **Anonimización** (tarea 3.6).

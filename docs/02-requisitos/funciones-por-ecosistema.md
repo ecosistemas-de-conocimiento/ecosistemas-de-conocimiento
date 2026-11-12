@@ -1,6 +1,6 @@
 # Funciones por ecosistema
 
-**Versión:** 1.4 · **Fecha:** 2026-11-11 · **Estado:** vigente
+**Versión:** 1.5 · **Fecha:** 2026-11-12 · **Estado:** vigente
 
 **Fuentes:**
 - `apps/backend/src/lib/features.ts` (defaults, dónde se aplica cada función, interruptores bloqueados, lectura con caché)
@@ -14,7 +14,7 @@
 
 ## Para quién es y qué responde
 
-Este documento es para responsables e investigadores que configuran un ecosistema, para el administrador de la plataforma y para quien desarrolle. Responde: qué funciones se pueden encender o apagar en cada ecosistema de Ecosistemas de Conocimiento (EDC), qué hace cada una, cuál es su valor inicial, quién puede cambiarla, cuáles dependen de otra y qué pasa si el sistema no puede leerlas. Al final describe los ajustes que no son funciones por ecosistema: estilos de respuesta, respaldo del detector y variables de entorno. Todo se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10. Lo que está en `main` pero aún no en dev (desplegado: c4f53632, 2026-11-10 a las 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11) se marca **pendiente de desplegar en dev**.
+Este documento es para responsables e investigadores que configuran un ecosistema, para el administrador de la plataforma y para quien desarrolle. Responde: qué funciones se pueden encender o apagar en cada ecosistema de Ecosistemas de Conocimiento (EDC), qué hace cada una, cuál es su valor inicial, quién puede cambiarla, cuáles dependen de otra y qué pasa si el sistema no puede leerlas. Al final describe los ajustes que no son funciones por ecosistema: estilos de respuesta, respaldo del detector y variables de entorno. Todo se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10 y con `main` `f971d54c` el 2026-11-12. Estado de dev = `f971d54c`, desplegado el 2026-11-12 (citado del coordinador del cierre; no verificado en este documento): todo lo que está en `main` `f971d54c` está desplegado en dev.
 
 ## Qué es una función por ecosistema
 

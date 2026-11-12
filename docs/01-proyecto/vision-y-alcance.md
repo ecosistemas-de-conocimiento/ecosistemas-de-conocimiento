@@ -1,7 +1,7 @@
 # Visión y alcance de Ecosistemas de Conocimiento
 
-- **Versión:** 1.3
-- **Fecha:** 2026-11-11
+- **Versión:** 1.4
+- **Fecha:** 2026-11-12
 - **Estado:** vigente
 - **Fuentes:** en el repositorio: `plan/anonimizacion-y-voces.md`, `plan/funcionalidades.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/servidor-desarrollo-build.csv`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md` y el código en `main` del 2026-10-29. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v1-brief-repositorio-voces-resonancias.md` (brief v1, 2026-05-11), `briefs/v0-brief-proyecto-plataforma-ia.md`, `docs/Textos del proyecto/Desarrollo (metodología)/Informe de reunión con desarrollo — 21 de octubre de 2026.docx` (informe del 21 de octubre), `docs/Textos del proyecto/Proyecto/` (carta SECIHTI, «Estado del Proyecto IH-2025-I-445») y la bitácora del proyecto (registros del 2026-10-21, 2026-10-27 y 2026-10-28).
 
@@ -32,7 +32,7 @@ Al cierre de la Etapa 1 (2026-10-28), EDC permite a las personas de un ecosistem
 
 El detalle por historia de usuario está en [Historias de usuario](../02-requisitos/historias-de-usuario.md).
 
-Esta sección describe la plataforma al cierre de la Etapa 1. Las correcciones posteriores, hasta el 2026-11-10, están en [Cronología e hitos](cronologia-e-hitos.md) §4.1 y en el [Roadmap](roadmap.md) §3.0. Desde el 2026-11-10, `main` solo lleva correcciones y la funcionalidad nueva va a la rama `etapa-2`.
+Esta sección describe la plataforma al cierre de la Etapa 1. Las correcciones posteriores, hasta la línea de corte del 2026-11-12 (f971d54c, etiqueta `etapa-1-con-correcciones`), están en [Cronología e hitos](cronologia-e-hitos.md) §4.1 y en el [Roadmap](roadmap.md) §3.0; lo que quedó abierto, en el [Roadmap](roadmap.md#lo-que-quedó-abierto-al-cierre-de-la-etapa-1). Ramas: `etapa-1` (52a4a1a1) es la Etapa 1 sin correcciones, `main` la Etapa 1 con correcciones y `etapa-2` el trabajo nuevo.
 
 ## 2. El problema que resuelve
 
@@ -56,8 +56,8 @@ El horizonte declarado en el brief v1 §2 es la **justicia epistémica**: el der
 | Clave de la propuesta | IH-2025-I-445 | Citado de la carta SECIHTI |
 | Nombre institucional | «Ecosistemas de conocimiento y aprendizaje situado: hacia la implementación de plataformas interactivas humanístico-digitales y de código abierto para la construcción ético-dialógica de saberes pluriepistémicos con impacto social» | Citado de la carta SECIHTI |
 | Convenio | C-1991/2026. El informe del 21 de octubre usa el nombre «Ecosistemas Glocales de Aprendizaje Situado» | Citado del informe del 21 de octubre, tabla de datos de la reunión |
-| Representante legal que firma la carta | [representante legal] | Citado de la carta SECIHTI |
-| Responsable Técnico | [Responsable Técnico] (CIDE-DEM) | Citado del informe del 21 de octubre |
+| Representante legal | Firma la carta en representación de la institución | Citado de la carta SECIHTI |
+| Responsable Técnico | Investigador principal, adscrito al CIDE-DEM | Citado del informe del 21 de octubre |
 | Ministración de la Etapa 1 | $150,000 MXN, recibida el 2026-05-06 | Citado de «Estado del Proyecto IH-2025-i-445» |
 | Partidas citadas | Desarrollo de aplicaciones $50,000; infraestructura y conectividad $40,000; bienes informáticos $30,000 (MXN) | Citado de «Estado del Proyecto». Las tres suman $120,000; la fuente no desglosa los $30,000 restantes (inferido por aritmética) |
 | Fase preoperativa | De agosto de 2025 al 2026-05-06 | Citado de «Estado del Proyecto» |
@@ -86,7 +86,7 @@ Qué significa cada paso según el brief, y qué existe hoy en EDC:
 
 | Paso | Qué pide el brief v1 §3 | Qué existe al 2026-10-28 |
 |---|---|---|
-| Captura | La persona llega por QR o liga, se registra, sube texto, audio, video o imagen, por partes. Recibe un comprobante ético con folio | Subida de documentos, audio y notas; dictado en vivo; transcripción. Sin QR, sin registro abierto, sin video ni imagen, sin comprobante |
+| Captura | La persona llega por QR o liga, se registra, sube texto, audio, video o imagen, por partes. Recibe un comprobante ético con folio | Subida de documentos, audio, video y notas; dictado en vivo; transcripción. Sin QR, sin registro abierto, sin imagen, sin comprobante |
 | Perfil y destino | Un mini-formulario enruta la contribución a una sub-base por tipo de vínculo con el fenómeno | No construido. En el corpus sintético v2 de Discapacidad existe la columna `grupo` con cuatro grupos de vínculo, pero como dato de prueba, no como formulario |
 | Categorización | Ejes independientes: tipo de contribución y temática por ecosistema, con temáticas emergentes sugeridas | `contentKind` (`documento`, `testimonio`, `conversacion`) separa tipos con efecto en privacidad. Las columnas `tema` y `lengua` existen en `documents`. El grafo extrae temas de forma automática. No hay menú de temáticas por ecosistema administrado a mano |
 | Resonancia individual | Sesión de chat que profundiza la contribución de forma mayéutica | Pestaña **Resonancias** y el interruptor «Hazme preguntas» en Generales |
@@ -102,7 +102,7 @@ El brief v1 §3 distingue tres usos de la «resonancia de ecosistema»:
 |---|---|---|---|---|
 | **A. Insumos para talleres** | Genera materiales concretos para la comunidad (estrategias, narrativas prototipo, preguntas detonadoras), conservando el tono de los testimonios | Poca | Fase 1 | Las piezas técnicas existen (RAG con citas, estilo de respuesta por ecosistema, modo entrevista). No se construyó una función de «generar insumo de taller» ni se hizo el taller |
 | **B. Análisis de patrones** | Identifica recurrencias, tensiones y silencios del acervo | Más | Fase 2 | Adelantado en parte: el grafo de conocimiento, GraphRAG (recuperación apoyada en el grafo) y el grafo combinado entre ecosistemas. No hay un informe de patrones |
-| **C. Curvatura del campo** | Detecta la forma estructural del espacio que atraviesan las personas | Acervo denso y heterogéneo | Fase 3 | No iniciado en software. La métrica de divergencia con [colaborador externo] y [analista de grafos] es su antecedente (informe del 21 de octubre §VII) |
+| **C. Curvatura del campo** | Detecta la forma estructural del espacio que atraviesan las personas | Acervo denso y heterogéneo | Fase 3 | No iniciado en software. La métrica de divergencia del colaborador externo y el analista de grafos es su antecedente (informe del 21 de octubre §VII) |
 
 ## 6. Objetivos de la Etapa 1 y criterios de éxito
 
@@ -113,7 +113,7 @@ El brief v1 §4 fija dos entregables «según convenio» y tres criterios de éx
 | # | Capacidad mínima del brief v1 §4 | Estado | Qué se entregó y dónde verlo |
 |---|---|---|---|
 | 1 | Registro y autenticación de participantes, en 2 pasos como máximo | **Distinto** | Autenticación con correo y contraseña, sesión web por cookie y tokens entre servicios. El registro público está **cerrado** por decisión del responsable de desarrollo del 2026-10-21: las cuentas las crea un administrador o se invitan desde Miembros. Ver [Matriz de roles y permisos](../02-requisitos/matriz-roles-y-permisos.md) |
-| 2 | Captura multiformato (texto, audio, video, imagen), por partes | **Parcial** | Texto, notas, PDF, DOCX, hojas de cálculo, HTML, Markdown y audio (`apps/backend/src/collections/Documents.ts`). Transcripción con Whisper large-v3 y micrófono en vivo desde 2026-10-25. **No** se aceptan video ni imagen. La contribución por partes existe de hecho: una conversación admite varios documentos adjuntos |
+| 2 | Captura multiformato (texto, audio, video, imagen), por partes | **Parcial** | Texto, notas, PDF, DOCX, hojas de cálculo, HTML, Markdown, audio y video (`apps/backend/src/collections/Documents.ts`, `Media.ts`). Transcripción con Whisper large-v3 y micrófono en vivo desde 2026-10-25. Del video se almacena el archivo y se transcribe su audio; la imagen no se procesa. **No** se aceptan imágenes. La contribución por partes existe de hecho: una conversación admite varios documentos adjuntos |
 | 3 | Resonancia individual: chat informado por el acervo y la temática | **Entregado** | Pestaña Resonancias (entrevistadora que hace una pregunta a la vez) y modo «Hazme preguntas» en Generales. El relato de la persona entra al acervo por el gate. Ver [Pila de IA](../03-arquitectura/pila-de-ia.md) |
 | 4 | Resonancia de corpus, prueba de concepto del Uso A | **Parcial** | Chat con citas sobre el acervo de un ecosistema, con estilo de respuesta configurable y «panorama del corpus». No hay salida específica para taller |
 | 5 | Mini-formulario de perfil que enruta a sub-base | **No construido** | Ver §7 |
@@ -165,7 +165,7 @@ Cada punto lleva su motivo cuando las fuentes lo registran. Si no consta un moti
 | **Suscripción a notificaciones** | Suscripción opcional a avisos del proyecto | No construido; no hay envío de correos ni notificaciones | No consta |
 | **Categorización por ejes** | Ejes independientes y extensibles: tipo de contribución (abierto) y temática (menú por ecosistema, con opción abierta) | Hay `contentKind` (tres valores fijos con efecto en privacidad), `tema` como texto libre y extracción automática de temas. No hay menú de temáticas por ecosistema ni ejes configurables | El brief §7b dejaba abierta la moderación del etiquetado. El grafo se priorizó como forma de ver los temas |
 | **Auditoría comunitaria del Uso A** | Una sesión con miembros de un ecosistema (Discapacidad como referente) y la documentación del veredicto | No realizada | La Etapa 1 cerró sin procedimiento de captura probado en territorio (informe del 21 de octubre, síntesis). El mecanismo de devolución «aún no está diseñado» (matriz de Chapultepec, principio 4) |
-| **Video e imagen** | Captura en cualquier formato que porte una voz | Solo audio y texto | No consta |
+| **Imagen** | Captura en cualquier formato que porte una voz | Texto, audio y video (del video, solo su audio) | No consta |
 | **Registro por QR en eventos** | Llegar por QR o liga y registrarse | Registro público cerrado (decisión del 2026-10-21) | Decisión del responsable de desarrollo |
 | **Aviso de que las conversaciones alimentan el acervo** | Implícito en el comprobante ético | No hay texto en la interfaz (búsqueda en `apps/web/src`, informe de privacidad del 2026-10-30) | Pendiente. Ver [Aviso de privacidad y consentimiento](../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) |
 

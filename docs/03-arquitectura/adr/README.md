@@ -35,15 +35,15 @@ Cuando el código deja de cumplir lo que un ADR describe, el ADR no se reescribe
 
 **Quién decide.** Se usan tres roles:
 
-- **Responsable de desarrollo:** [responsable de desarrollo], coordinador del nodo de programación y responsable de desarrollo y UX. Toma casi todas las decisiones técnicas de estos ADR.
-- **Responsable técnico del proyecto:** [Responsable Técnico] (CIDE). Decide la estrategia del proyecto.
+- **Responsable de desarrollo:** coordinador del nodo de programación y responsable de desarrollo y UX. Toma casi todas las decisiones técnicas de estos ADR.
+- **Responsable técnico del proyecto:** del CIDE. Decide la estrategia del proyecto.
 - **Equipo de desarrollo:** quienes desarrollan, auditan y evalúan el sistema, con apoyo de asistentes de programación con IA. El equipo propone, mide y construye; no decide por el responsable de desarrollo.
 
 **Procedencia de los números.** Todo número lleva su origen: medido, citado de un archivo o inferido. Un número inferido nunca sostiene una recomendación sin decirlo.
 
 ## Índice
 
-Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplegado en dev significa en c4f53632, lo que corre en dev desde el 2026-11-10 a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). `main` está en 687ff21e (2026-11-11).
+Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplegado en dev significa en `f971d54c`, lo que corre en dev desde el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz). `main` está en `f971d54c` (2026-11-12).
 
 | ADR | Decisión | Estado | Fecha |
 |---|---|---|---|
@@ -68,7 +68,7 @@ Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplega
 | [0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md) | Voces sin sujeto ni nivel de consentimiento | Aceptada con enmienda (ADR-0020); relación con ADR-0022 | 2026-08-28; 2026-11-07 |
 | [0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) | Anonimizar todo por omisión y conservar nombres por documento; enmienda ADR-0019 | Aceptada; desplegada en dev | 2026-11-07 |
 | [0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md) | El título de un `documento` con compuerta pasa por la compuerta y falla cerrado; enmienda ADR-0020 | Propuesto; decisión aceptada, desplegada en dev | 2026-11-10 |
-| [0022](ADR-0022-retencion-por-consentimiento.md) | Retenido por consentimiento: una marca que detiene todo procesamiento | Propuesto; decisión aceptada, desplegada en dev, con agregados del 2026-11-11 en `main` | 2026-11-10 |
+| [0022](ADR-0022-retencion-por-consentimiento.md) | Retenido por consentimiento: una marca que detiene todo procesamiento | Propuesto; decisión aceptada, desplegada en dev, con agregados del 2026-11-11 y del 2026-11-12 | 2026-11-10 |
 
 ## Decisiones relacionadas, por ADR anfitrión
 

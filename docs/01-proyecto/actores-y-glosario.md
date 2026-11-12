@@ -7,27 +7,25 @@
 
 ## Para quién es y qué responde
 
-Este documento es para cualquier persona que llegue al proyecto y necesite saber quién es quién y qué significa cada palabra. Responde: quiénes forman el equipo y qué rol institucional tiene cada persona; con qué socios de campo trabaja el proyecto; qué roles existen dentro de la plataforma y qué puede hacer cada uno; qué ecosistemas existen, reales y de prueba; y qué significa cada término, tanto del marco conceptual como del vocabulario técnico. Cuando un dato del equipo es una deducción y no consta en un documento, se marca como **inferido**.
+Este documento es para cualquier persona que llegue al proyecto y necesite saber quién es quién y qué significa cada palabra. Responde: qué roles institucionales forman el equipo; con qué socios de campo trabaja el proyecto; qué roles existen dentro de la plataforma y qué puede hacer cada uno; qué ecosistemas existen, reales y de prueba; y qué significa cada término, tanto del marco conceptual como del vocabulario técnico. Cuando un dato del equipo es una deducción y no consta en un documento, se marca como **inferido**.
 
 ## 1. Equipo y roles institucionales
 
-Los roles se toman de minutas, briefs e informes del proyecto. Varias personas aparecen solo por nombre de pila en las minutas; se conservan así.
+Los roles se toman de minutas, briefs e informes del proyecto. Cada persona se nombra por su rol; cuando dos comparten rol, se distinguen por su función.
 
-| Persona | Rol en el proyecto | Fuente | Certeza |
+| Rol | Función en el proyecto | Fuente | Certeza |
 |---|---|---|---|
-| [Responsable Técnico] | Responsable Técnico del proyecto (CIDE-DEM). Investigador principal; decide la estrategia del proyecto y firma el informe de etapa | Informe del 21 de octubre; minutas del 18 de junio y del 8 de agosto | Leído |
-| [responsable de desarrollo] | Coordinador del nodo de programación y responsable de desarrollo y experiencia de usuario. Es el único desarrollador que sostuvo la construcción y quien toma las decisiones técnicas de desarrollo | `briefing-saptiva-repositorio.docx`; minuta del 18 de junio (tabla de roles); bitácora del proyecto de octubre | Leído |
-| [programador A] | Programador. Llevó las alianzas con proveedores de IA (Maya, Saptiva) y es coautor del briefing de Saptiva. Se le menciona como posible ruta para la estrategia de datos | Minuta del 18 de junio; «Tercera sesión programadores»; informe del 21 de octubre §VI | Leído |
-| [programador B] | Programador, destinatario de los briefs. Su rol estaba «por definir» el 18 de junio y su continuidad se discutió el 8 de agosto. Tiene pendiente entregar un componente que necesita [analista de grafos] | Reunión del 18 de abril; minutas del 18 de junio y del 8 de agosto; informe del 21 de octubre §VII | Leído |
-| [coautor del briefing] | Coautor del briefing de Saptiva (2026-04-30) | `briefing-saptiva-repositorio.docx` | Leído. Otro rol: desconocido |
-| [colaborador externo] | Colaborador externo. Tiene un sistema RAG sobre sentencias mexicanas y es el piloto de la métrica de divergencia o «curvatura». Se prevé su salida del proyecto | Reunión del 18 de abril §3.3 y §5.5; «Ruta crítica (feb 2026)» | Leído |
-| [analista de grafos] | Análisis matemático y de grafos sobre la métrica de divergencia | Informe del 21 de octubre §VII | Leído. Que sea la misma persona de la carpeta `Discapaciddes/[carpeta personal]` es **inferido** |
-| [investigadora del marco teórico] | Marco teórico de las instrucciones al modelo de lenguaje | Reunión del 18 de abril §5.3 | Leído |
-| [programador C] | Aparece en la minuta del 18 de junio junto a [programador B], con rol por definir | Minuta del 18 de junio | **Inferido y ambiguo**: puede ser o no [programador A] |
-| [autora de la nota de gobernanza] | Autora de una nota de gobernanza (`Nota_Gobernanza_[autora].docx`) | Nombre de archivo | Rol **inferido**, desconocido |
-| [representante legal] | Representante legal que firma la carta SECIHTI | Carta SECIHTI | Leído |
-
-**Dos personas con el mismo nombre de pila.** [Responsable Técnico] (Responsable Técnico) y [responsable de desarrollo] (desarrollo). Algunas fuentes dicen solo el nombre de pila. Este conjunto de documentos usa «Responsable Técnico» para el primero y «responsable de desarrollo» para el segundo.
+| Responsable Técnico (CIDE-DEM) | Investigador principal; decide la estrategia del proyecto y firma el informe de etapa | Informe del 21 de octubre; minutas del 18 de junio y del 8 de agosto | Leído |
+| Responsable de desarrollo | Coordina el nodo de programación y lleva el desarrollo y la experiencia de usuario. Es el único desarrollador que sostuvo la construcción y quien toma las decisiones técnicas de desarrollo | `briefing-saptiva-repositorio.docx`; minuta del 18 de junio (tabla de roles); bitácora del proyecto de octubre | Leído |
+| Programador de alianzas con proveedores de IA | Llevó las alianzas con proveedores de IA (Maya, Saptiva) y es coautor del briefing de Saptiva. Se le menciona como posible ruta para la estrategia de datos | Minuta del 18 de junio; «Tercera sesión programadores»; informe del 21 de octubre §VI | Leído |
+| Programador destinatario de los briefs | Su rol estaba «por definir» el 18 de junio y su continuidad se discutió el 8 de agosto. Tiene pendiente entregar un componente que necesita el analista de grafos | Reunión del 18 de abril; minutas del 18 de junio y del 8 de agosto; informe del 21 de octubre §VII | Leído |
+| Coautor del briefing de Saptiva | Coautor del briefing de Saptiva (2026-04-30) | `briefing-saptiva-repositorio.docx` | Leído. Otro rol: desconocido |
+| Colaborador externo de la línea jurídica | Tiene un sistema RAG sobre sentencias mexicanas y es el piloto de la métrica de divergencia o «curvatura». Se prevé su salida del proyecto | Reunión del 18 de abril §3.3 y §5.5; «Ruta crítica (feb 2026)» | Leído |
+| Analista matemático y de grafos | Análisis matemático y de grafos sobre la métrica de divergencia | Informe del 21 de octubre §VII | Leído. Que sea la misma persona de una carpeta del material de discapacidades es **inferido** |
+| Responsable del marco teórico de las instrucciones | Marco teórico de las instrucciones al modelo de lenguaje | Reunión del 18 de abril §5.3 | Leído |
+| Programador con rol por definir | Aparece en la minuta del 18 de junio junto al programador destinatario de los briefs | Minuta del 18 de junio | **Inferido y ambiguo**: puede ser o no el programador de alianzas con proveedores de IA |
+| Autora de la nota de gobernanza | Autora de una nota de gobernanza | Nombre del archivo de la nota | Rol **inferido**, desconocido |
+| Representante legal | Firma la carta SECIHTI | Carta SECIHTI | Leído |
 
 **Contracción del equipo.** El proyecto convocó a tres o cuatro programadores y el trabajo terminó sostenido por uno (citado del informe del 21 de octubre §II). El informe lo registra como dato metodológico, no como anécdota.
 
@@ -103,7 +101,7 @@ El informe del 21 de octubre §VIII pide nombrar estos cinco en el informe de Et
 | Medio ambiente y economías solidarias o alternativas | No consta detalle | No creado |
 | Semiosis práctica | Estudiantes de semionomía; taller de semiótica de los viernes desde el 2026-08-21 | Org 8 «Semiosis práctica» en dev, con lecturas, casos y registros de clase reales; única con vista de estudiante |
 
-Existe además una **línea jurídica** ligada al trabajo de [colaborador externo] sobre sentencias. No tiene ecosistema en la plataforma.
+Existe además una **línea jurídica** ligada al trabajo del colaborador externo sobre sentencias. No tiene ecosistema en la plataforma.
 
 ### 4.2 Ecosistemas en dev al 2026-10-29
 

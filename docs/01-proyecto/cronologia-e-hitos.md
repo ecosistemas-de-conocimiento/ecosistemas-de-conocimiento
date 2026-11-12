@@ -1,13 +1,13 @@
 # Cronología e hitos
 
-- **Versión:** 1.3
-- **Fecha:** 2026-11-11
+- **Versión:** 1.4
+- **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** historial de git de `main` (hasta el 2026-10-29; la §4.1 llega hasta 687ff21e, del 2026-11-11); `infra/fleet/edc-1.md` (bitácora de despliegues §4); `plan/auditoria-ia-2026-10-17.md`; `plan/auditoria-codigo-2026-10-28.md`; `plan/adr-corpus-graph.md`; `plan/spark-chat-eval-2026-10-26.md`; `apps/backend/src/eval/RESULTS.md`. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v0-brief-proyecto-plataforma-ia.md`, `briefs/v1-brief-repositorio-voces-resonancias.md`, `reus/260418/`, `reus/260511-kickoff/`, minutas de `docs/Textos del proyecto/Desarrollo (metodología)/`, «Estado del Proyecto IH-2025-I-445», la bitácora del proyecto (registros del 2026-10-17, 2026-10-21, 2026-10-27 y 2026-10-28), los resultados de evaluación del 2026-10-29, la carpeta de respaldos de edc-1 y `evidencia/`.
+- **Fuentes:** historial de git de `main` (hasta el 2026-10-29; la §4.1 llega hasta f971d54c, del 2026-11-12); `infra/fleet/edc-1.md` (bitácora de despliegues §4); `plan/auditoria-ia-2026-10-17.md`; `plan/auditoria-codigo-2026-10-28.md`; `plan/adr-corpus-graph.md`; `plan/spark-chat-eval-2026-10-26.md`; `apps/backend/src/eval/RESULTS.md`. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v0-brief-proyecto-plataforma-ia.md`, `briefs/v1-brief-repositorio-voces-resonancias.md`, `reus/260418/`, `reus/260511-kickoff/`, minutas de `docs/Textos del proyecto/Desarrollo (metodología)/`, «Estado del Proyecto IH-2025-I-445», la bitácora del proyecto (registros del 2026-10-17, 2026-10-21, 2026-10-27 y 2026-10-28), los resultados de evaluación del 2026-10-29, la carpeta de respaldos de edc-1 y `evidencia/`.
 
 ## Para quién es y qué responde
 
-Este documento es para quien redacte el informe de la Etapa 1, para revisores que necesiten ubicar un hecho en el tiempo y para quien herede el desarrollo y quiera entender por qué el código tiene la forma que tiene. Responde: qué pasó y cuándo, de abril a octubre de 2026; cuánto trabajo hubo cada semana y en qué temas; cuándo se auditó, se desplegó y se grabó la evidencia; y cómo cerró la Etapa 1 el 2026-10-28. La §4.1 agrega lo que pasó después, hasta el 2026-11-11. Todas las fechas son absolutas. Los conteos de commits son **medidos** con `git log` sobre `main` el 2026-10-30, por fecha de autor, salvo los de la §4.1, medidos el 2026-11-11.
+Este documento es para quien redacte el informe de la Etapa 1, para revisores que necesiten ubicar un hecho en el tiempo y para quien herede el desarrollo y quiera entender por qué el código tiene la forma que tiene. Responde: qué pasó y cuándo, de abril a octubre de 2026; cuánto trabajo hubo cada semana y en qué temas; cuándo se auditó, se desplegó y se grabó la evidencia; y cómo cerró la Etapa 1 el 2026-10-28. La §4.1 agrega lo que pasó después, hasta el 2026-11-12. Todas las fechas son absolutas. Los conteos de commits son **medidos** con `git log` sobre `main` el 2026-10-30, por fecha de autor, salvo los de la §4.1, medidos el 2026-11-12.
 
 ## 1. Vista general
 
@@ -57,6 +57,7 @@ gantt
     Taller de Semiosis a borrador             :milestone, 2026-11-04, 0d
     ADR-0020 y ZDR en OpenRouter              :milestone, 2026-11-07, 0d
     Auditoría de main y dos despliegues       :milestone, 2026-11-10, 0d
+    Correcciones finales y línea de corte     :milestone, 2026-11-12, 0d
 ```
 
 ## 2. Antes de abril de 2026
@@ -65,9 +66,9 @@ gantt
 |---|---|---|
 | 2025 | Convocatoria «Investigación humanística 2025» y propuesta IH-2025-I-445 | Carta SECIHTI |
 | Agosto de 2025 | Comienza la fase preoperativa. Hubo una primera versión del repositorio en Google Forms, coordinada con IDEPI | «Estado del Proyecto» |
-| 2025-08-20 | «Tercera sesión programadores ([programador A])»: «el problema no es la discapacidad sino el capacitismo» | Minuta del 20 de agosto de 2025 |
+| 2025-08-20 | «Tercera sesión programadores»: «el problema no es la discapacidad sino el capacitismo» | Minuta del 20 de agosto de 2025 |
 | 2026-01-29 | SECIHTI y la ATDT presentan los Principios de Chapultepec | Informe del 21 de octubre §IV |
-| Febrero de 2026 | «Ruta crítica»: integra el marco judicial de [colaborador externo] con el modelo topológico del sentido | `Ruta crítica (feb 2026).docx` |
+| Febrero de 2026 | «Ruta crítica»: integra el marco judicial del colaborador externo con el modelo topológico del sentido | `Ruta crítica (feb 2026).docx` |
 
 ## 3. Abril a septiembre de 2026: diseño y primera construcción
 
@@ -75,12 +76,12 @@ gantt
 |---|---|---|---|
 | 2026-04-10 | Brief v0 | Plataforma de IA con stack sugerido Next.js/React o FastAPI, PostgreSQL y pgvector | `cide/plan/briefs/v0-brief-proyecto-plataforma-ia.md` (fecha de archivo) |
 | 2026-04-18 | Reunión fundacional | Nace el «Repositorio de Voces y Resonancias v1.0»: ciclo, usos A, B y C, glosario. El texto dice «2025», pero la carpeta (`260418`) y el contenido corresponden a 2026 (inferido: errata) | `cide/plan/reus/260418/` |
-| 2026-04-30 | Briefing de Saptiva | [programador A] y [coautor del briefing] evalúan Saptiva como modelo mexicano | `briefing-saptiva-repositorio.docx` |
+| 2026-04-30 | Briefing de Saptiva | El programador de alianzas con proveedores de IA y el coautor del briefing evalúan Saptiva como modelo mexicano | `briefing-saptiva-repositorio.docx` |
 | 2026-05-06 | Ministración | Llegan $150,000 MXN; empiezan los cinco meses de ejecución | «Estado del Proyecto» |
 | 2026-05-11 | Kickoff y brief v1 | La voz es una sesión con IA mayéutica; dos taxonomías (tipo y tema); el perfil decide el destino; aparece el capturador; el comprobante con folio es obligatorio; se fijan roles | `cide/plan/reus/260511-kickoff/`; brief v1 |
 | 2026-06-18 | Reunión técnica | El responsable de desarrollo presenta un sistema con OpenRouter, RAG, clasificador y streaming. Primera entrega fijada para el 2026-09-15. Se plantea Maya con DGX Spark y una arquitectura que permita cambiar de proveedor. El nombre de archivo dice 2025 (inferido: errata, es 2026) | Minuta del 18 de junio |
 | 2026-07-03 | Organización del equipo | Se evalúa Mattermost frente a WhatsApp. No se adelanta la compra de cómputo; se cubre con máquinas de desarrollo, unos $40,000 MXN al mes, hasta octubre (citado de la minuta) | `Reunión_3_julio_2026.docx` |
-| 2026-08-08 | Minuta de gobernanza | Gobernanza del nodo técnico, continuidad de [programador B], compra de 5 grabadoras con IA, taller de semiótica los viernes desde el 2026-08-21 | `Minuta_Frenk_8_ago_2026.docx` |
+| 2026-08-08 | Minuta de gobernanza | Gobernanza del nodo técnico, continuidad del programador destinatario de los briefs, compra de 5 grabadoras con IA, taller de semiótica los viernes desde el 2026-08-21 | Minuta del 8 de agosto de 2026 |
 | 2026-08-14 | **Primer commit** | «Bootstrap Ecosistemas de Conocimiento monorepo» | `git log` |
 | 2026-08-28 | Decisiones de privacidad y grafo | `contentKind` separado de `kind`; regla de personas por columna; «Voces sin sujeto»; grafo en `edc_backend` con soporte mínimo de 3; borradores por conversación | `plan/adr-corpus-graph.md`; `plan/borradores-por-conversacion.md` |
 | 2026-08-29 | Seed de 250 documentos | El demo se puebla con el corpus sintético v1 | Commit del 2026-08-29 |
@@ -121,7 +122,7 @@ gantt
 
 ### 4.1 Noviembre de 2026: correcciones después del cierre
 
-Commits sin merges en `main`, por fecha de autor (medido con `git log --no-merges` sobre 687ff21e el 2026-11-11): 18 el 2026-11-04, 2 el 2026-11-06, 9 el 2026-11-07, 3 el 2026-11-09 y 99 el 2026-11-10.
+Commits sin merges en `main`, por fecha de autor (medido con `git log --no-merges` sobre f971d54c el 2026-11-12): 18 el 2026-11-04, 2 el 2026-11-06, 9 el 2026-11-07, 3 el 2026-11-09, 103 el 2026-11-10, 18 el 2026-11-11 y 10 el 2026-11-12. El 2026-11-10 sube de 99 a 103 porque cuatro commits con esa fecha de autor entraron a `main` después.
 
 | Fecha | Hito | Detalle | Fuente |
 |---|---|---|---|
@@ -137,7 +138,21 @@ Commits sin merges en `main`, por fecha de autor (medido con `git log --no-merge
 | 2026-11-10 | Despliegue de dev, 18:24 a 18:45 UTC | 367c2698: re-gate con reintento, cuentas desactivadas fuera, límites de inicio de sesión, tope de 8 MiB a los cuerpos JSON, registros sin parámetros de consultas. Staging sin tocar | `infra/fleet/edc-1.md` §4zzzzzzzz |
 | 2026-11-10 | Primera purga de volcados | Se quedan los 7 más recientes por entorno; en dev se borran 52 volcados y se liberan 1231.3 MB en cada lado (medido, citado de `edc-1.md`) | `infra/fleet/edc-1.md` §7 |
 | 2026-11-10 | Despliegue de dev, 23:03 UTC | c4f53632 en backend, web y ai-service; migraciones de 24 a 25 (`consent_held`). De 367c2698 a c4f53632, 47 commits sin merges (medido con `git log --no-merges` el 2026-11-11): Ajustes solo para el responsable, títulos de `documento` con compuerta redactados en todas las superficies, retenido por consentimiento, plazo de 30 días para el cuerpo de los avisos, subidas acotadas por cuenta, roster acotado para estudiantes | versión: `docker ps` en edc-1 (medido el 2026-11-11); migración: reporte del despliegue (citado); `git log` |
-| 2026-11-10 | Olas 10 y 11 en `main`, sin desplegar | De c4f53632 a 687ff21e, 26 commits sin merges (medido con `git log --no-merges` el 2026-11-11): filtros por relación y conversaciones nuevas acotados, retenido por consentimiento en rutas, scripts y grafo, registros y respuestas sin el texto de errores crudos (regla `edc/no-raw-error-log`), tiempo de espera del pool de base de datos, conserjes y más formas de fecha en la compuerta | `git log` |
+| 2026-11-10 | Olas 10 y 11 en `main` (en dev desde el 2026-11-12, a6026876) | De c4f53632 a 687ff21e, 26 commits sin merges (medido con `git log --no-merges` el 2026-11-11): filtros por relación y conversaciones nuevas acotados, retenido por consentimiento en rutas, scripts y grafo, registros y respuestas sin el texto de errores crudos (regla `edc/no-raw-error-log`), tiempo de espera del pool de base de datos, conserjes y más formas de fecha en la compuerta | `git log` |
+| 2026-11-10 y 2026-11-11 | Escrituras con una sola conexión y bloqueos sin fuga (`fix/checkouts-anidados`) | Ninguna escritura pide al pool una segunda conexión dentro de su transacción; el chequeo de bloqueos responde solo sobre filas que quien llama puede escribir, así que ya no revela filas de otro ecosistema. Regresión menor aceptada: un cambio masivo rechazado libera el bloqueo de otra persona | `git log` (fd738ba9, 3e619794, 00ca2648) |
+| 2026-11-10 | Enmascarado de errores y regla de lint (`fix/enmascarado-regla`) | El texto de error que ve el cliente y la regla `edc/no-raw-error-log` cubren los errores de postgres.js y más formas | `git log` (da6e838f) |
+| 2026-11-11 | Retención por consentimiento ante carreras (`fix/grafo-retencion-carrera`) | Una retención que llega mientras corre el modelo del grafo termina `skipped` y conserva las filas anteriores; en «Publicar cambios» se vuelve a leer la retención de la nota y de la revisión, bajo bloqueo de fila; un re-índice que aterriza tras la retención se retira en su aviso; una actualización de fila entera nunca reescribe `consent_held` | `git log` (1ac2669e, d97271fb, 0d3f2de6, ca5cf2b4, 6a9a3e45, 4a6c77dc) |
+| 2026-11-11 | Excepción de fechas revertida | La excepción para referencias numeradas tras día y mes («art. 3-IV-2020») se revirtió el mismo día porque dejaba pasar fechas reales; se tacha de más ([Roadmap](roadmap.md#lo-que-quedó-abierto-al-cierre-de-la-etapa-1)) | `git log` (f6f6daf6, revertido en e85c8b9a) |
+| 2026-11-11 | Publicación tardía (`fix/publicacion-tardia`) | Una primera publicación que aterriza tras una retención o un retiro se retira, y una fila retenida nunca pasa a publicada; si la copia compartida no se pudo retirar, la respuesta es 500 y se reintenta; una actualización de fila entera no reescribe columnas de compuerta ni de publicación (`writtenOnlyWhenSent`) | `git log` (3f5f2a29, dd7b7bce) |
+| 2026-11-10 a 2026-11-12 | Columnas de error guardadas (`fix/filas-viejas`) | Las columnas de motivo guardadas (`ingestError`, `publicationError`, `anonymisationError`, `graphError`, `corpusError`, `gateReason`, `error` de evals) se ocultan al leer si traen texto crudo de la base. Un patrón único retiene los mensajes de Postgres que citan valores, en backend y en ai-service (trazas, registro de arranque, guardas de texto). Cubre los mensajes de Postgres de esta app, no todos. Script `clean-stored-errors.ts` para filas viejas | `git log` (b202fb1c, 196105ca, cbf8d7ee, acc0a028) |
+| 2026-11-12 | Escrituras viejas de fila entera (`fix/escritura-vieja-*`: interruptores, títulos, kept y todas) | Una escritura vieja de fila entera ya no revierte ninguna columna de `documents` (`writtenOnlyWhenSent`, `everyFieldWrittenOnlyWhenSent`); editar el texto contra un veredicto concurrente responde 409; el reintento nunca deshace un veredicto más nuevo | `git log` (fdab9a5f, 92bce369, aa140d5d, bb1fc42d, f971d54c) |
+| 2026-11-12 | Despliegue de dev, 02:16 a 02:22 UTC | a6026876, deploy `oasz1bbobuf3ongfycrneh0q`, sin migración: olas 10 y 11 y docs, 43 commits desde c4f53632 (citado de `edc-1.md`). Staging sin tocar | `infra/fleet/edc-1.md` §4zzzzzzzzz |
+| 2026-11-12 | Scripts aplicados en dev, tras el despliegue de a6026876 | `hold-for-consent`: 184 filas del taller retenidas por consentimiento (org 8, todas en borrador); `refresh-ai-titles`: 52 documentos; `backfill-provenance-titles`: 0 pendientes (medido por el agente de despliegue, citado de `edc-1.md`) | `infra/fleet/edc-1.md` §4zzzzzzzzz |
+| 2026-11-12 | Despliegue de dev, 15:25 a 15:31 UTC | 6c0f65ad, deploy `sdxkgvtdyleewihtbq1scq5i`, sin migración: 32 commits desde a6026876 (citado de `edc-1.md`): checkouts anidados, retención ante carreras, publicación tardía, enmascarado y columnas de error guardadas | `infra/fleet/edc-1.md` §4zzzzzzzzzz |
+| 2026-11-12 | Scripts aplicados en dev, tras el despliegue de 6c0f65ad | `clear-legacy-held-text`: 2 filas; `clean-stored-errors`: 0 filas en las 7 columnas (medido por el agente de despliegue, citado de `edc-1.md`) | `infra/fleet/edc-1.md` §4zzzzzzzzzz |
+| 2026-11-12 | Despliegue de dev, terminado a las 19:42 UTC | f971d54c, deploy `x3o9j5ymeozbz8hrlvvcmrz1`: las escrituras viejas de fila entera (medido con `docker ps` por el agente de despliegue) | `infra/fleet/edc-1.md` §4 |
+| 2026-11-12 | Ramas de la Etapa 1 | `etapa-1` = 52a4a1a1: la Etapa 1 sin correcciones, todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después; `main` = la Etapa 1 con correcciones; `etapa-2` = trabajo nuevo, hoy igual a `main` | `git rev-parse` (52a4a1a1, medido el 2026-11-12) |
+| **2026-11-12** | **Línea de corte de la Etapa 1: f971d54c, etiqueta `etapa-1-con-correcciones`** | Lo que se encuentre después va a la Etapa 2 | `git log` (f971d54c) |
 
 ## 5. Actividad por semana
 
@@ -164,15 +179,16 @@ Leído de `git log` sobre `main` el 2026-10-30, por fecha de autor. La semana em
 | 2026-08-29 | Revisión de la regla `fragmento` del grafo | `plan/adr-corpus-graph.md` §16 | Registró que una suite de solo aserciones negativas no distingue «suprimido» de «nunca producido». Regla: cada control de privacidad lleva su prueba positiva | Aplicada |
 | 2026-10-17 | Auditoría del stack de IA | Cuatro frentes: grafo (G), ingesta y privacidad (I), chat (C), pruebas y operación (T) | Tres bloqueantes: `/api/graph/retrieve` daba error 500 (G-1); un testimonio publicado mostraba su texto sin redactar (I-1); 648 menciones y 386 relaciones sacadas de texto sin depurar (G-2) (citado de `plan/auditoria-ia-2026-10-17.md`) | Los tres cerrados. Abiertos: T-13 (dos arneses de prueba), I-13 en parte, C-3 |
 | 2026-10-28 | Auditoría completa de código | Once frentes de revisión sobre `main` del 2026-10-28 | 1 crítico, 6 altos, 32 medios, 51 bajos. Limpio: JWT, SQL del grafo, aislamiento por organización en el servicio de IA, arranque de seeds (citado de `plan/auditoria-codigo-2026-10-28.md`) | Los siete de «arreglar ahora» cerrados en las ramas A a E, salvo la llave de audio-service (abierta) y la CSP de imágenes (sin verificar). Unos 70 hallazgos medios y bajos quedan listados para después |
-| 2026-11-10 | Auditoría de `main` | Cuatro frentes sobre a84baacf: privacidad, login y permisos, carga y repositorio, chat e interfaz | 54 hallazgos: 7 altos, 23 medios, 24 bajos, ningún crítico (citado de `plan/orchestration/auditoria-2026-11-10/resumen.md`, fuera del repositorio) | Parte de las correcciones está desplegada en dev desde el 2026-11-10 (c4f53632), parte está en `main` pendiente de desplegar, y lo clasificado como funcionalidad nueva va a la rama `etapa-2` ([Roadmap](roadmap.md#etapa-2)) |
+| 2026-11-10 | Auditoría de `main` | Cuatro frentes sobre a84baacf: privacidad, login y permisos, carga y repositorio, chat e interfaz | 54 hallazgos: 7 altos, 23 medios, 24 bajos, ningún crítico (citado de `plan/orchestration/auditoria-2026-11-10/resumen.md`, fuera del repositorio) | Las correcciones están en `main` y en dev (f971d54c, 2026-11-12); lo clasificado como funcionalidad nueva va a la rama `etapa-2` ([Roadmap](roadmap.md#etapa-2)) |
+| 2026-11-11 y 2026-11-12 | Auditorías independientes por rama | Una por rama integrada después de a6026876: 9 ramas (`checkouts-anidados`, `grafo-retencion-carrera`, `publicacion-tardia`, `enmascarado-regla`, `filas-viejas` y las cuatro `escritura-vieja-*`) | Todas CONFIRMED tras sus correcciones (citado del handoff del coordinador del 2026-11-11, fuera del repositorio) | Lo que quedó abierto está en el [Roadmap](roadmap.md#lo-que-quedó-abierto-al-cierre-de-la-etapa-1) |
 
 El detalle está en [Seguridad](../06-privacidad-y-seguridad/seguridad.md) y [Estrategia de pruebas](../07-calidad/estrategia-de-pruebas.md).
 
 ### 6.2 Despliegues
 
 - **Entorno.** EDC vive desde el 2026-10-17 en una sola caja, edc-1, con dev y staging. No hay producción. Ver [Infraestructura y entornos](../05-infraestructura/infraestructura-y-entornos.md).
-- **Bitácora.** La sección §4 de `infra/fleet/edc-1.md` registra cada despliegue. Los registros citados aquí van del 2026-10-17 (§4g) al 2026-10-29 (§4zzzz).
-- **Dev.** Último despliegue de la Etapa 1: el 2026-10-29 a las 06:50 UTC (citado de `edc-1.md` §4zzzz). Después: el 2026-11-10 a las 05:47 UTC, a las 18:33 UTC con 367c2698 (citado de `edc-1.md` §4zzzzzzz y §4zzzzzzzz) y a las 23:03 UTC con c4f53632 (medido con `docker ps` en edc-1 el 2026-11-11).
+- **Bitácora.** La sección §4 de `infra/fleet/edc-1.md` registra cada despliegue. Los registros citados aquí van del 2026-10-17 (§4g) al 2026-11-12 (§4zzzzzzzzzz).
+- **Dev.** Último despliegue de la Etapa 1: el 2026-10-29 a las 06:50 UTC (citado de `edc-1.md` §4zzzz). Después: el 2026-11-10 a las 05:47 UTC, a las 18:33 UTC con 367c2698 (citado de `edc-1.md` §4zzzzzzz y §4zzzzzzzz) a las 23:03 UTC con c4f53632 (medido con `docker ps` en edc-1 el 2026-11-11), el 2026-11-12 a las 02:22 UTC con a6026876 y a las 15:31 UTC con 6c0f65ad (citado de `edc-1.md` §4zzzzzzzzz y §4zzzzzzzzzz), y el 2026-11-12 a las 19:42 UTC con f971d54c (medido con `docker ps` por el agente de despliegue).
 - **Staging.** Congelado en una versión anterior desde el 2026-10-17 a las 23:03 UTC (citado de `edc-1.md` §4zzzz). Seguía sin tocar el 2026-11-10 (citado de `edc-1.md` §4zzzzzzzz).
 - **Respaldos.** 63 respaldos lógicos manuales, del `20261017T0421Z` al `20261029T0643Z`, unos 2.7 GB en total (medido con `ls` y `du` el 2026-10-30 sobre la carpeta de respaldos de edc-1, fuera del repositorio). Desde el 2026-11-10 se conservan los 7 más recientes por entorno (citado de `edc-1.md` §7).
 

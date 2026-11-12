@@ -1,9 +1,9 @@
 # Respaldos y recuperación
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-11
+- **Versión:** 1.5
+- **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (§1, §2, §4b, §4c, §4p, §4x, §4zn, §4zs, §4zzz, §4zzzz, §4zzzzzzz, §4zzzzzzzz, §6, §7), `infra/fleet/backups.md` (diseño, no construido), `infra/fleet/runbook.md` (§3, §4, §8), `infra/fleet/env-manifests.md` (§1, §3), `infra/docker-compose.yml`, `plan/spark-ai-adopcion.md` (§5), `plan/auditoria-codigo-2026-10-28.md`, listado local de la carpeta de respaldos fuera de la caja (medido el 2026-10-30), commits `6a1f645b` (regla de retención) y `3ce0e07d` (primera purga).
+- **Fuentes:** `infra/fleet/edc-1.md` (§1, §2, §4b, §4c, §4p, §4x, §4zn, §4zs, §4zzz, §4zzzz, §4zzzzzzz, §4zzzzzzzz, §4zzzzzzzzz a §4zzzzzzzzzzz, §6, §7), `infra/fleet/backups.md` (diseño, no construido), `infra/fleet/runbook.md` (§3, §4, §8), `infra/fleet/env-manifests.md` (§1, §3), `infra/docker-compose.yml`, `plan/spark-ai-adopcion.md` (§5), `plan/auditoria-codigo-2026-10-28.md`, listado local de la carpeta de respaldos fuera de la caja (medido el 2026-10-30), commits `6a1f645b` (regla de retención) y `3ce0e07d` (primera purga).
 
 ## Para quién es y qué responde
 
@@ -21,7 +21,7 @@ Contexto que pesa en todas las decisiones de este documento: al 2026-10-30 EDC n
 | Pregunta | Respuesta hoy | Procedencia |
 |---|---|---|
 | ¿Hay respaldo automático? | Sí, uno: la imagen diaria del disco completo que hace Hetzner, 7 rotativas | citado, `edc-1.md` §1 |
-| ¿Hay respaldo lógico de las bases? | Sí, pero **manual**: un `pg_dump` antes de cada despliegue con migración, cuando se acuerda. El último, `20261110T2256Z`, antes del despliegue de `c4f53632` (citado del reporte de ese despliegue; no verificado, y aún no está en `edc-1.md`) | citado, `edc-1.md` §4b, §4zzzz y §4zzzzzzzz |
+| ¿Hay respaldo lógico de las bases? | Sí, pero **manual**: un `pg_dump` antes de cada despliegue con migración, cuando se acuerda; los tres despliegues sin migración del 2026-11-12 también lo hicieron. El último, `20261112T1934Z`, antes del despliegue de `f971d54c`: `edc_ai` 313 MB, `edc_backend` 19 MB, con `SHA256SUMS` y copia fuera del servidor verificada con `sha256sum -c` | citado, `edc-1.md` §4b, §4zzzz, §4zzzzzzzz y §4zzzzzzzzzzz (measured por el agente de despliegue) |
 | ¿Hay copia fuera de Hetzner? | Solo de los dumps: copia fuera del servidor, en equipo del equipo de desarrollo, sin cifrar. Desde el 2026-11-10 se escribe con `umask 077` (archivos 600, carpetas 700) | medido el 2026-10-30 (permisos `-rw-r--r--`, sin paso de cifrado); el 2026-11-10, `stat` sobre `20261110T1825Z` (citado, `edc-1.md` §4zzzzzzzz) |
 | ¿Se respaldan los archivos subidos? | Solo dentro de la imagen de Hetzner | inferido: no hay otro mecanismo |
 | ¿Se ha probado una restauración completa? | **Nunca** | citado, `backups.md` §6 es solo propuesta |
@@ -73,7 +73,7 @@ Tamaños, que muestran cómo crece `edc_ai` (la base de vectores):
 | 2026-10-27 | 88 MB | | citado, `edc-1.md` §4zs |
 | 2026-10-29 06:43 | 312 MB | 18.7 MB | medido (312 471 401 y 18 662 917 bytes) y citado, `edc-1.md` §4zzzz |
 
-El salto del 2026-10-26 coincide con el despliegue que permitió guardar textos de hasta 2 000 000 de caracteres (inferido de `edc-1.md` §4zm). A este ritmo, la copia fuera de la caja crece unos 330 MB por cada respaldo nuevo de dev (inferido de la última carpeta). La regla de §2.2, paso 7, la limita a 7 volcados por entorno. La primera purga, el 2026-11-10 hacia las 20:30 UTC, borró 52 volcados de dev en el servidor y en la copia, y liberó 1231.3 MB en cada lado (citado, `edc-1.md` §7 paso 7, medido con `du -sb` antes y después). Quedan en dev `20261110T1825Z`, `20261110T0538Z`, `20261029T0643Z`, `20261029T0439Z`, `20261029T0053Z`, `20261029T0016Z` y `20261028T1717Z`, con `sha256sum -c` correcto en los dos lados; staging conserva sus 7. Las cifras de esta sección, salvo esta, son del listado del 2026-10-30, anterior a la purga.
+El salto del 2026-10-26 coincide con el despliegue que permitió guardar textos de hasta 2 000 000 de caracteres (inferido de `edc-1.md` §4zm). A este ritmo, la copia fuera de la caja crece unos 330 MB por cada respaldo nuevo de dev (inferido de la última carpeta). La regla de §2.2, paso 7, la limita a 7 volcados por entorno. La primera purga, el 2026-11-10 hacia las 20:30 UTC, borró 52 volcados de dev en el servidor y en la copia, y liberó 1231.3 MB en cada lado (citado, `edc-1.md` §7 paso 7, medido con `du -sb` antes y después). Quedan en dev `20261110T1825Z`, `20261110T0538Z`, `20261029T0643Z`, `20261029T0439Z`, `20261029T0053Z`, `20261029T0016Z` y `20261028T1717Z`, con `sha256sum -c` correcto en los dos lados; staging conserva sus 7. Las cifras de esta sección, salvo esta, son del listado del 2026-10-30, anterior a la purga. Con los tres respaldos del 2026-11-12 la regla se aplicó dos veces más (15:23 y 19:34 UTC); dev conserva `20261029T0643Z`, `20261110T0538Z`, `20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z` y `20261112T1934Z`, con `sha256sum -c` correcto en los dos lados; staging sigue con sus 7 (citado, `edc-1.md` §4zzzzzzzzzz y §4zzzzzzzzzzz, measured por el agente de despliegue).
 
 ## 3. Lo que NO se respalda
 
@@ -137,7 +137,7 @@ Ninguno de estos números se ha medido; todos se deducen de la política de §2.
 
 | Objetivo | Valor | De dónde sale |
 |---|---|---|
-| RPO, bases de dev con dumps | Desde el último despliegue con respaldo; el último es del 2026-11-10 22:56 UTC (citado del reporte del despliegue de `c4f53632`; el anterior registrado, 18:25 UTC, en `edc-1.md` §4zzzzzzzz). Sin despliegues, crece sin límite | inferido de la cadencia manual |
+| RPO, bases de dev con dumps | Desde el último despliegue con respaldo; el último es del 2026-11-12 19:34 UTC (citado, `edc-1.md` §4zzzzzzzzzzz). Sin despliegues, crece sin límite | inferido de la cadencia manual |
 | RPO, todo el disco con la imagen de Hetzner | hasta 24 h (más la ventana de 4 h en que se toma) | inferido de la cadencia diaria, si los respaldos de Hetzner están activos |
 | RPO, archivos subidos | igual que la imagen de Hetzner | inferido |
 | RPO, staging | su último dump es del 2026-10-17; como staging no ha cambiado, en la práctica coincide con la imagen | inferido |
@@ -255,7 +255,7 @@ Ordenados para que estén resueltos antes del primer testimonio real.
 
 ## Referencias
 
-- `infra/fleet/edc-1.md`: §1 respaldos de Hetzner, §2 `APP_KEY`, §4b procedimiento de respaldo y restauración, §4c incidente de disco, §4p vaciado, §4x incidente de limpieza, §4zzzzzzzz último respaldo, §5 dónde viven los secretos, §7 pasos 6 y 7 (`umask 077` y retención).
+- `infra/fleet/edc-1.md`: §1 respaldos de Hetzner, §2 `APP_KEY`, §4b procedimiento de respaldo y restauración, §4c incidente de disco, §4p vaciado, §4x incidente de limpieza, §4zzzzzzzzzzz último respaldo, §5 dónde viven los secretos, §7 pasos 6 y 7 (`umask 077` y retención).
 - `infra/fleet/backups.md`: diseño objetivo (no construido).
 - `infra/fleet/runbook.md`: §3 migraciones, §4 rollback, §8 RustFS.
 - `infra/fleet/env-manifests.md`: §3 RustFS.

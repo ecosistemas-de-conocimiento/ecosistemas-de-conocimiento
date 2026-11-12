@@ -48,8 +48,7 @@ Pesaron tres hechos:
 - Un nombre que el cuerpo deja visible (por un interruptor de ADR-0020) se redacta en el título: sobre-redacción, del lado seguro. El título no tiene ronda de verificación ni restituciones.
 - Un `documento` con compuerta que el gate no ha titulado (subido antes del 2026-11-10, o con un título que no se pudo redactar) se muestra como "Documento". Varios pueden verse iguales en una lista.
 - Toda superficie nueva que muestre un título debe pasar por `documentTitleFor` y leer `anonymise`. Si no la lee, el título sale neutro: el error es visible y seguro.
-- En dev, el 2026-11-10 a las 20:15 UTC, 52 `documento` publicados con compuerta tenían el título viejo en el corpus compartido y en las copias borrador (citado del commit d72094e5). Siguen así hasta desplegar y correr `refresh-ai-titles`.
-- Pendiente de desplegar en dev. Hasta entonces dev aplica la regla del 2026-10-26.
+- En dev, el 2026-11-10 a las 20:15 UTC, 52 `documento` publicados con compuerta tenían el título viejo en el corpus compartido y en las copias borrador (citado del commit d72094e5). `refresh-ai-titles` los corrigió en dev el 2026-11-12: 52 documentos, 104 escrituras contando las dos copias (measured por el agente de despliegue, `infra/fleet/edc-1.md` §4zzzzzzzzz).
 
 ## Referencias
 

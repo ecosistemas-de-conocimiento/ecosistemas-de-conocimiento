@@ -1,7 +1,7 @@
 # Evaluación de impacto en la privacidad (EIPD)
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-11
+- **Versión:** 1.5
+- **Fecha:** 2026-11-12
 - **Estado:** borrador. Sin validación jurídica
 - **Fuentes:** `apps/backend/src/lib/anonymise/`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/AnonymisationReviews.ts`, `apps/backend/src/lib/graph/queries.ts`, `services/ai-service/src/services/ai/pii-egress.ts`, `plan/anonimizacion-y-voces.md`, `plan/auditoria-ia-2026-10-17.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md), auditoría de código del 2026-10-28, [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) (decisión del 2026-11-07), plan de adopción del Spark, propuesta de servidor de desarrollo, brief v1 del proyecto («Repositorio de Voces y Resonancias», documento externo al repo)
 
@@ -11,7 +11,7 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** está en `c4f53632` o antes, la versión que corre en dev desde el despliegue del 2026-11-10 a las 23:03 UTC (citado del reporte de ese despliegue; no verificado en este documento, y su entrada aún no está en `infra/fleet/edc-1.md`), con evidencia en código. **Implementado (pendiente de desplegar en dev):** está en `main` (`687ff21e`) pero no en `c4f53632`. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` el 2026-11-11. Staging sigue en su imagen del 2026-10-17 (citado de `infra/fleet/edc-1.md` §4zzzzzzzz), y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Lo diferido está en [Etapa 2](#etapa-2).
+Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. Staging sigue en su imagen del 2026-10-17 (citado de `infra/fleet/edc-1.md` §4zzzzzzzz), y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Lo diferido está en [Etapa 2](#etapa-2).
 
 | Control o procedimiento | Estado | Evidencia o nota |
 |---|---|---|
@@ -30,7 +30,8 @@ Definiciones. **Implementado:** está en `c4f53632` o antes, la versión que cor
 | Reintento automático de una copia publicada retirada cuyo borrado falló (R19, R20) | **Pendiente** | El cambio de ecosistema la intenta hasta 3 veces; después queda oculta hasta que alguien pulse Reintentar |
 | Pantalla de anonimización por documento con nombres conservados y conteos, sin la lista de nombres sustituidos | **Implementado** | `apps/web/src/routes/documentos/[id]/anonimizacion/` |
 | Título de un `documento` con compuerta redactado en REST, ingesta, citas, Biblioteca, chat, grafo y estudiante; falla cerrado si la fila no trae `anonymise` | **Implementado** | `documentTitleFor` en `lib/contentKind.ts`; `neutralNameForCaller` en `Documents.ts` ([protección de datos](proteccion-de-datos.md), sección 3.10) |
-| Retenido por consentimiento: una fila marcada no se vuelve a anonimizar, ingerir, extraer al grafo ni publicar | **Implementado** | `lib/consentHold.ts`; `scripts/hold-for-consent.ts` con `CONSENT_IDS_FILE`. En dev, los materiales del taller siguen en borrador. Una revisión de una fila retenida también queda retenida, y publicar sus cambios responde 409: **Implementado (pendiente de desplegar en dev)** (commits `17a5d985`, `b29c72ba`, `c12a0ab5`) |
+| Retenido por consentimiento: una fila marcada no se vuelve a anonimizar, ingerir, extraer al grafo ni publicar | **Implementado** | `lib/consentHold.ts`; `scripts/hold-for-consent.ts` con `CONSENT_IDS_FILE`. En dev, 184 filas del taller quedaron retenidas el 2026-11-12 (measured por el agente de despliegue, `infra/fleet/edc-1.md` §4zzzzzzzzz). Una revisión de una fila retenida también queda retenida, y publicar sus cambios responde 409 (commits `17a5d985`, `b29c72ba`, `c12a0ab5`). Una retención que llega a mitad del grafo, de «Publicar cambios» o del re-índice de una nota no deja salir el texto (commits `1ac2669e`, `ca5cf2b4`, `0d3f2de6`, `d97271fb`, `6a9a3e45`); una primera publicación que aterriza después de una retención o un retiro se retira (commit `3f5f2a29`), y si ese retiro falla el aviso responde 500 y ai-service lo reenvía (commit `dd7b7bce`). Ver [limitaciones conocidas](#limitaciones-conocidas) |
+| Una escritura vieja de fila entera no revierte ninguna columna de `documents` (veredicto, interruptores, títulos, texto, `consentHeld`); editar el texto o reintentar contra un veredicto concurrente responde 409 | **Implementado** | `everyFieldWrittenOnlyWhenSent` en `collections/hooks/writtenOnlyWhenSent.ts`; commits `4a6c77dc`, `dd7b7bce`, `fdab9a5f`, `aa140d5d`, `bb1fc42d`, `f971d54c` |
 | Grabación de testimonio no compartida; dictado en vivo sin almacenamiento | **Implementado** | `collections/Media.ts`; `services/audio-service/app/live.py` |
 | Borrado de documentos y conversaciones, incluidas las copias del servicio de IA | **Implementado** | `Documents.ts`; `lib/conversationTurnErasure.ts` |
 | Grafo solo con texto anonimizado y sin personas de testimonio | **Implementado** | `lib/graph/types.ts`; `lib/graph/queries.ts` |
@@ -39,7 +40,7 @@ Definiciones. **Implementado:** está en `c4f53632` o antes, la versión que cor
 | Minimizador de reglas antes de salir a un proveedor; no quita nombres | **Implementado** | `services/ai-service/src/services/ai/pii-egress.ts` |
 | Plazos técnicos de transcripciones y de registro de avisos con huella | **Implementado** | `services/audio-service/app/config.py`; `callback/route.ts` |
 | Cuerpo del registro de avisos vaciado a los 30 días, en una tarea diaria | **Implementado** | `lib/callbackRetention.ts` |
-| Registros sin parámetros de consulta ni texto de errores (P-07) | **Implementado** en parte | Parámetros fuera y registrador de Payload con `safeErrSerializer`: **Implementado**. En el backend, ninguna línea interpola el texto de un error, con la regla `edc/no-raw-error-log`: **Implementado**. La misma regla en la web y en ai-service, y columnas de error que lee el navegador sin el texto crudo: **Implementado (pendiente de desplegar en dev)** (commits `cc27d332`, `4a3aecc1`, `3d92c12d`, `f26bb848`) |
+| Registros sin parámetros de consulta ni texto de errores (P-07) | **Implementado** | Parámetros fuera y registrador de Payload con `safeErrSerializer`. En el backend, la web y ai-service, ninguna línea interpola el texto de un error, con la regla `edc/no-raw-error-log`; columnas de error que lee el navegador sin el texto crudo, también las guardadas antes, que se ocultan al leer (commits `cc27d332`, `4a3aecc1`, `3d92c12d`, `f26bb848`, `b202fb1c`, `196105ca`, `cbf8d7ee`) |
 | Volcados de base: los 7 más recientes por entorno | **Implementado**, a mano | Regla y primera purga del 2026-11-10 (citado de `infra/fleet/edc-1.md` §7). Sin cifrar |
 | Interruptor del respaldo del detector | **Implementado** | `lib/platformSettings.ts`; ver la fila siguiente |
 | Respaldo del detector por OpenRouter con ZDR (`hosted`), por decisión del responsable técnico del 2026-11-09, confirmada el 2026-11-10 | **Implementado** | El valor por defecto es `hosted` (`fallbackGenerator.ts`). Dev usa `hosted` desde el 2026-11-10, con ZDR; usó `none` del 2026-11-06 al 2026-11-09 (citado de `infra/fleet/edc-1.md` §4zzzzzz y §4zzzzzzz). `none` sigue disponible. Staging siempre usa OpenRouter |
@@ -56,12 +57,19 @@ Definiciones. **Implementado:** está en `c4f53632` o antes, la versión que cor
 | Comprobante ético con folio y archivo de consentimientos | **Pendiente** | Sin código ni procedimiento |
 | Canal ARCO, exportación de datos y cancelación de cuenta | **Pendiente** | Sin correo, sin ruta; la base rechaza el borrado de un usuario con conversación o membresía |
 | Política de acceso al original y bitácora de lecturas | **Pendiente** | Sin plan técnico |
-| Conservar el registro de revisiones al borrar un documento | **Implementado** | Llave `set null` y `documentIdSnapshot` (`AnonymisationReviews.ts`); solo se van las filas de quien borra. Al borrar una conversación, las filas de otras personas sobre una subida retenida también se quedan: **Implementado (pendiente de desplegar en dev)** (commit `17a3ee49`) |
+| Conservar el registro de revisiones al borrar un documento | **Implementado** | Llave `set null` y `documentIdSnapshot` (`AnonymisationReviews.ts`); solo se van las filas de quien borra. Al borrar una conversación, las filas de otras personas sobre una subida retenida también se quedan (commit `17a3ee49`) |
 | Depuración de trazas del servicio de IA | **Pendiente** | Sin purga en el código. Las trazas guardan la salida del detector hospedado (P-14); etapa 2 |
 | Política de retención aprobada y destino final de los originales | **Pendiente** | Decisión abierta; sin plan de destino final |
 | Política sobre menores: consentimiento de tutor y asentimiento | **Pendiente** | No existe; el sistema no registra edad |
 | Impedir que una persona revisora apruebe su propia subida | **Pendiente** | `decideOnHold` en `lib/holdReview.ts` lo permite; decisión abierta |
 | Revisión del aviso y del consentimiento por aliados de campo | **Pendiente** | No consta |
+
+### Limitaciones conocidas
+
+Ninguna ocurre hoy. Su arreglo va a la [Etapa 2](#etapa-2).
+
+1. Si ai-service agota sus 7 reintentos (unas 2 h 42 min; quoted de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
+2. El script de operador `backfillLengua.ts` re-ingesta en el corpus compartido sin `callbackUrl`. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada.
 
 ## 1. Descripción del tratamiento
 
@@ -254,7 +262,6 @@ Sin fechas: ninguna está acordada. Deben cumplirse antes del primer testimonio 
 16. **Pendiente.** Obtener la revisión de aliados de campo. Atiende R1 y R10. Facilitación.
 17. **Pendiente.** Revisar esta evaluación al cambiar un encargado, al abrir un entorno de producción o a los 12 meses. Todos los riesgos. Responsable técnico.
 18. **Planeado.** Declarar en el aviso integral la anonimización completa por omisión y los dos interruptores por documento, que corren en dev desde el 2026-11-10. Atiende R19 y R20. Coordinación de desarrollo.
-19. **Implementado (pendiente de desplegar en dev).** Desplegar en dev lo que ya está en `main`: la retención por consentimiento de las revisiones, los registros sin texto de errores en la web y en ai-service, y las nuevas formas de fecha y de CURP. Atiende R1, R2 y R9. Coordinación de desarrollo.
 
 ## Etapa 2
 
@@ -267,3 +274,4 @@ Diferido a la etapa 2 (rama `etapa-2`; `main` solo lleva correcciones). Ninguno 
 - Edición sustantiva que no acepte caracteres invisibles ni letras de otro alfabeto (R4-12). Atiende R3.
 - Límite de tasa en login por correo entre IPs y cambio obligado de la contraseña temporal (A-04). Atiende R13.
 - El día escrito en palabras en la generalización de fechas. Atiende R1.
+- Las dos [limitaciones conocidas](#limitaciones-conocidas): un retiro que agota los 7 reintentos de ai-service y `backfillLengua.ts` sin `callbackUrl`.

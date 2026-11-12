@@ -1,6 +1,6 @@
 # Matriz de roles y permisos
 
-**Versión:** 1.3 · **Fecha:** 2026-11-10 · **Estado:** vigente
+**Versión:** 1.4 · **Fecha:** 2026-11-12 · **Estado:** vigente
 
 **Fuentes:**
 - `apps/backend/src/lib/permissions.ts` (roles, escalera de rango, conjuntos de permisos)
@@ -14,7 +14,7 @@
 
 ## Para quién es y qué responde
 
-Este documento es para quien administra un ecosistema, para revisores que necesitan saber quién puede leer qué, y para quien desarrolle. Responde: qué roles existen en Ecosistemas de Conocimiento (EDC), cómo se ordenan, qué permiso otorga cada uno, qué capacidades dependen de otra cosa que no es un permiso, cómo decide el menú qué mostrar y qué ve cada rol en cada pantalla. Todo lo que dice se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10, salvo donde se indica otra procedencia. Lo que está en `main` pero aún no en dev (desplegado: c4f53632, 2026-11-10 a las 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11) se marca **pendiente de desplegar en dev**.
+Este documento es para quien administra un ecosistema, para revisores que necesitan saber quién puede leer qué, y para quien desarrolle. Responde: qué roles existen en Ecosistemas de Conocimiento (EDC), cómo se ordenan, qué permiso otorga cada uno, qué capacidades dependen de otra cosa que no es un permiso, cómo decide el menú qué mostrar y qué ve cada rol en cada pantalla. Todo lo que dice se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10 y con `main` `f971d54c` el 2026-11-12, salvo donde se indica otra procedencia. Estado de dev = `f971d54c`, desplegado el 2026-11-12 (citado del coordinador del cierre; no verificado en este documento): todo lo que está en `main` `f971d54c` está desplegado en dev.
 
 ## Dos niveles de rol
 
@@ -102,7 +102,7 @@ Varias capacidades no salen de la tabla anterior. Dependen del rol directamente,
 | Estilos de respuesta por ecosistema | Administrador de plataforma (`answerStylesEditable`) | `apps/web/src/lib/answerStyle.ts`; `apps/backend/src/lib/answerStyle.ts` |
 | Ver cualquier ecosistema en Conexiones (`?eco=`) y correr evaluaciones (`/admin/evals`) | Administrador de plataforma | `apps/web/src/routes/grafo/+page.server.ts`; `apps/web/src/routes/admin/evals/+page.server.ts` |
 | Leer el original crudo de un testimonio o de un `documento` con compuerta | Quien lo subió y el administrador de plataforma | `mayReadGatedOriginal` en `apps/backend/src/collections/Documents.ts` |
-| Ver el nombre de archivo de un `documento` con compuerta | Quien lo subió y el administrador de plataforma. Los demás ven el título redactado en todas las superficies (REST, ingesta, citas, biblioteca, chat, grafo, estudiante y vista de anonimización); si la columna `anonymise` es NULL o no viene, el título falla cerrado. Pendiente de desplegar en dev (commits b2a51aed, 0bfe8ceb, 2f21e91b, a2ba0e19, ed35b605, b7dc944f) | `titleFor` en `apps/backend/src/lib/contentKind.ts`; `mayReadGatedOriginal` |
+| Ver el nombre de archivo de un `documento` con compuerta | Quien lo subió y el administrador de plataforma. Los demás ven el título redactado en todas las superficies (REST, ingesta, citas, biblioteca, chat, grafo, estudiante y vista de anonimización); si la columna `anonymise` es NULL o no viene, el título falla cerrado. Desplegado en dev (commits b2a51aed, 0bfe8ceb, 2f21e91b, a2ba0e19, ed35b605, b7dc944f) | `titleFor` en `apps/backend/src/lib/contentKind.ts`; `mayReadGatedOriginal` |
 | Descargar el original de cualquier documento | Solo quien lo subió | `apps/web/src/routes/api/documents/[id]/original/+server.ts` |
 | Crear cuentas | Quien tiene `members:manage` (desde `/miembros`) y el administrador de plataforma. El registro abierto está cerrado desde el 2026-10-21. | `apps/backend/src/endpoints/miembros.ts`; `collections/Users.ts` |
 

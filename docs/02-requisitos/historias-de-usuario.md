@@ -1,6 +1,6 @@
 # Historias de usuario
 
-**Versión:** 1.3 · **Fecha:** 2026-11-11 · **Estado:** vigente
+**Versión:** 1.4 · **Fecha:** 2026-11-12 · **Estado:** vigente
 
 **Fuentes:**
 - `plan/mapa-historias.md` (generado desde `apps/web/e2e/evidencia/historias.ts`)
@@ -28,7 +28,7 @@ Este documento es para el equipo del proyecto, para revisores institucionales y 
 
 El rol de ecosistema `admin` (en pantalla, "administra") no aparece en el mapa. Tiene los permisos de revisión, miembros y subida de testimonios, pero no Ajustes ni Administración. Ver [matriz de roles y permisos](matriz-roles-y-permisos.md).
 
-**Estado.** Todas las historias del mapa están implementadas en `main` del 2026-10-29. La versión 1.2 revisa los criterios contra `main` (b7dc944f) el 2026-11-10, y contra lo desplegado en dev (c4f53632, 2026-11-10 a las 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11). Un criterio nuevo o cambiado que está en `main` y aún no en dev dice **pendiente de desplegar en dev**. Se distinguen dos estados:
+**Estado.** Todas las historias del mapa están implementadas en `main` del 2026-10-29. La versión 1.2 revisa los criterios contra `main` (b7dc944f) el 2026-11-10; la 1.4, contra `main` `f971d54c` el 2026-11-12. Estado de dev = `f971d54c`, desplegado el 2026-11-12 (citado del coordinador del cierre; no verificado en este documento): todo lo que está en `main` `f971d54c` está desplegado en dev. Se distinguen dos estados:
 - **implementada**: al menos una prueba automatizada (unitaria, contra Postgres, e2e o spec de evidencia con aserción) comprueba el resultado.
 - **implementada sin prueba automatizada**: la historia existe y se graba, pero ninguna prueba comprueba el resultado.
 
@@ -809,7 +809,7 @@ flowchart LR
   1. Dado el formulario, cuando llena correo, nombre y rol y envía, entonces ve una sola vez la contraseña temporal.
   2. Dado un correo que ya existe, cuando lo da de alta, entonces recibe la misma forma de respuesta con una contraseña señuelo, para no revelar quién está en la plataforma.
   3. Dado la contraseña temporal, cuando se revisa la base de datos y los logs, entonces no aparece en claro.
-  4. Dado 50 altas de la misma persona en una hora, cuando da de alta otra, entonces recibe 429 con `Retry-After`; un alta que falla no cuenta y la administración de plataforma no tiene tope (`MIEMBROS_RATELIMIT_ADD_USER_MAX` en `apps/backend/src/lib/rateLimit.ts`; commit 0c639102; en `main`).
+  4. Dado 50 altas de la misma persona en una hora, cuando da de alta otra, entonces recibe 429 con `Retry-After`; un alta que falla no cuenta y la administración de plataforma no tiene tope (`MIEMBROS_RATELIMIT_ADD_USER_MAX` en `apps/backend/src/lib/rateLimit.ts`; commit 0c639102; desplegado en dev).
 - **Estado:** implementada. No hay e2e web del alta; la prueba es de backend contra Postgres.
 - **Evidencia:** `ev/comun.ts` (llena y borra); `be/endpoints/miembros.pg.test.ts`; `web/lib/miembros.test.ts`.
 
