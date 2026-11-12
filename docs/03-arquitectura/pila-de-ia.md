@@ -168,17 +168,17 @@ El 2026-11-10, en dev, 3 de 6 respuestas de chat llegaron de OpenRouter como un 
 - **Cortada en el tope.** Una respuesta sin texto con `finish_reason` `length` es `CompletionTruncated` (`ERR_COMPLETION_TRUNCATED`, 502): no se reintenta, porque pedirla otra vez topa con el mismo tope. La web la muestra como "La respuesta excedió el límite de longitud.", sin Reintentar (`answer_truncated`, `@edc/chat-engine` 0.10.0; commits 3d92c12d y 6406fadb).
 - **Costo.** Cada intento vacío entra en el desglose de costo de la llamada (`empty: true`), así que uso, traza y ajuste del presupuesto llevan lo que cobró el proveedor. Una llamada en que todos los intentos salen vacíos no se cobra, y `providerCostUsd` suma el gasto de todos los intentos (commit 3d92c12d).
 
-Pendiente de desplegar en dev.
-
-### 5.6 Errores en los logs de ai-service
-
-Cada logger pino de ai-service usa un serializador `err` que de un error de base de datos guarda solo la clase, el SQLSTATE, el código de Node y los marcos de la pila; de otro error, el mensaje cortado a 500 caracteres (`services/ai-service/src/errors/log-safe.ts`). La regla `edc/no-raw-error-log` corre en ai-service sin exclusiones (commits 3d92c12d y 4a3aecc1). En `main`.
+Desplegado en dev, salvo «Cortada en el tope» y «Costo» (3d92c12d, 6406fadb), en `main` y pendientes de desplegar.
 
 ### 5.5 Títulos en ai-service sin volver a embeber
 
 El título de un documento vive en ai-service en tres lugares: `documents.title`, `documents.metadata.title` y el `metadata.title` de cada fragmento, que es lo que la cita muestra. `PATCH /v1/corpus/:name/titles` (rol admin) los reescribe para hasta 200 documentos por llamada sin tocar el texto, los embeddings ni el índice por palabra clave; una prueba de integración fija los bytes del vector. `dryRun` informa sin escribir (`services/ai-service/src/services/rag/document-title.ts`; commit d72094e5).
 
 `apps/backend/scripts/refresh-ai-titles.ts` usa esa ruta para poner en las copias compartida y borrador de cada `documento` con compuerta y cada testimonio publicados su título con compuerta (`documentTitleFor`). Simula por omisión, nunca toca una fila retenida por consentimiento ni un borrador. El 2026-11-10 a las 20:15 UTC, en dev y solo leyendo, había 52 `documento` publicados con compuerta con el título viejo en el corpus compartido (20 en eco-6, 10 en eco-7, 22 en eco-8) y los mismos 52 en las copias borrador (citado del commit d72094e5). Pendiente de desplegar en dev; no consta que el script se haya corrido.
+
+### 5.6 Errores en los logs de ai-service
+
+Cada logger pino de ai-service usa un serializador `err` que de un error de base de datos guarda solo la clase, el SQLSTATE, el código de Node y los marcos de la pila; de otro error, el mensaje cortado a 500 caracteres (`services/ai-service/src/errors/log-safe.ts`). La regla `edc/no-raw-error-log` corre en ai-service, salvo en las pruebas (commits 3d92c12d y 4a3aecc1). En `main`.
 
 ## 6. Esquema `edc_ai` en resumen
 

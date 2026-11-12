@@ -371,7 +371,7 @@ Un desajuste entre saltos tiene un síntoma conocido: el 2026-10-24, en dev, tod
 - Las negativas por pertenencia son 404, no 403, en holds, métricas, grafo, documentos y trabajos de audio.
 - ai-service responde 402 cuando el presupuesto de la org no alcanza o la org no tiene fila de presupuesto.
 - Las rutas que llevan texto sensible o estado cambiante responden con `Cache-Control: no-store`.
-- Los logs no llevan el texto crudo de un error: la regla de lint `edc/no-raw-error-log` revisa toda llamada `.info`/`.warn`/`.error`/`.debug`/`.fatal`/`.trace` y `console.*` en backend, web y ai-service, sin exclusiones, y los sitios usan `safeErrMessage` o `errSummary` (commits 780f614d y 4a3aecc1; en `main`).
+- Los logs no llevan el texto crudo de un error: la regla de lint `edc/no-raw-error-log` revisa toda llamada `.info`/`.warn`/`.error`/`.debug`/`.fatal`/`.trace` y `console.*` en backend, web y ai-service (las pruebas quedan fuera), y los sitios usan `safeErrMessage` o `errSummary` (commits 780f614d y 4a3aecc1; en `main`).
 - Las columnas de error que el navegador puede leer (`ingestError`, `corpusError`, `publicationError`, `anonymisationError`) y los `detail` de las respuestas de la web no llevan el texto de un error de base de datos ni el `err.message` crudo del aviso `job-failed` de ai-service (commit f26bb848; en `main`). Las filas escritas antes conservan su texto.
 
 ## 9. Discrepancias conocidas
