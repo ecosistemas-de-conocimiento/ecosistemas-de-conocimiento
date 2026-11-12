@@ -11,11 +11,19 @@
  * `Documents.gateColumnsStaleWrite.pg.test.ts`.
  *
  * The rule: on update, a column is written only when a server caller
- * (`overrideAccess`) SENT it in `data`, or a hook changed it from what was
- * read (`gateResetForTextEdit`). Otherwise it is dropped from the UPDATE and
- * the stored value stands. Every one of these columns is server-only
- * (`gateWritesOnly`, or pinned by `bindDocumentToEcosystem`), so a client's
- * value never counts as sent.
+ * (`overrideAccess`) SENT it in `data`, a user SENT it and the field's update
+ * access let it through (`userAccess`, only `ingestStatus` today), or a hook
+ * changed it from what was read (`gateResetForTextEdit`). Otherwise it is
+ * dropped from the UPDATE and the stored value stands. Without `userAccess` a
+ * column is server-only (`gateWritesOnly`, or pinned by
+ * `bindDocumentToEcosystem`), so a client's value never counts as sent.
+ *
+ * Also on `anonymise`, `contentKind`, the `keep*` switches, `publishIngestId`
+ * and `ingestStatus` (audit 2026-11-12): a rename that read the row before a
+ * re-gate (`regateMemberDocumentos`, `autoPublishBackfill`, the
+ * `…/anonimizacion` PATCH) put back `anonymise = false` or
+ * `contentKind = 'documento'`, and the next publish sent the original.
+ * `Documents.switchColumnsStaleWrite.pg.test.ts`.
  *
  * ⚠ "Sent" is recorded in the field's `beforeValidate` hook, BEFORE Payload's
  * fallback fills it, keyed by row id in `req.context`. A hook that writes the
@@ -23,7 +31,7 @@
  * a no-op either way, unless a concurrent write changed it in between.
  */
 
-import type { FieldHook, Validate } from 'payload'
+import type { FieldAccess, FieldHook, Validate } from 'payload'
 
 const SENT = '__gateColumnsSent'
 
@@ -44,10 +52,17 @@ const rowKey = (doc: unknown): string | null => {
 
 /**
  * Hooks and a validator wrapper for one column. `validate` wraps the field's
- * own validator so a dropped (absent) value passes on update.
+ * own validator so a dropped (absent) value passes on update. With
+ * `userAccess` (the field's update access), the result also carries
+ * `access.update`: the same rule, and a user's value it lets through counts as
+ * sent. Payload runs field access after the `beforeValidate` hooks.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- each field type has its own validator signature
-export function writtenOnlyWhenSent<V extends (value: any, options: any) => ReturnType<Validate>>(field: string, validate: V) {
+export function writtenOnlyWhenSent<V extends (value: any, options: any) => ReturnType<Validate>>(
+  field: string,
+  validate: V,
+  userAccess?: FieldAccess,
+) {
   const record: FieldHook = ({ operation, originalDoc, overrideAccess, req, siblingData }) => {
     if (operation !== 'update') return undefined
     const key = rowKey(originalDoc)
@@ -70,5 +85,14 @@ export function writtenOnlyWhenSent<V extends (value: any, options: any) => Retu
     if (args.operation === 'update' && value === undefined) return true
     return validate(value, args)
   }) as unknown as V
-  return { hooks: { beforeValidate: [record], beforeChange: [drop] }, validate: wrapped }
+  const hooks = { beforeValidate: [record], beforeChange: [drop] }
+  if (!userAccess) return { hooks, validate: wrapped }
+  const update: FieldAccess = async (args) => {
+    const allowed = await userAccess(args)
+    const key = rowKey(args.doc)
+    if (allowed && key !== null && (args.siblingData as Record<string, unknown> | undefined)?.[field] !== undefined)
+      (sentOf(args.req.context as Record<string, unknown>)[key] ??= new Set<string>()).add(field)
+    return allowed
+  }
+  return { hooks, validate: wrapped, access: { update } }
 }

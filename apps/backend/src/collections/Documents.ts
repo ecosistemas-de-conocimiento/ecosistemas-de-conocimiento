@@ -13,7 +13,13 @@ import type {
   Where,
 } from 'payload'
 import { APIError, Forbidden, ValidationError } from 'payload'
-import { select as selectValidate, text as textValidate, textarea as textareaValidate } from 'payload/shared'
+import {
+  checkbox as checkboxValidate,
+  select as selectValidate,
+  text as textValidate,
+  textarea as textareaValidate,
+} from 'payload/shared'
+import { sql } from '@payloadcms/db-postgres'
 import { writtenOnlyWhenSent } from './hooks/writtenOnlyWhenSent'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
@@ -57,6 +63,7 @@ import {
   isOwnersMedia,
   planDocumentMediaCleanup,
   scheduleUploadCleanup,
+  transactionHandle,
 } from '../lib/conversationUploads'
 import {
   beginPublish,
@@ -1033,7 +1040,7 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
   enforceDraftOnlyTextEdits({ next, original, operation, req })
   if (operation !== 'create') {
     refuseTrivialEditOnHold(next, original)
-    Object.assign(next, gateResetForTextEdit(next, original) ?? {})
+    await deferStatusReset(next, original, req, gateResetForTextEdit(next, original))
   }
 
   // ⚠ LAST, because it needs the ecosistema this hook just derived. A permission
@@ -1162,6 +1169,66 @@ export function gateResetForTextEdit(
     heldTextHash: null,
     anonymisationSurvivors: null,
   }
+}
+
+export const STALE_TEXT_EDIT_MESSAGE = 'El documento cambió mientras se guardaba. Vuelve a intentarlo.'
+
+/** `req.context` key: row id → the `anonymisationStatus` the text edit read. */
+const STATUS_RESET = '__textEditStatusReset'
+
+const statusResets = (req: PayloadRequest): Record<string, unknown> =>
+  ((req.context as Record<string, unknown>)[STATUS_RESET] ??= {}) as Record<string, unknown>
+
+/**
+ * 🔴 THE TEXT EDIT'S RESET NEVER UNDOES A NEWER VERDICT (audit 2026-11-12, V5).
+ *
+ * `gateResetForTextEdit` decides from the row Payload READ. A reviewer's
+ * reject (or approval) that committed between that read and the write was
+ * overwritten with `n/a`: the reject was gone and the row went back through
+ * the gate. So the reset's other columns go out with the edit, but
+ * `anonymisationStatus` stays at the value read (`writtenOnlyWhenSent` drops
+ * it from the UPDATE) and {@link applyStatusReset} sets it inside the same
+ * transaction, `WHERE anonymisation_status = <read>`. No row matched → 409 and
+ * the whole edit rolls back. A verdict that comes later waits on the row lock
+ * and then finds `n/a`, so its own guarded write misses.
+ *
+ * ⚠ NEEDS THE WRITE'S TRANSACTION, or the rollback would not happen: refused
+ * (409) without one, before anything is written.
+ * `Documents.switchColumnsStaleWrite.pg.test.ts`.
+ */
+async function deferStatusReset(
+  next: Record<string, unknown>,
+  original: Record<string, unknown>,
+  req: PayloadRequest,
+  reset: Record<string, unknown> | null,
+): Promise<void> {
+  if (!reset) return
+  const id = original.id
+  if (id === undefined || id === null || !(await transactionHandle(req))) {
+    throw new APIError(STALE_TEXT_EDIT_MESSAGE, 409, undefined, true)
+  }
+  const { anonymisationStatus: _reset, ...rest } = reset
+  Object.assign(next, rest)
+  next.anonymisationStatus = original.anonymisationStatus
+  statusResets(req)[String(id)] = original.anonymisationStatus ?? null
+}
+
+/** First `afterChange`: the guarded status write of {@link deferStatusReset}. */
+export const applyStatusReset: CollectionAfterChangeHook = async ({ doc, operation, req }) => {
+  if (operation !== 'update') return doc
+  const pending = statusResets(req)
+  const key = String((doc as { id?: unknown }).id)
+  if (!(key in pending)) return doc
+  const read = pending[key]
+  delete pending[key]
+  const tx = await transactionHandle(req)
+  if (!tx) throw new APIError(STALE_TEXT_EDIT_MESSAGE, 409, undefined, true)
+  const status = read === null ? sql`anonymisation_status IS NULL` : sql`anonymisation_status = ${read}`
+  const res = (await tx.execute(
+    sql`UPDATE documents SET anonymisation_status = 'n/a' WHERE id = ${(doc as { id: number }).id} AND ${status} RETURNING id`,
+  )) as { rows?: unknown[] }
+  if ((res.rows?.length ?? 0) === 0) throw new APIError(STALE_TEXT_EDIT_MESSAGE, 409, undefined, true)
+  return { ...doc, anonymisationStatus: 'n/a' }
 }
 
 /**
@@ -3341,6 +3408,8 @@ export const Documents: CollectionConfig = {
       type: 'text',
       index: true,
       access: serverMovesAfterCreate,
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('publishIngestId', textValidate),
       admin: { readOnly: true, description: 'ai-service ingestId of the in-flight publish move.' },
     },
     {
@@ -3478,6 +3547,8 @@ export const Documents: CollectionConfig = {
       // Derived from CONTENT_KINDS so the column and the domain type cannot fall
       // out of step; the labels are the only hand-written part.
       options: CONTENT_KINDS.map((value) => ({ value, label: CONTENT_KIND_LABELS[value] })),
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('contentKind', selectValidate),
     },
     {
       /**
@@ -3499,6 +3570,8 @@ export const Documents: CollectionConfig = {
       type: 'checkbox',
       defaultValue: false,
       access: { update: gateWritesOnly },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('anonymise', checkboxValidate),
       admin: { position: 'sidebar' },
     },
     {
@@ -3518,6 +3591,8 @@ export const Documents: CollectionConfig = {
       name: 'keepPublicFigures',
       type: 'checkbox',
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('keepPublicFigures', checkboxValidate),
       admin: {
         position: 'sidebar',
         readOnly: true,
@@ -3541,6 +3616,8 @@ export const Documents: CollectionConfig = {
       name: 'keepDocumentAuthor',
       type: 'checkbox',
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('keepDocumentAuthor', checkboxValidate),
       admin: { position: 'sidebar', readOnly: true },
     },
     {
@@ -3548,6 +3625,8 @@ export const Documents: CollectionConfig = {
       name: 'keepCitedAuthors',
       type: 'checkbox',
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('keepCitedAuthors', checkboxValidate),
       admin: { position: 'sidebar', readOnly: true },
     },
     {
@@ -3975,7 +4054,10 @@ export const Documents: CollectionConfig = {
       type: 'select',
       required: true,
       defaultValue: 'n/a',
-      access: { update: ingestMovesWithTextEdit },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      // Its `access.update` is `ingestMovesWithTextEdit`, and a user's value it
+      // lets through (the transcript editor) counts as sent.
+      ...writtenOnlyWhenSent('ingestStatus', selectValidate, ingestMovesWithTextEdit),
       options: [
         { label: 'N/A (markdown)', value: 'n/a' },
         { label: 'Pending (queued)', value: 'pending' },
@@ -4201,7 +4283,7 @@ export const Documents: CollectionConfig = {
      * `__skipDocsExtract`, which every internal status write sets — and a
      * privacy invalidation must not be skippable by an internal write path.
      */
-    afterChange: [extractAndIngestHook, invalidateGraphOnContentKindChange],
+    afterChange: [applyStatusReset, extractAndIngestHook, invalidateGraphOnContentKindChange],
     /**
      * ✅ CORPUS CLEANUP ON DELETE. Deleting a row used to leave its chunks
      * embedded and retrievable — the document vanished from the UI while the
