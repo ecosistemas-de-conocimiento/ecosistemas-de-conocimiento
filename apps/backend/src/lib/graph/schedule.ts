@@ -271,8 +271,15 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     // 🔴 RE-READ RIGHT BEFORE WRITING. The deep calls above take minutes; a
     // reviewer can hold, reject, withdraw or re-gate the row in that window.
     const beforeWrite = await readGraphableRow(payload, docId, organizationId)
-    // 🔴 Held while the model ran: its output is dropped, nothing is written.
-    if (isHeldRead(beforeWrite)) return 'skipped'
+    // 🔴 Held while the model ran: its output is dropped, no graph row is
+    // written, and the status leaves `extracting` for `skipped` (the status
+    // column only, no reason text). Without this the row stayed `extracting`.
+    if (isHeldRead(beforeWrite)) {
+      await setGraphStatus(payload, docId, { graphStatus: 'skipped' }).catch((err) => {
+        console.error('[graph] could not mark held doc skipped', docId, errSummary(err))
+      })
+      return 'skipped'
+    }
     const writeAbort = await abortIfStale(payload, docId, organizationId, start, beforeWrite)
     if (writeAbort) return writeAbort
     // 🔴 THE SEEDS COME FROM THE ROW AS RE-READ HERE, merged by `canonicalKey`
