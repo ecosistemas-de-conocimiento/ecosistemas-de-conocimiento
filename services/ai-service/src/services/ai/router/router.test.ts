@@ -548,6 +548,22 @@ describe('Router — provider generation id on the trace', () => {
     expect(traceWriter.writeTrace.mock.calls[0]![0].metadata).not.toHaveProperty('providerGenerationId');
   });
 
+  it('🔴 a database error lands on the trace as its code, never the row it quotes', async () => {
+    const { default: postgres } = await import('postgres');
+    const traceWriter = makeTraceWriter();
+    adapterMock.mockRejectedValueOnce(
+      new postgres.PostgresError({
+        severity: 'ERROR',
+        code: '22P02',
+        message: 'invalid input syntax for type uuid: "Juana Pérez declaró en la audiencia"',
+      } as unknown as string),
+    );
+    await expect(mk(traceWriter).route(makeReq())).rejects.toThrow();
+    const trace = traceWriter.writeTrace.mock.calls[0]?.[0];
+    expect(trace.metadata.errorMessage).toBe('PostgresError(22P02)');
+    expect(JSON.stringify(trace)).not.toContain('Juana');
+  });
+
   it('stores the partial\'s id on an aborted (client-disconnect) trace', async () => {
     const { OpenRouterAbortError } = await import('./adapters/openrouter.js');
     const traceWriter = makeTraceWriter();

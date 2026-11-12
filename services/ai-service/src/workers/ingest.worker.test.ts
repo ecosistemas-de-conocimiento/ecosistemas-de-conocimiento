@@ -26,7 +26,13 @@ import type {
 import { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
-import { processIngestJob as rawProcessIngestJob, type IngestBudget } from './ingest.worker.js';
+import postgres from 'postgres';
+
+import {
+  onIngestJobFailed,
+  processIngestJob as rawProcessIngestJob,
+  type IngestBudget,
+} from './ingest.worker.js';
 
 // Every `rootLogger` line this file's code writes, through the shared `err`
 // serializer (`errors/log-safe.ts`), so a test can read what reached the log.
@@ -1242,6 +1248,63 @@ describe('processIngestJob — callback outbox', () => {
     const reqUpdates = state.updates.filter((u) => u.table === 'ingest_requests');
     expect(reqUpdates.some((u) => 'failedDocs' in u.set)).toBe(true);
     expect(reqUpdates.some((u) => u.set.status === 'failed')).toBe(true);
+  });
+
+  it('🔴 a job that exhausts its retries on a database error sends no row text to the backend', async () => {
+    // A real postgres.js `PostgresError`, as the driver builds it from the
+    // server's ErrorResponse: the message and `detail` quote the value.
+    const err = new postgres.PostgresError({
+      severity: 'ERROR',
+      code: '22P02',
+      message: `invalid input syntax for type uuid: "${ROW_TEXT}"`,
+      detail: `Key (title)=(${ROW_TEXT}) already exists.`,
+      where: `unnamed portal parameter $1 = '${ROW_TEXT}'`,
+    } as never);
+    Object.defineProperties(err, {
+      query: { value: 'insert into chunks (text) values ($1)', enumerable: false },
+      parameters: { value: [ROW_TEXT], enumerable: false },
+    });
+    state.requestRow = { ...CALLBACK_ROW, completedDocs: 0, failedDocs: 1 };
+    logged.lines.length = 0;
+
+    await onIngestJobFailed(
+      db,
+      { id: 'q-1', data: jobData({ externalId: 'ext-1', jobId: 'job-row-1' }), opts: { attempts: 3 }, attemptsMade: 3 },
+      err,
+    );
+
+    expect(state.deliveries).toHaveLength(1);
+    const body = String(state.deliveries[0]!.body);
+    expect(body).not.toContain('Juana');
+    expect(JSON.parse(body)).toMatchObject({
+      event: 'ingest.failed',
+      error: { code: 'job-failed', message: 'PostgresError(22P02)' },
+    });
+    const settled = state.updates.find((u) => u.set.status === 'failed' && 'error' in u.set);
+    expect(settled?.set.error).toBe('PostgresError(22P02)');
+    expect(logged.lines.join('')).not.toContain('Juana');
+  });
+
+  it('an error that is not a database error still tells the backend what went wrong', async () => {
+    state.requestRow = { ...CALLBACK_ROW, completedDocs: 0, failedDocs: 1 };
+    await onIngestJobFailed(
+      db,
+      { id: 'q-1', data: jobData({ externalId: 'ext-1' }), opts: { attempts: 1 }, attemptsMade: 1 },
+      new Error('upstream embedding 500'),
+    );
+    expect(JSON.parse(String(state.deliveries[0]!.body))).toMatchObject({
+      error: { code: 'job-failed', message: 'Error: upstream embedding 500' },
+    });
+  });
+
+  it('an attempt BullMQ will retry sends nothing yet', async () => {
+    state.requestRow = { ...CALLBACK_ROW };
+    await onIngestJobFailed(
+      db,
+      { id: 'q-1', data: jobData(), opts: { attempts: 3 }, attemptsMade: 1 },
+      new Error('transient'),
+    );
+    expect(state.deliveries).toHaveLength(0);
   });
 
   it('A6: a missing ingest_requests row is counted, not silently skipped', async () => {

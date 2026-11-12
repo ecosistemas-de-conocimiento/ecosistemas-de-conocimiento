@@ -1084,6 +1084,40 @@ describe('extractGraph', () => {
     }
   })
 
+  it('🔴 a database-shaped window error: neither the thrown reason (graphError) nor the log carries its text', async () => {
+    // drizzle's shape: the message quotes the query and its params (P-07).
+    const dbErr = Object.assign(
+      new Error('Failed query: insert into graph_mentions values ($1)\nparams: Ernesto Ramírez, Tlayacapan'),
+      { query: 'insert into graph_mentions values ($1)', params: ['Ernesto Ramírez', 'Tlayacapan'] },
+    )
+    const client: GraphGenerateClient = {
+      generate: {
+        async sync() {
+          throw dbErr
+        },
+      },
+    }
+    const spies = (['log', 'warn', 'error', 'info', 'debug'] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => undefined),
+    )
+    let message = ''
+    try {
+      await extractGraph({ docId: 23, contentKind: 'documento', text, client, windowChars: 5000, retryDelayMs: 0 }).catch(
+        (err: Error) => {
+          message = err.message
+        },
+      )
+      const logged = spies.flatMap((s) => s.mock.calls).map((c) => c.map(String).join(' ')).join('\n')
+      expect(message).toMatch(/every extraction window failed \(1 of 1\)/)
+      for (const sensitive of ['Ernesto', 'Tlayacapan', 'Failed query', 'params:']) {
+        expect(message).not.toContain(sensitive)
+        expect(logged).not.toContain(sensitive)
+      }
+    } finally {
+      spies.forEach((s) => s.mockRestore())
+    }
+  })
+
   it('salvages a schema-miss reply from `text` (measured on dev: an `id` per entity)', async () => {
     const reply = JSON.stringify({
       entidades: [

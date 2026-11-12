@@ -44,7 +44,10 @@ vi.mock('@/lib/aiClient', () => {
         calls.push({ path: path.join('.'), args })
         const hook = (globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue
         if (path.join('.') === 'ingest.enqueue' && hook) await hook()
-        return { ok: true, ingestId: `ing-${calls.length}` }
+        // Unique for the whole file: the callback route dedupes by ingest id.
+        const g = globalThis as { __ingestSeq?: number }
+        g.__ingestSeq = (g.__ingestSeq ?? 0) + 1
+        return { ok: true, ingestId: `ing-${g.__ingestSeq}` }
       },
     })
   return { getAdminAIClient: () => client([]), getAppAIClient: () => client([]) }
@@ -65,6 +68,24 @@ vi.mock('@/lib/anonymise', async (importOriginal) => {
           return (input.text.includes(AUTHOR) ? withAuthor : inner).detect(input)
         },
       }
+    },
+  }
+})
+
+/**
+ * Each revision's background `onGraphSettled` (`graph/schedule.ts` pump), by id.
+ * It races the test's own `landDraftIngest`: both may promote, and the second
+ * gets `busy`, by design (one promotion). Tests wait for it first.
+ */
+vi.mock('@/lib/studentNotes', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./studentNotes')>()
+  const settles = ((globalThis as { __settles?: Map<string, Promise<void>> }).__settles ??= new Map())
+  return {
+    ...real,
+    onGraphSettled: (id: number | string) => {
+      const p = real.onGraphSettled(id)
+      settles.set(String(id), p)
+      return p
     },
   }
 })
@@ -100,7 +121,7 @@ import { autoPublishParticipantDocument } from './autoPublish'
 import { invalidateFeatures } from './features'
 import { BACKFILL_PROCESSED_BODY } from '../migrations/20261028_231948_documents_note_revisions'
 import { documentsOf, topicsByUser } from './student/queries'
-import { bootPayload, dockerOk, eventually, rowsOf, shutdown, startRealPostgres, type RealPostgres } from './testing/realPostgres'
+import { bootPayload, dockerOk, eventually, rowsOf, shutdown, startRealPostgres, tryHoldElsewhere, type RealPostgres } from './testing/realPostgres'
 
 if (!dockerOk) console.warn('[studentNotes.pg.test] docker is not usable — SKIP.')
 
@@ -355,7 +376,9 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
     } finally {
       spy.mockRestore()
     }
-    expect([(await row(500)).p, (await row(500)).i]).toEqual(['draft', 'n/a']) // clobbered: the bug
+    // Clobbered: the bug, on `ingest_status`. `publication_status` is no longer
+    // written back from a stale read (`collections/hooks/writtenOnlyWhenSent.ts`).
+    expect([(await row(500)).p, (await row(500)).i]).toEqual(['publishing', 'n/a'])
     const r = await row(501)
     expect([r.p, r.i, r.b]).toEqual(['publishing', 'ready', `${BODY} dos`])
     expect(paused).toBe(1) // only the control went through `updateOne`
@@ -388,6 +411,12 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         )
       )[0]
     /** What ai-service's callback does when a draft ingest lands: `ready`, then auto-publish. */
+    /** The revision's background promotion attempt (see the `@/lib/studentNotes` mock) has run to its end. */
+    const graphSettled = async (id: number) => {
+      const settles = (globalThis as { __settles?: Map<string, Promise<void>> }).__settles ?? new Map()
+      expect(await eventually(async () => settles.has(String(id)), 20_000)).toBe(true)
+      await settles.get(String(id))
+    }
     const landDraftIngest = async (id: number) => {
       await pg!.db.execute(sql`UPDATE documents SET ingest_status = 'ready' WHERE id = ${id}`)
       return autoPublishParticipantDocument({ payload: payload!, documentId: id, clientFor: (o) => getAdminAIClient(o) as never })
@@ -406,7 +435,9 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
       const res = await publicar(ANA, NOTE)
       expect([res.status, res.body.processing, res.body.publicationStatus]).toEqual([202, true, 'published'])
       expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'ready', 20_000)).toBe(true)
-      return Number((await revisionOf(NOTE))!.id)
+      const id = Number((await revisionOf(NOTE))!.id)
+      await graphSettled(id)
+      return id
     }
 
     it('setup: a published note, its topics visible to peers', async () => {
@@ -504,6 +535,7 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
       await new Promise((r) => setTimeout(r, 500))
       expect(Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM documents WHERE revision_of_id = ${NOTE}`))[0]!.n)).toBe(1)
       expect(detectorCalls - before).toBe(perRun)
+      await graphSettled(Number((await revisionOf(NOTE))!.id))
       expect(await landDraftIngest(Number((await revisionOf(NOTE))!.id))).toEqual({ published: true })
     }, 60_000)
 
@@ -516,6 +548,7 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         expect((await autosave(ANA, NOTE, { bodyMarkdown: body })).status).toBe(200)
         expect((await publicar(ANA, NOTE)).status).toBe(202)
         expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'ready', 20_000)).toBe(true)
+        await graphSettled(Number((await revisionOf(NOTE))!.id))
         expect(await landDraftIngest(Number((await revisionOf(NOTE))!.id))).toEqual({ published: true })
         expect(await revisionOf(NOTE)).toBeUndefined()
       }
@@ -638,6 +671,87 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         }, 60_000)
       }
 
+      for (const which of ['note', 'revision'] as const) {
+        it(`🔴 the ${which} held DURING the re-index: no swap, the published note intact, 'consent-held'; released, it is promoted`, async () => {
+          const rev = await changeAndWait()
+          const before = await row(NOTE)
+          const labelsBefore = await noteLabels()
+          const reindexOf = async () =>
+            (await rowsOf(pg!.db, sql`SELECT reindex_ingest_id AS x FROM documents WHERE id = ${NOTE}`))[0]!.x
+          const reindexBefore = await reindexOf()
+          const heldId = which === 'note' ? NOTE : rev
+          // The hold lands while ai-service takes the re-index: after the entry check, before the swap.
+          ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = async () => {
+            await hold(heldId, true)
+          }
+          aiCalls.length = 0
+          try {
+            expect(await landDraftIngest(rev)).toEqual({ published: false, reason: 'consent-held' })
+          } finally {
+            ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = undefined
+          }
+          try {
+            expect(sharedEnqueues()).toHaveLength(1) // the re-index did go out: the hold landed inside it
+            // 🔴 ...so it is taken back out of the shared corpus, after it went in.
+            const enq = aiCalls.findIndex((c) => c.path === 'ingest.enqueue' && (c.args[0] as { corpus?: string }).corpus === 'eco-8')
+            const ret = aiCalls.findIndex((c) => c.path === 'admin.setDocumentValidity' && c.args[0] === 'eco-8' && c.args[1] === String(NOTE))
+            expect(retiresOf(NOTE)).toHaveLength(1)
+            expect(ret).toBeGreaterThan(enq)
+            // No swap: the note's text, gate columns and graph rows are the old ones.
+            expect(await row(NOTE)).toEqual(before)
+            expect(await noteLabels()).toEqual(labelsBefore)
+            // Not swapped: the column marks the re-index to retire when it lands, never as live.
+            expect(String(await reindexOf())).toMatch(/^retire:/)
+            expect(await reindexOf()).not.toEqual(reindexBefore)
+            // The revision is kept and its claim handed back.
+            const kept = await revisionOf(NOTE)
+            expect([Number(kept?.id), kept?.p]).toEqual([rev, 'draft'])
+          } finally {
+            await hold(heldId, false)
+          }
+          // Control: the same revision, no longer held, is promoted.
+          aiCalls.length = 0
+          expect(await landDraftIngest(rev)).toEqual({ published: true })
+          expect(await revisionOf(NOTE)).toBeUndefined()
+          expect(String((await row(NOTE)).r)).not.toBe(String(before.r))
+        }, 60_000)
+      }
+
+      it('🔴 the swap holds the note and the revision FOR SHARE: a hold from another connection waits until commit', async () => {
+        const rev = await changeAndWait()
+        // Right after the swap's first statement, another connection tries to hold each row.
+        type Tx = { execute(q: unknown): Promise<unknown> }
+        const drizzle = (payload!.db as unknown as { drizzle: { transaction: (f: (tx: Tx) => Promise<unknown>, c?: unknown) => Promise<unknown> } }).drizzle
+        const realTx = drizzle.transaction.bind(drizzle)
+        const attempts: Record<string, 'blocked' | 'written'> = {}
+        const spy = vi.spyOn(drizzle, 'transaction').mockImplementation((async (f: (tx: Tx) => Promise<unknown>, c?: unknown) =>
+          realTx(async (tx: Tx) => {
+            let first = true
+            const wrapped = new Proxy(tx, {
+              get: (t, k) =>
+                k === 'execute'
+                  ? async (q: unknown) => {
+                      const out = await t.execute(q)
+                      if (first && Object.keys(attempts).length === 0) {
+                        first = false
+                        attempts.revision = await tryHoldElsewhere(pg!.db, rev)
+                        attempts.note = await tryHoldElsewhere(pg!.db, NOTE)
+                      }
+                      return out
+                    }
+                  : Reflect.get(t, k),
+            })
+            return f(wrapped)
+          }, c)) as never)
+        try {
+          expect(await landDraftIngest(rev)).toEqual({ published: true })
+        } finally {
+          spy.mockRestore()
+        }
+        expect(attempts).toEqual({ revision: 'blocked', note: 'blocked' })
+        expect((await rowsOf(pg!.db, sql`SELECT consent_held AS h FROM documents WHERE id = ${NOTE}`))[0]!.h).toBe(false)
+      }, 60_000)
+
       it('a held note: "Publicar cambios" starts nothing — endpoint (CONSENT_HELD_MESSAGE) and the lib for any other caller', async () => {
         expect((await autosave(ANA, NOTE, { bodyMarkdown: nextBody() })).status).toBe(200)
         await hold(NOTE, true)
@@ -733,6 +847,85 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         expect(retiresOf(NOTE)).toHaveLength(0)
         expect((await row(NOTE)).p).toBe('published')
       })
+
+      /**
+       * 🔴 THE LATE INGEST. ai-service answers the enqueue when it QUEUES the
+       * job; its worker upserts later (`validTo = null`), clearing the retire
+       * the promotion did. The re-index's callback, arriving after both, must
+       * retire it again. `stop` lands inside the enqueue (after the entry check).
+       */
+      const lateReindex = async (stop: () => Promise<unknown>, reason: 'consent-held' | 'withdrawn') => {
+        const rev = await changeAndWait()
+        let ingestId = ''
+        ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = async () => {
+          ingestId = `ing-${((globalThis as { __ingestSeq?: number }).__ingestSeq ?? 0) + 1}` // what the mocked enqueue answers next
+          await stop()
+        }
+        aiCalls.length = 0
+        try {
+          expect(await landDraftIngest(rev)).toEqual({ published: false, reason })
+        } finally {
+          ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = undefined
+        }
+        expect(retiresOf(NOTE)).toHaveLength(1) // the promotion's own retire
+        // ...then the worker lands (the copy is live again) and calls back.
+        aiCalls.length = 0
+        const res = await post({ event: 'ingest.completed', ingestId, docId: String(NOTE), corpus: 'eco-8' })
+        expect(res.status).toBe(200)
+        expect(retiresOf(NOTE)).toHaveLength(1) // retired again, after the landing
+        expect((await rowsOf(pg!.db, sql`SELECT reindex_ingest_id AS x FROM documents WHERE id = ${NOTE}`))[0]!.x).toBeNull()
+        return rev
+      }
+
+      it('🔴 held during the re-index, the ingest lands after the retire: the callback retires it again', async () => {
+        const holdNote = (on: boolean) => pg!.db.execute(sql`UPDATE documents SET consent_held = ${on} WHERE id = ${NOTE}`)
+        try {
+          await lateReindex(() => holdNote(true), 'consent-held')
+          expect((await row(NOTE)).p).toBe('published') // the note itself is left as it was
+        } finally {
+          await holdNote(false)
+        }
+        // The kept revision, released, is promoted (and clears the column for the next test).
+        const kept = Number((await revisionOf(NOTE))!.id)
+        expect(await landDraftIngest(kept)).toEqual({ published: true })
+        await pg!.db.execute(sql`UPDATE documents SET reindex_ingest_id = NULL WHERE id = ${NOTE}`)
+      }, 60_000)
+
+      it('🔴 the REVISION held during the re-index, note still published and not held: retired again on landing', async () => {
+        let revId = 0
+        const holdRev = (on: boolean) =>
+          pg!.db.execute(sql`UPDATE documents SET consent_held = ${on} WHERE revision_of_id = ${NOTE}`)
+        try {
+          revId = await lateReindex(() => holdRev(true), 'consent-held')
+        } finally {
+          await holdRev(false)
+        }
+        expect(await landDraftIngest(revId)).toEqual({ published: true })
+        await pg!.db.execute(sql`UPDATE documents SET reindex_ingest_id = NULL WHERE id = ${NOTE}`)
+      }, 60_000)
+
+      it('🔴 withdrawn during the re-index, the ingest lands after the retire: the callback retires it again', async () => {
+        await lateReindex(
+          () => pg!.db.execute(sql`UPDATE documents SET publication_status = 'unpublishing' WHERE id = ${NOTE}`),
+          'withdrawn',
+        )
+        await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published' WHERE id = ${NOTE}`)
+      }, 60_000)
+
+      it('🔴 swapped, then held before the re-index landed: the callback retires it', async () => {
+        const rev = await changeAndWait()
+        expect(await landDraftIngest(rev)).toEqual({ published: true })
+        const reindex = String((await rowsOf(pg!.db, sql`SELECT reindex_ingest_id AS x FROM documents WHERE id = ${NOTE}`))[0]!.x)
+        await pg!.db.execute(sql`UPDATE documents SET consent_held = true WHERE id = ${NOTE}`)
+        try {
+          aiCalls.length = 0
+          expect((await post({ event: 'ingest.completed', ingestId: reindex, docId: String(NOTE), corpus: 'eco-8' })).status).toBe(200)
+          expect(retiresOf(NOTE)).toHaveLength(1)
+          expect((await row(NOTE)).p).toBe('published')
+        } finally {
+          await pg!.db.execute(sql`UPDATE documents SET consent_held = false WHERE id = ${NOTE}`)
+        }
+      }, 60_000)
 
       it('🔴 the note was deleted: a shared-corpus ingest for a missing row is ERASED (audit 2026-10-28)', async () => {
         aiCalls.length = 0

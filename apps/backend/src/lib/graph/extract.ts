@@ -60,6 +60,7 @@
  */
 
 import { mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
+import { isDatabaseError, safeErrMessage } from '@/lib/errorSummary'
 import { isGraphNoiseLabel } from './noise'
 import { canonicalKey, displayLabel } from './normalise'
 import {
@@ -1061,7 +1062,8 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
       const safe = mustPassAnonymisationGate(contentKind)
         ? new Error(`window call failed (${err instanceof Error ? err.name : typeof err})`)
         : err
-      failureReasons.push(safe instanceof Error ? safe.message.slice(0, 400) : String(safe).slice(0, 400))
+      // 🔴 `safeErrMessage`: a database error's message quotes the query's params.
+      failureReasons.push(safeErrMessage(safe, 400))
       ;(args.onWindowError ?? defaultWindowError)(i, safe)
     }
 
@@ -1141,7 +1143,8 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
 
 function defaultWindowError(windowIndex: number, err: unknown): void {
   // Message only, capped: never the raw error object, which may carry a response body.
-  const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+  // 🔴 `safeErrMessage`: a database error's message quotes the query's params.
+  const message = err instanceof Error && !isDatabaseError(err) ? `${err.name}: ${err.message}` : safeErrMessage(err, 400)
   console.warn('[graph] extraction window', windowIndex, 'failed:', message.slice(0, 400))
 }
 

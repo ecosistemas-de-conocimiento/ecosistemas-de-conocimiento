@@ -1,7 +1,7 @@
 # ADR-0015. Un operador y una sola llave de IA; varios servidores de IA vendrán después
 
 - **Versión:** 1.2
-- **Fecha del documento:** 2026-11-10
+- **Fecha del documento:** 2026-11-11
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada. La parte "una llave" está en uso; la parte "varios servidores" está decidida y **sin construir**. El 2026-10-16 se le sumó una org de ai-service por ecosistema (ver "Decisiones relacionadas")
 - **Fecha de la decisión:** 2026-09-04
@@ -48,14 +48,14 @@ Lo que EDC es, según esa nota:
 **Decisión del responsable de desarrollo** (2026-10-16). Cada ecosistema actúa como su propia org de ai-service, `edc-eco-<id>`, reusando org y proyecto. Se construyó con el encabezado `X-AI-Org` y la propiedad `delegateOrgPrefix: "edc-"` en la única llave (2026-10-16; leído en `apps/backend/src/lib/aiClient.ts` e `infra/docker-compose.yml`).
 
 - **Por qué:** resolver el tope de gasto compartido (lista de pendientes del proyecto: "Org por ecosistema en ai-service… resuelve el tope de gasto compartido").
-- **Presupuesto:** $5 al mes por ecosistema nuevo (`AI_ECOSYSTEM_BUDGET_USD`). Es una decisión del responsable de desarrollo, no una necesidad medida (citado de `infra/fleet/env-manifests.md`). Desde la sincronización del 2026-10-21, el gasto de embeddings de ingesta también se carga al presupuesto de cada ecosistema.
+- **Presupuesto:** $5 al mes por ecosistema nuevo (`AI_ECOSYSTEM_BUDGET_USD`). Es una decisión del responsable de desarrollo, no una necesidad medida (citado de `infra/fleet/env-manifests.md`). Desde el 2026-10-21, el gasto de embeddings de ingesta también se carga al presupuesto de cada ecosistema.
 - **Relación con esta decisión:** matiza "sin presupuestos por ecosistema". Sigue habiendo **una sola llave**; lo que se separa es la contabilidad y los datos dentro de ai-service. El límite de tasa sigue siendo compartido.
 - **Alternativa descartada:** una org compartida `demo`.
 - ⚠ Una base `edc_ai` nueva responde 402 (sin presupuesto) en todo hasta que se crea la fila de presupuesto de cada org (citado de `infra/fleet/edc-1.md` §6).
 
 ## Estado al 2026-11-10
 
-"Una sola llave" se refiere a la llave de rol `app`. El backend tiene además, desde el 2026-08-14, una segunda llave de rol `admin`, `AI_SERVICE_ADMIN_API_KEY` (`infra/docker-compose.yml`, `API_KEYS`), con el mismo `delegateOrgPrefix`. La usa para lo que ai-service reserva a ese rol: publicar y despublicar (retirar la copia vieja), borrar documentos y corpus y, desde el 2026-11-10, cambiar títulos sin volver a embeber (`PATCH /v1/corpus/:name/titles`; pendiente de desplegar en dev). No es una llave por ecosistema y no cambia la decisión.
+"Una sola llave" se refiere a la llave de rol `app`. El backend tiene además, desde el 2026-08-14, una segunda llave de rol `admin`, `AI_SERVICE_ADMIN_API_KEY` (`infra/docker-compose.yml`, `API_KEYS`), con el mismo `delegateOrgPrefix`. La usa para lo que ai-service reserva a ese rol: publicar y despublicar (retirar la copia vieja), borrar documentos y corpus y, desde el 2026-11-10, cambiar títulos sin volver a embeber (`PATCH /v1/corpus/:name/titles`; desplegado). No es una llave por ecosistema y no cambia la decisión.
 
 ## Referencias
 

@@ -94,6 +94,7 @@ import {
   BudgetMisconfigured,
   BudgetNotConfigured,
 } from '../../budget/errors.js';
+import { clientErrText } from '../../../errors/log-safe.js';
 
 const DEFAULT_PROVIDER: ProviderKey = 'openrouter';
 
@@ -670,7 +671,7 @@ export class Router implements LLMRouter {
           unitKey: req.unitKey,
           ...httpRequestIdMeta(req),
           errorCode: err instanceof Error ? err.name : 'unknown',
-          errorMessage: err instanceof Error ? err.message : String(err),
+          errorMessage: clientErrText(err),
           ...providerGenerationIdMeta(partial ?? empty),
           ...(breakdown.length > 0 ? { providerCostUsd: emptySpendUsd } : {}),
           ...(partial
@@ -1143,7 +1144,7 @@ export class Router implements LLMRouter {
         unitKey: req.unitKey,
         ...httpRequestIdMeta(req),
         errorCode: 'ERR_PROVIDER_TIMEOUT',
-        errorMessage: err instanceof Error ? err.message : String(err),
+        errorMessage: clientErrText(err),
         abortCause: 'timeout',
         truncated: true,
         reason: PROVIDER_TIMEOUT_REASON,

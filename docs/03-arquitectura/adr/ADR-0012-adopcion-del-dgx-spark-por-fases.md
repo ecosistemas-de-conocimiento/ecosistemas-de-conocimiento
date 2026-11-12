@@ -1,7 +1,7 @@
 # ADR-0012. Adopción del DGX Spark por fases, con falla cerrada como principio
 
 - **Versión:** 1.2
-- **Fecha del documento:** 2026-11-10
+- **Fecha del documento:** 2026-11-11
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada, implementada en parte en dev. **La falla cerrada del detector está suspendida en dev** mientras los datos sean sintéticos (decisión del 2026-10-21)
 - **Fecha de la decisión:** plan del 2026-10-17; elecciones de modelos del 2026-10-21 al 2026-10-23
@@ -67,6 +67,7 @@ Nota: el arnés de medición Q24 corre con `GATE_BACKEND=spark` y sin respaldo; 
 - **Interruptor en tiempo de ejecución.** El global `platform-settings.detectorFallback` (`hosted` o `none`), que la administración de plataforma cambia en Ajustes, le gana a `ANONYMISE_DETECT_FALLBACK` (`apps/backend/src/lib/platformSettings.ts`, caché de 60 s como máximo). En dev el global está vacío y rige la variable (citado de `infra/fleet/edc-1.md`, 4zzzzzzz).
 - **`none` sin Spark.** Desde el 2026-11-10 (commit 14e958e2, desplegado en dev), `none` también impide la llamada hospedada cuando no hay `ANONYMISE_DETECT_URL`, como en staging: el documento queda retenido con motivo `sin-detector`. Antes, staging mandaba todo al hospedado aunque el modo fuera `none`.
 - **ZDR.** Toda llamada de ai-service a OpenRouter pide retención cero de datos (`provider.zdr: true`) y falla cerrada si ningún proveedor la cumple (commit 9b755298, desplegado en dev el 2026-11-10). El respaldo hospedado del detector va por ese camino. Las llamadas directas a DeepInfra no llevan ZDR.
+- 2026-11-11: `hosted` por OpenRouter con ZDR es la regla de dev (decisión del responsable del 2026-11-09, confirmada el 2026-11-10); sustituye la de no mandar nada a OpenRouter. Staging queda fuera de alcance por ahora.
 - Los títulos de testimonios y el título de un `documento` con compuerta siguen el mismo modo ([ADR-0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md)).
 
 ## Referencias

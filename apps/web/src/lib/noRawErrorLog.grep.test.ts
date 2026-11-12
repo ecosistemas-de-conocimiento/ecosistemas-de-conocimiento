@@ -29,6 +29,19 @@ const SHAPES = [
   new RegExp(
     String.raw`\.(?:info|warn|error|debug|fatal|trace)\(.*(?:\(?\b${ERR}(?: as Error)?\)?\??\.(?:message|stack)\b|\b(?:String|JSON\.stringify)\(${ERR}\))`,
   ),
+  // 2026-11-11: an error as a format argument after a string first argument
+  // (`log.error('x %s', err)`: pino prints `String(err)`), a database error's
+  // own fields, a child binding not under `err`, `util.format` / `inspect`,
+  // and `process.stderr.write`.
+  new RegExp(String.raw`\.(?:info|warn|error|debug|fatal|trace)\((?:'[^']*'|"[^"]*"|\x60[^\x60]*\x60)\s*,(?:[^,]*,)*\s*${ERR}\s*\)`),
+  new RegExp(
+    String.raw`(?:console\.(?:log|info|warn|error|debug)|\.(?:info|warn|error|debug|fatal|trace))\(.*\b${ERR}(?: as [^)]*\))?\??\.(?:detail|where|query|params|parameters)\b`,
+  ),
+  new RegExp(String.raw`\.child\(\{[^}]*\b(?!err\b)\w+:\s*${ERR}\s*[,}]`),
+  new RegExp(String.raw`(?:console\.(?:log|info|warn|error|debug)|\.(?:info|warn|error|debug|fatal|trace))\(.*\b(?:format|inspect)\([^)]*\b${ERR}\b`),
+  new RegExp(
+    String.raw`process\.std(?:err|out)\.write\(.*(?:\b${ERR}(?: as Error)?\)?\??\.(?:message|stack)\b|(?:String|JSON\.stringify)\(${ERR}\)|\$\{${ERR}\})`,
+  ),
 ];
 
 /** The lint rule's own opt-out on the line above, which the rule also honours. */
@@ -71,6 +84,12 @@ describe('no raw error text in a log line (grep)', () => {
     `job.then(() => undefined, (boom) => console.error('[x]', boom));`,
     `routeLog.warn(\`[x] failed: \${(err as Error).message}\`);`,
     `logFor('x').error({ id, err: String(err) });`,
+    `routeLog.error('[x] %s', err);`,
+    `console.warn('[x]', err.detail);`,
+    `routeLog.warn({ id, at: (err as PgError).where });`,
+    `routeLog.child({ e: err });`,
+    `console.warn(util.format('[x] %s', err));`,
+    `process.stderr.write(\`[x] \${err.message}\`);`,
   ])('🔴 the shapes catch %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(true);
   });
@@ -85,6 +104,11 @@ describe('no raw error text in a log line (grep)', () => {
     `job.then((boom) => console.log('[x]', boom));`,
     `job.then(() => undefined, (boom) => console.error('[x]', safeErrMessage(boom)));`,
     `routeLog.warn('[x] failed', safeErrMessage(err));`,
+    `routeLog.error({ err }, '[x] %s', id);`,
+    `routeLog.info('[x] %s', url.searchParams);`,
+    `routeLog.child({ err });`,
+    `console.log('[x]', event.params, url.search);`,
+    `process.stderr.write(\`[x] \${safeErrMessage(err)}\`);`,
   ])('allows %s', (line) => {
     expect(SHAPES.some((re) => re.test(line))).toBe(false);
   });

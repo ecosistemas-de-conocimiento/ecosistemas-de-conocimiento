@@ -5,7 +5,8 @@
  *   · held before the job starts: the re-read (`readGraphableRow`, a Payload
  *     `find` with no `select`) carries `consentHeld`, the run stops, the
  *     extraction client gets no call and nothing is written (status, rows);
- *   · held while the model runs: its output is dropped, no graph row written;
+ *   · held while the model runs: its output is dropped, no entity, mention or
+ *     relation is written, and `graph_status` ends `skipped` (not `extracting`);
  *   · control: the same row, not held, is graphed.
  *
  * Harness: `lib/testing/realPostgres.ts`. No docker → SKIP. The model is a spy.
@@ -22,7 +23,7 @@ vi.mock('@/lib/aiClient', () => {
   return { getAdminAIClient: () => anything, getAppAIClient: () => anything }
 })
 
-import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, type RealPostgres } from '../testing/realPostgres'
+import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, tryHoldElsewhere, type RealPostgres } from '../testing/realPostgres'
 import type { GraphGenerateClient } from './extract'
 import { runGraphExtraction, type GraphSchedulerPayload } from './schedule'
 
@@ -40,11 +41,19 @@ let duringModel: (() => Promise<void>) | null = null
 
 const sync = vi.fn(async (_req: unknown) => {
   if (duringModel) await duringModel()
-  return { parsed: { entidades: [{ tipo: 'tema', etiqueta: 'Partería', menciones: 2 }], relaciones: [] } }
+  return {
+    parsed: {
+      entidades: [
+        { id: 'e1', tipo: 'tema', etiqueta: 'Partería', menciones: 2 },
+        { id: 'e2', tipo: 'tema', etiqueta: 'Clínica del pueblo', menciones: 1 },
+      ],
+      relaciones: [{ desde: 'e1', hacia: 'e2', tipo: 'relacionado_con' }],
+    },
+  }
 })
 const client = { generate: { sync } } as unknown as GraphGenerateClient
 
-const run = () =>
+const run = (over: { anonymise?: boolean; docId?: number } = {}) =>
   runGraphExtraction({
     payload: payload as unknown as GraphSchedulerPayload,
     docId: DOC,
@@ -55,13 +64,16 @@ const run = () =>
     text: TEXT,
     title: 'Partería',
     client,
+    ...over,
   })
 const state = async () =>
   (
     await rowsOf(
       pg!.db,
       sql`SELECT graph_status AS g, graph_error AS e, updated_at AS u,
-                 (SELECT count(*)::int FROM graph_mentions WHERE document_id = ${DOC}) AS m
+                 (SELECT count(*)::int FROM graph_mentions WHERE document_id = ${DOC}) AS m,
+                 (SELECT count(*)::int FROM graph_relations WHERE document_id = ${DOC}) AS r,
+                 (SELECT count(*)::int FROM graph_entities WHERE organization_id = ${ORG}) AS ent
             FROM documents WHERE id = ${DOC}`,
     )
   )[0]!
@@ -83,8 +95,12 @@ describe.skipIf(!dockerOk)('graph job vs consent hold (real Postgres)', () => {
     sync.mockClear()
     duringModel = null
     await hold(false)
-    await pg!.db.execute(sql`DELETE FROM graph_mentions WHERE document_id = ${DOC}`)
-    await pg!.db.execute(sql`UPDATE documents SET graph_status = 'pending', graph_error = NULL WHERE id = ${DOC}`)
+    // This org has only DOC, so its entities are DOC's.
+    await pg!.db.execute(sql`DELETE FROM graph_relations WHERE organization_id = ${ORG}`)
+    await pg!.db.execute(sql`DELETE FROM graph_mentions WHERE organization_id = ${ORG}`)
+    await pg!.db.execute(sql`DELETE FROM graph_entities WHERE organization_id = ${ORG}`)
+    await pg!.db.execute(sql`UPDATE documents SET graph_status = 'pending', graph_error = NULL,
+                               anonymise = false, anonymisation_status = 'n/a', redacted_text = NULL WHERE id = ${DOC}`)
   })
 
   afterAll(async () => {
@@ -105,18 +121,147 @@ describe.skipIf(!dockerOk)('graph job vs consent hold (real Postgres)', () => {
     expect(await state()).toEqual(before)
   })
 
-  it('🔴 held while the model runs: its output is dropped, no graph row written', async () => {
+  it('🔴 held while the model runs: output dropped, no graph row, status `skipped`', async () => {
+    // The model "runs": the hold lands in the database, then it answers.
     duringModel = () => hold(true).then(() => undefined)
     expect(await run()).toBe('skipped')
     expect(sync).toHaveBeenCalled()
     const after = await state()
-    expect(after.m).toBe(0)
-    expect(after.g).not.toBe('ready')
+    expect({ m: after.m, r: after.r, ent: after.ent }).toEqual({ m: 0, r: 0, ent: 0 })
+    // Before the fix it stayed `extracting`.
+    expect(after.g).toBe('skipped')
   })
 
-  it('control: not held, the row is graphed', async () => {
+  it('🔴 held while the model runs, with graph rows from an earlier run: they stay, status `skipped`', async () => {
+    // An earlier run's rows for DOC. Without the pre-write hold check,
+    // `abortIfStale` sees "no longer graphable" and DELETES them.
+    await pg!.db.execute(sql`
+      INSERT INTO graph_entities (id, organization_id, type, label, canonical_key)
+      VALUES (9701, ${ORG}, 'tema', 'Previa', 'previa'), (9702, ${ORG}, 'tema', 'Otra previa', 'otra previa')`)
+    await pg!.db.execute(sql`
+      INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences)
+      VALUES (${ORG}, ${DOC}, 9701, 1), (${ORG}, ${DOC}, 9702, 1)`)
+    await pg!.db.execute(sql`
+      INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type)
+      VALUES (${ORG}, ${DOC}, 9701, 9702, 'relacionado_con')`)
+    duringModel = () => hold(true).then(() => undefined)
+    expect(await run()).toBe('skipped')
+    expect(sync).toHaveBeenCalled()
+    const after = await state()
+    expect({ m: after.m, r: after.r, ent: after.ent, g: after.g }).toEqual({ m: 2, r: 1, ent: 2, g: 'skipped' })
+  })
+
+  /** An earlier run's rows for DOC: mentions of 9701/9702 and one relation. */
+  const earlierRows = async () => {
+    await pg!.db.execute(sql`
+      INSERT INTO graph_entities (id, organization_id, type, label, canonical_key)
+      VALUES (9701, ${ORG}, 'tema', 'Previa', 'previa'), (9702, ${ORG}, 'tema', 'Otra previa', 'otra previa')`)
+    await pg!.db.execute(sql`
+      INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences)
+      VALUES (${ORG}, ${DOC}, 9701, 1), (${ORG}, ${DOC}, 9702, 1)`)
+    await pg!.db.execute(sql`
+      INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type)
+      VALUES (${ORG}, ${DOC}, 9701, 9702, 'relacionado_con')`)
+  }
+  const mentionedIds = async () =>
+    (await rowsOf(pg!.db, sql`SELECT entity_id AS id FROM graph_mentions WHERE document_id = ${DOC} ORDER BY 1`)).map((x) =>
+      Number(x.id),
+    )
+
+  it('🔴 held while the model runs AND the model fails, gated: the earlier rows stay, status `skipped`', async () => {
+    // Gated (`anonymise`, cleared): without the hold check `recordFailure` deletes the rows and says `failed`.
+    await pg!.db.execute(sql`UPDATE documents SET anonymise = true, anonymisation_status = 'ready', redacted_text = ${TEXT} WHERE id = ${DOC}`)
+    await earlierRows()
+    sync.mockImplementationOnce(async () => {
+      await hold(true)
+      throw new Error('modelo caído')
+    })
+    expect(await run({ anonymise: true })).toBe('skipped')
+    expect(sync).toHaveBeenCalled()
+    const after = await state()
+    expect({ m: after.m, r: after.r, g: after.g, e: after.e }).toEqual({ m: 2, r: 1, g: 'skipped', e: null })
+    expect(await mentionedIds()).toEqual([9701, 9702])
+  })
+
+  it('🔴 held after the pre-write re-read, before the writer\'s transaction: nothing replaced, status `skipped`', async () => {
+    await earlierRows()
+    // The writer's first entity lookup runs after the re-read: the hold lands there.
+    const realFind = payload!.find.bind(payload!)
+    let landed = false
+    const spy = vi.spyOn(payload!, 'find').mockImplementation((async (args: { collection: string }) => {
+      if (args.collection === 'graphEntities' && !landed) {
+        landed = true
+        await hold(true)
+      }
+      return realFind(args as never)
+    }) as never)
+    try {
+      expect(await run()).toBe('skipped')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(landed).toBe(true)
+    const after = await state()
+    expect({ m: after.m, r: after.r, g: after.g }).toEqual({ m: 2, r: 1, g: 'skipped' })
+    // The earlier run's mentions, not this run's. (Its entities were upserted
+    // before the transaction: those stay, see writer.ts → etapa-2.)
+    expect(await mentionedIds()).toEqual([9701, 9702])
+  })
+
+  it('🔴 the writer\'s transaction holds the row FOR SHARE: a hold from another connection waits until commit', async () => {
+    // Inside the transaction (its first delete), another connection tries to hold DOC.
+    const realDelete = payload!.delete.bind(payload!)
+    let attempt: 'blocked' | 'written' | null = null
+    const spy = vi.spyOn(payload!, 'delete').mockImplementation((async (args: { collection: string; req?: unknown }) => {
+      if (args.collection === 'graphMentions' && args.req && attempt === null) attempt = await tryHoldElsewhere(pg!.db, DOC)
+      return realDelete(args as never)
+    }) as never)
+    try {
+      expect(await run()).toBe('ready')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(attempt).toBe('blocked')
+    expect((await state()).m).toBeGreaterThan(0)
+  })
+
+  it('🔴 a revision: the writer reads its NOTE\'s hold, held after the pre-write re-read: nothing written, `skipped`', async () => {
+    const REV = 702
+    await pg!.db.execute(sql`
+      INSERT INTO documents (id, organization_id, uploaded_by_id, publication_status, kind, content_kind, anonymise,
+                             anonymisation_status, extracted_text, name, graph_status, revision_of_id)
+      VALUES (${REV}, ${ORG}, ${USER}, 'published', 'pdf', 'documento', false, 'n/a', ${TEXT}, 'Partería', 'pending', ${DOC})`)
+    const realFind = payload!.find.bind(payload!)
+    let landed = false
+    const spy = vi.spyOn(payload!, 'find').mockImplementation((async (args: { collection: string }) => {
+      if (args.collection === 'graphEntities' && !landed) {
+        landed = true
+        await hold(true) // the NOTE; the revision's own flag stays false
+      }
+      return realFind(args as never)
+    }) as never)
+    try {
+      expect(await run({ docId: REV })).toBe('skipped')
+      expect(landed).toBe(true)
+      const m = await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM graph_mentions WHERE document_id = ${REV}`)
+      expect(Number(m[0]!.n)).toBe(0)
+      const g = await rowsOf(pg!.db, sql`SELECT graph_status AS g, consent_held AS h FROM documents WHERE id = ${REV}`)
+      expect(g[0]).toEqual({ g: 'skipped', h: false })
+    } finally {
+      spy.mockRestore()
+      await pg!.db.execute(sql`DELETE FROM graph_mentions WHERE document_id = ${REV}`)
+      await pg!.db.execute(sql`DELETE FROM graph_relations WHERE document_id = ${REV}`)
+      await pg!.db.execute(sql`DELETE FROM documents WHERE id = ${REV}`)
+    }
+  })
+
+  it('control: not held, the row is graphed (entities, mentions, relation)', async () => {
     expect(await run()).toBe('ready')
     expect(sync).toHaveBeenCalled()
-    expect((await state()).m).toBeGreaterThan(0)
+    const after = await state()
+    expect(after.g).toBe('ready')
+    expect(after.m).toBeGreaterThan(0)
+    expect(after.r).toBeGreaterThan(0)
+    expect(after.ent).toBeGreaterThan(0)
   })
 })

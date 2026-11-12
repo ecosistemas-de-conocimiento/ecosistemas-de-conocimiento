@@ -22,7 +22,7 @@
 
 import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/documentColumns'
-import { errSummary, isDatabaseError } from '@/lib/errorSummary'
+import { errSummary, safeErrMessage } from '@/lib/errorSummary'
 
 import { isConsentHeldNow } from '@/lib/consentHold'
 
@@ -198,8 +198,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
   try {
     start = await readGraphableRow(payload, docId, organizationId)
   } catch (err) {
-    await recordFailure(args, 'graph_reread_failed', err)
-    return 'failed'
+    return recordFailure(args, 'graph_reread_failed', err)
   }
   const queued: GraphableRow = {
     ok: true,
@@ -248,8 +247,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
       // A deployment with no `AI_SERVICE_API_KEY` is a normal state for a local
       // run. `failed` rather than `skipped` on purpose: an operator can fix it
       // and the backfill will then pick the row up.
-      await recordFailure(ctx, 'ai_client_unavailable', err)
-      return 'failed'
+      return recordFailure(ctx, 'ai_client_unavailable', err)
     }
   }
 
@@ -271,8 +269,15 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     // 🔴 RE-READ RIGHT BEFORE WRITING. The deep calls above take minutes; a
     // reviewer can hold, reject, withdraw or re-gate the row in that window.
     const beforeWrite = await readGraphableRow(payload, docId, organizationId)
-    // 🔴 Held while the model ran: its output is dropped, nothing is written.
-    if (isHeldRead(beforeWrite)) return 'skipped'
+    // 🔴 Held while the model ran: its output is dropped, no graph row is
+    // written, and the status leaves `extracting` for `skipped` (the status
+    // column only, no reason text). Without this the row stayed `extracting`.
+    if (isHeldRead(beforeWrite)) {
+      await setGraphStatus(payload, docId, { graphStatus: 'skipped' }).catch((err) => {
+        console.error('[graph] could not mark held doc skipped', docId, errSummary(err))
+      })
+      return 'skipped'
+    }
     const writeAbort = await abortIfStale(payload, docId, organizationId, start, beforeWrite)
     if (writeAbort) return writeAbort
     // 🔴 THE SEEDS COME FROM THE ROW AS RE-READ HERE, merged by `canonicalKey`
@@ -325,8 +330,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     )
     return 'ready'
   } catch (err) {
-    await recordFailure(ctx, 'graph_extract_failed', err)
-    return 'failed'
+    return recordFailure(ctx, 'graph_extract_failed', err)
   }
 }
 
@@ -353,8 +357,18 @@ async function recordFailure(
   args: Pick<RunGraphExtractionArgs, 'payload' | 'docId' | 'organizationId' | 'contentKind' | 'anonymise'>,
   code: string,
   err: unknown,
-): Promise<void> {
+): Promise<'failed' | 'skipped'> {
   const { payload, docId, organizationId, contentKind } = args
+  // 🔴 HELD WHILE THE RUN WAS UNDER WAY (the model failed, or the writer
+  // refused the held row): the same as A2. The rows stay as they were and the
+  // status is `skipped`. A read that fails falls through to the failure path.
+  const held = await readGraphableRow(payload, docId, organizationId).then(isHeldRead, () => false)
+  if (held) {
+    await setGraphStatus(payload, docId, { graphStatus: 'skipped' }).catch((updateErr) => {
+      console.error('[graph] could not mark held doc skipped', docId, errSummary(updateErr))
+    })
+    return 'skipped'
+  }
   // 🔴 `anonymise` TOO: a documento filed for anonymisation is gated content.
   const gated = mustPassAnonymisationGate(contentKind, args.anonymise)
   if (gated) {
@@ -365,7 +379,7 @@ async function recordFailure(
   // 🔴 A DATABASE error's message is the failed query with its params (P-07):
   // a mention's label or snippet. Its summary goes to the log AND to
   // `graphError`, which the frontend shows.
-  const message = isDatabaseError(err) ? errSummary(err) : err instanceof Error ? err.message : String(err)
+  const message = safeErrMessage(err, 500)
   // 🔴 PRIVACY. A gated kind logs safe metadata only: a downstream error (a
   // Postgres unique violation, a client error) can quote a label or the reply.
   if (gated) {
@@ -384,6 +398,7 @@ async function recordFailure(
   }).catch((updateErr) => {
     console.error('[graph] could not record the failure on doc', docId, errSummary(updateErr))
   })
+  return 'failed'
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +449,7 @@ async function readGraphableRow(
   // Postgres, `schedule.consentHeld.pg.test.ts`).
   // A revision answers for its note too: read now, as the note may have been
   // held while the revision was in flight (`isConsentHeldNow`, ola 11).
+  // ⚠ No `req`: only the detached queue (`setImmediate`) and the backfill call this, never inside a write.
   if (await isConsentHeldNow(payload, row)) return { ok: false, reason: 'consent held', consentHeld: true }
   const corpus = corpusTextFor(row)
   if (!corpus.ok) return corpus

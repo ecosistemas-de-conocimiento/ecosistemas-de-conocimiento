@@ -40,6 +40,7 @@ import {
   type RegistryEntryCreate,
 } from '../../db/registry.js';
 import { setOrgBudget, type SetOrgBudgetInput } from '../budget/provision.js';
+import { clientErrText } from '../../errors/log-safe.js';
 
 // ---------------------------------------------------------------------------
 // Shared shapes
@@ -316,7 +317,7 @@ export async function provisionTenant(
       items.push({
         item: 'budget',
         status: 'failed',
-        message: `Could not set the budget: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Could not set the budget: ${clientErrText(err)}`,
       });
     }
   } else {
@@ -361,9 +362,7 @@ export async function provisionTenant(
       items.push({
         item: `registry:${unitType}`,
         status: 'failed',
-        message: `Could not register unit type "${unitType}": ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        message: `Could not register unit type "${unitType}": ${clientErrText(err)}`,
         detail: { unitType },
       });
     }

@@ -2,9 +2,11 @@
  * 🔴 `clearLegacyHeldText` (ola 11, item 4) on a real Postgres (every
  * migration, no Payload boot):
  *   · dry run lists ids and writes nothing;
- *   · apply NULLs `held_text` / `held_text_hash` only on `content` holds whose
- *     model never ran, and leaves org 8, consent-held rows, other reasons,
- *     other stages and non-held rows exactly as they were;
+ *   · apply NULLs `held_text` only on `content` holds whose model never ran,
+ *     and leaves org 8, consent-held rows, other reasons, other stages and
+ *     non-held rows exactly as they were;
+ *   · 🔴 `held_text_hash` is KEPT, so `/retry` (`planIngestRetry`) still accepts
+ *     the row once its text changed (a NULL hash refuses it for good);
  *   · no log line carries text.
  *
  * Harness: `lib/testing/realPostgres`. No docker → SKIP.
@@ -13,7 +15,9 @@
 import { sql } from '@payloadcms/db-postgres'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+import { planIngestRetry } from '../collections/Documents'
 import { clearLegacyHeldText } from './clearLegacyHeldText'
+import { gatedTextHash } from './gatedTextHash'
 import { dockerOk, rowsOf, startRealPostgres, type RealPostgres } from './testing/realPostgres'
 
 let pg: RealPostgres
@@ -45,7 +49,7 @@ describe.skipIf(!dockerOk)('clearLegacyHeldText (real Postgres)', () => {
         INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, content_kind, publication_status,
                                anonymisation_status, anonymisation_error, held_text, held_text_hash, consent_held)
         VALUES (${id}, ${org}, 1, 'x', 'pdf', 'testimonio', 'draft', ${status}, ${error}, ${text},
-                ${text === null ? null : 'h-' + id}, ${held})`)
+                ${text === null ? null : gatedTextHash(`${RAW} ${id}`)}, ${held})`)
     await ins(1, 6, 'held', NEVER, RAW) // ✔ cleared
     await ins(2, 9, 'held', NEVER, RAW) // ✔ cleared
     await ins(3, 8, 'held', NEVER, RAW) // org 8: never
@@ -74,7 +78,8 @@ describe.skipIf(!dockerOk)('clearLegacyHeldText (real Postgres)', () => {
     for (const r of after) {
       const was = before.find((b) => b.id === r.id)!
       if (r.id === 1 || r.id === 2) {
-        expect(r).toEqual({ ...was, t: null, h: null })
+        expect(r).toEqual({ ...was, t: null })
+        expect(r.h).toBe(gatedTextHash(`${RAW} ${r.id}`))
       } else {
         expect(r).toEqual(was)
       }
@@ -83,6 +88,18 @@ describe.skipIf(!dockerOk)('clearLegacyHeldText (real Postgres)', () => {
     expect(lines.join('\n')).not.toContain('Gumersinda')
     // A second run finds nothing.
     expect((await clearLegacyHeldText(pg.db, { apply: true })).ids).toEqual([])
+  })
+
+  it('🔴 after apply, /retry still accepts a cleared row whose text changed (the hash is kept)', async () => {
+    await clearLegacyHeldText(pg.db, { apply: true })
+    const r = (await state()).find((x) => x.id === 1)!
+    expect(r.t).toBeNull()
+    const doc = (extractedText: string) =>
+      ({ kind: 'pdf', ingestStatus: 'failed', anonymisationStatus: r.s, heldTextHash: r.h, extractedText }) as never
+    // The source changed: retried (a NULL hash is refused here, for good).
+    expect(planIngestRetry(doc('Otro texto, ya corregido por quien lo subió.'))).not.toBeNull()
+    // Control: the same words are still refused, by the kept hash.
+    expect(planIngestRetry(doc(`${RAW} 1`))).toBeNull()
   })
 
   it('one ecosistema only; org 8 stays excluded even when named', async () => {

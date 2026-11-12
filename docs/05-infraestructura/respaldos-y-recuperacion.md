@@ -1,7 +1,7 @@
 # Respaldos y recuperación
 
-- **Versión:** 1.3
-- **Fecha:** 2026-11-10
+- **Versión:** 1.4
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
 - **Fuentes:** `infra/fleet/edc-1.md` (§1, §2, §4b, §4c, §4p, §4x, §4zn, §4zs, §4zzz, §4zzzz, §4zzzzzzz, §4zzzzzzzz, §6, §7), `infra/fleet/backups.md` (diseño, no construido), `infra/fleet/runbook.md` (§3, §4, §8), `infra/fleet/env-manifests.md` (§1, §3), `infra/docker-compose.yml`, `plan/spark-ai-adopcion.md` (§5), `plan/auditoria-codigo-2026-10-28.md`, listado local de la carpeta de respaldos fuera de la caja (medido el 2026-10-30), commits `6a1f645b` (regla de retención) y `3ce0e07d` (primera purga).
 
@@ -21,7 +21,7 @@ Contexto que pesa en todas las decisiones de este documento: al 2026-10-30 EDC n
 | Pregunta | Respuesta hoy | Procedencia |
 |---|---|---|
 | ¿Hay respaldo automático? | Sí, uno: la imagen diaria del disco completo que hace Hetzner, 7 rotativas | citado, `edc-1.md` §1 |
-| ¿Hay respaldo lógico de las bases? | Sí, pero **manual**: un `pg_dump` antes de cada despliegue con migración, cuando se acuerda. El último, `20261110T1825Z` | citado, `edc-1.md` §4b, §4zzzz y §4zzzzzzzz |
+| ¿Hay respaldo lógico de las bases? | Sí, pero **manual**: un `pg_dump` antes de cada despliegue con migración, cuando se acuerda. El último, `20261110T2256Z`, antes del despliegue de `c4f53632` (citado del reporte de ese despliegue; no verificado, y aún no está en `edc-1.md`) | citado, `edc-1.md` §4b, §4zzzz y §4zzzzzzzz |
 | ¿Hay copia fuera de Hetzner? | Solo de los dumps: copia fuera del servidor, en equipo del equipo de desarrollo, sin cifrar. Desde el 2026-11-10 se escribe con `umask 077` (archivos 600, carpetas 700) | medido el 2026-10-30 (permisos `-rw-r--r--`, sin paso de cifrado); el 2026-11-10, `stat` sobre `20261110T1825Z` (citado, `edc-1.md` §4zzzzzzzz) |
 | ¿Se respaldan los archivos subidos? | Solo dentro de la imagen de Hetzner | inferido: no hay otro mecanismo |
 | ¿Se ha probado una restauración completa? | **Nunca** | citado, `backups.md` §6 es solo propuesta |
@@ -137,7 +137,7 @@ Ninguno de estos números se ha medido; todos se deducen de la política de §2.
 
 | Objetivo | Valor | De dónde sale |
 |---|---|---|
-| RPO, bases de dev con dumps | Desde el último despliegue con respaldo; el 2026-11-10 el último es del 2026-11-10 18:25 UTC (citado, `edc-1.md` §4zzzzzzzz). Sin despliegues, crece sin límite | inferido de la cadencia manual |
+| RPO, bases de dev con dumps | Desde el último despliegue con respaldo; el último es del 2026-11-10 22:56 UTC (citado del reporte del despliegue de `c4f53632`; el anterior registrado, 18:25 UTC, en `edc-1.md` §4zzzzzzzz). Sin despliegues, crece sin límite | inferido de la cadencia manual |
 | RPO, todo el disco con la imagen de Hetzner | hasta 24 h (más la ventana de 4 h en que se toma) | inferido de la cadencia diaria, si los respaldos de Hetzner están activos |
 | RPO, archivos subidos | igual que la imagen de Hetzner | inferido |
 | RPO, staging | su último dump es del 2026-10-17; como staging no ha cambiado, en la práctica coincide con la imagen | inferido |
@@ -248,7 +248,7 @@ Ordenados para que estén resueltos antes del primer testimonio real.
 7. **Mantener la retención** de §2.2, paso 7 (7 por entorno, decisión del 2026-11-10), en `/root/backups/` y en la copia fuera del servidor, después de cada respaldo nuevo. La primera purga se hizo el 2026-11-10 (§2.3). No hay tarea automática: depende de quien despliega. El diseño de `backups.md` (7 diarios, 4 semanales, 3 mensuales) la reemplaza cuando se construya.
 8. **Hacer un simulacro de restauración** completo en un entorno aparte: dump más archivos, arranque, inicio de sesión y descarga de un archivo. Registrar los tres números que pide `backups.md` §6 y ajustar este documento con ellos.
 9. **Monitoreo externo y alertas** (disponibilidad sobre la ruta de readiness, disco, swap, reinicios), porque sin detección el RTO no tiene límite.
-10. **Respaldar staging** antes de su siguiente despliegue y volver a desplegarlo: su web y su backend siguen en la versión del 2026-10-17 (citado, `edc-1.md` §4zzzzzzzz).
+10. **Respaldar staging** antes de su siguiente despliegue y volver a desplegarlo: su web y su backend siguen en la versión del 2026-10-17 (citado, `edc-1.md` §4zzzzzzzz). Por ahora staging está fuera de alcance (decisión del 2026-11-10).
 11. **Escribir el procedimiento de reingesta total** de `edc_ai` y una verificación cruzada entre `edc_backend` y `edc_ai`.
 12. **Corregir la pérdida de audio fuente** cuando el Spark cae más de unos 2.5 minutos (hallazgo abierto de la auditoría del 2026-10-28).
 13. **Evaluar la fase 2** (archivo continuo de WAL) antes del primer usuario externo con datos reales, como recomienda `backups.md` §7.

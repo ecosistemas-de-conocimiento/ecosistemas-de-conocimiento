@@ -374,6 +374,19 @@ function isUniqueViolation(err: unknown): boolean {
   return false
 }
 
+/**
+ * `reindex_ingest_id` of a re-index whose swap did NOT happen: its copy in the
+ * shared corpus is the revision's text and must not stay, whenever it lands.
+ */
+const RETIRE_REINDEX = 'retire:'
+export const reindexToRetire = (ingestId: string): string => `${RETIRE_REINDEX}${ingestId}`
+/** Is this callback the note's re-index? `live`: swapped; `retire`: not swapped; null: not it. */
+export function noteReindexMatch(column: unknown, ingestId: string): 'live' | 'retire' | null {
+  if (typeof column !== 'string' || !ingestId) return null
+  if (column === ingestId) return 'live'
+  return column === reindexToRetire(ingestId) ? 'retire' : null
+}
+
 /** Why a promotion did not happen now. `null` = promoted. */
 export type PromoteSkip = 'graph-pending' | 'busy' | 'not-cleared' | 'withdrawn' | 'consent-held'
 
@@ -510,7 +523,16 @@ export async function promoteRevision(args: {
     const { sql } = await import('@payloadcms/db-postgres')
     const r = revision
     const json = (v: unknown) => (v == null ? null : JSON.stringify(v))
-    const swapped = await drizzleOf(payload).transaction(async (tx) => {
+    // 🔴 RETENIDO POR CONSENTIMIENTO, CHECKED INSIDE THE SWAP. The check at
+    // entry is minutes old by now (the re-index above, the ingest before it).
+    // The note and the revision are locked `FOR SHARE`, so a hold cannot land
+    // between this read and the commit, and the UPDATE repeats the condition.
+    const swapped = await drizzleOf(payload).transaction(async (tx): Promise<boolean | 'consent-held'> => {
+      const locked = (await tx.execute(sql`
+        SELECT consent_held AS h FROM documents WHERE id IN (${Number(note.id)}, ${Number(r.id)}) FOR SHARE`)) as {
+        rows?: Array<{ h: unknown }>
+      }
+      if ((locked.rows ?? []).some((x) => x.h === true)) return 'consent-held'
       const res = (await tx.execute(sql`
         UPDATE documents SET
           extracted_text = ${r.extractedText as string},
@@ -531,7 +553,7 @@ export async function promoteRevision(args: {
           graph_prompt_version = ${(r.graphPromptVersion as string | null) ?? null},
           reindex_ingest_id = ${result.ingestId ?? null},
           updated_at = ${new Date().toISOString()}
-        WHERE id = ${Number(note.id)} AND publication_status = 'published'
+        WHERE id = ${Number(note.id)} AND publication_status = 'published' AND consent_held IS NOT TRUE
         RETURNING id`)) as { rows?: unknown[]; rowCount?: number }
       if ((res.rows?.length ?? res.rowCount ?? 0) === 0) return false
       const n = Number(note.id)
@@ -544,10 +566,26 @@ export async function promoteRevision(args: {
       return true
     })
 
-    if (!swapped) {
-      // Withdrawn between the check and the swap: take the re-index back out.
+    if (swapped !== true) {
+      // Held or withdrawn between the check and the swap: the re-index above
+      // already reached the shared corpus with the revision's text. Take it back out.
+      // 🔴 ai-service answers the enqueue when it QUEUES the job: its worker may
+      // land AFTER this retire and clear it (upsert, `validTo = null`). So the
+      // job is recorded first, marked to retire, and its callback retires again
+      // (`callback/route.ts` → `dispatchNoteReindex`).
+      if (result.ingestId) {
+        await updateDocumentColumns(payload as never, {
+          id: note.id as Id,
+          data: { reindexIngestId: reindexToRetire(result.ingestId) },
+        })
+      }
       const { retireFrom } = await import('./publishDocument')
       await retireFrom(client, publishedCorpus(organizationId), note.id as Id, new Date())
+      if (swapped === 'consent-held' || (await noteOrRevisionHeld(payload, revision, note.id as Id))) {
+        // The claim is handed back: the revision stays a draft, the note keeps its text.
+        await release()
+        return 'consent-held'
+      }
       await discardRevision(payload, revision, note.id as Id)
       return 'withdrawn'
     }

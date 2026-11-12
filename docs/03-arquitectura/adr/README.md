@@ -43,7 +43,7 @@ Cuando el código deja de cumplir lo que un ADR describe, el ADR no se reescribe
 
 ## Índice
 
-Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplegado en dev significa en 367c2698 (citado de `infra/fleet/edc-1.md`); `main` está en b7dc944f.
+Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplegado en dev significa en c4f53632, lo que corre en dev desde el 2026-11-10 a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). `main` está en 687ff21e (2026-11-11).
 
 | ADR | Decisión | Estado | Fecha |
 |---|---|---|---|
@@ -66,9 +66,9 @@ Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplega
 | [0017](ADR-0017-plataforma-de-ia-agnostica-del-dominio.md) | Plataforma de IA agnóstica del dominio | Aceptada | 2026-08-14 |
 | [0018](ADR-0018-lenguaje-llano-en-la-ui.md) | Lenguaje llano en la interfaz | Aceptada | 2026-08-29; 2026-10-21 |
 | [0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md) | Voces sin sujeto ni nivel de consentimiento | Aceptada con enmienda (ADR-0020); relación con ADR-0022 | 2026-08-28; 2026-11-07 |
-| [0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) | Anonimizar todo por omisión y conservar nombres por documento; enmienda ADR-0019 | Aceptada; desplegada en dev, con agregados del 2026-11-10 pendientes de desplegar | 2026-11-07 |
-| [0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md) | El título de un `documento` con compuerta pasa por la compuerta y falla cerrado; enmienda ADR-0020 | Propuesto; decisión aceptada, pendiente de desplegar en dev | 2026-11-10 |
-| [0022](ADR-0022-retencion-por-consentimiento.md) | Retenido por consentimiento: una marca que detiene todo procesamiento | Propuesto; decisión aceptada, pendiente de desplegar en dev | 2026-11-10 |
+| [0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) | Anonimizar todo por omisión y conservar nombres por documento; enmienda ADR-0019 | Aceptada; desplegada en dev | 2026-11-07 |
+| [0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md) | El título de un `documento` con compuerta pasa por la compuerta y falla cerrado; enmienda ADR-0020 | Propuesto; decisión aceptada, desplegada en dev | 2026-11-10 |
+| [0022](ADR-0022-retencion-por-consentimiento.md) | Retenido por consentimiento: una marca que detiene todo procesamiento | Propuesto; decisión aceptada, desplegada en dev, con agregados del 2026-11-11 en `main` | 2026-11-10 |
 
 ## Decisiones relacionadas, por ADR anfitrión
 

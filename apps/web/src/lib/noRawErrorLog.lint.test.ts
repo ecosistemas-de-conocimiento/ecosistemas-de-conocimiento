@@ -30,6 +30,7 @@ declare const routeLog: Log
 declare function logFor(name: string): Log
 declare const job: Promise<void>
 declare const results: PromiseSettledResult<void>[]
+declare const util: { format: (...a: unknown[]) => string }
 `;
 const lines = (body: string) => prelude.split('\n').length + body.trimStart().split('\n').length - 1;
 
@@ -54,6 +55,16 @@ describe('edc/no-raw-error-log in apps/web', () => {
     `routeLog.warn(\`[x] failed: \${(err as Error).message}\`)`,
     `logFor('x').error({ id: 1, err: String(err) }, '[x]')`,
     `routeLog.child({ c: 1 }).error({ detail: error }, '[x]')`,
+    // 2026-11-11: format arguments, a database error's fields, child bindings,
+    // destructured text, a console alias, util.format, process.stderr.
+    `routeLog.error('[x] %s', err)`,
+    `console.warn('[x]', err.detail)`,
+    `try { void 0 } catch (boom) { routeLog.warn({ id: 1, at: (boom as { where: string }).where }, '[x]') }`,
+    `routeLog.child({ e: err })`,
+    `const { message } = err; console.warn('[x]', message)`,
+    `const log = console.error; log('[x]', ex)`,
+    `console.warn(util.format('[x] %s', err))`,
+    `process.stderr.write(\`[x] \${err.message}\`)`,
   ])('🔴 rejects %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([lines(body)]);
   });
@@ -69,6 +80,11 @@ describe('edc/no-raw-error-log in apps/web', () => {
     `console.error('[x]', err.cause instanceof Error ? err.cause.name : 'x')`,
     `routeLog.warn('[x] failed', safeErrMessage(err))`,
     `const n = 1; console.log('[x]', n.toString())`,
+    `routeLog.error({ err }, '[x] %s', 'id-1')`,
+    `routeLog.child({ err })`,
+    `const { name } = err; console.warn('[x]', name)`,
+    `const log = console.error; log('[x]', safeErrMessage(err))`,
+    `const url = new URL('http://x'); console.log('[x]', url.search, util.format('%s', 1))`,
   ])('allows %s', async (body) => {
     expect(await flagged(prelude + body)).toEqual([]);
   });

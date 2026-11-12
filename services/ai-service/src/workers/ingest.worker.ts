@@ -26,7 +26,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { Worker } from 'bullmq';
+import { Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { and, eq, notInArray, sql } from 'drizzle-orm';
 
@@ -73,6 +73,7 @@ import {
   type InsertedDelivery,
 } from '../services/callbacks/emit.js';
 import { rootLogger } from '../logger.js';
+import { safeErrMessage } from '../errors/log-safe.js';
 import { recordCallbackEmitSkipped } from '../metrics/callbacks.js';
 import { chunkForCorpus, parseStructuralConfig, STRUCTURAL } from '../services/rag/chunk-strategy.js';
 import {
@@ -1111,6 +1112,51 @@ async function onIngestDocFailed(
   kickOutbox(db, outbox);
 }
 
+/**
+ * BullMQ's `failed` listener. BullMQ fires `failed` on each attempt; only emit
+ * `ingest.failed` once retries are exhausted (`job.attemptsMade >=
+ * job.opts.attempts`). The counter bump + callback contract emit happens then.
+ *
+ * 🔴 The job row's `error` and the callback's `error.message` get
+ * `safeErrMessage(err)`, not `err.message`: the backend stores that message and
+ * shows it, and a postgres.js `PostgresError` quotes the row
+ * (`invalid input syntax for type uuid: "…"`). Until 2026-11-11 both carried
+ * `err.message`. BullMQ's own `failedReason` still holds the raw message in
+ * Redis; nothing in ai-service reads it back.
+ */
+export async function onIngestJobFailed(
+  db: Db,
+  job: Pick<Job<IngestJobData>, 'id' | 'data' | 'opts' | 'attemptsMade'> | undefined,
+  err: Error,
+): Promise<void> {
+  ingestLog.error({ bullJobId: job?.id, err }, 'ingest worker: BullMQ-level failure');
+  if (!job) return;
+  const attempts = job.opts?.attempts ?? 1;
+  if (job.attemptsMade < attempts) return;
+  const message = safeErrMessage(err);
+  // Retries exhausted: settle the job row. Each failed attempt RELEASED it
+  // back to 'queued', which is what let those retries re-claim; nothing
+  // else will now, so 'failed' is the row's final word.
+  const settled = job.data.jobId
+    ? writeIngestJobTerminal(db, job.data.jobId, {
+        status: 'failed',
+        finishedAt: new Date(),
+        error: message,
+      }).catch(() => undefined)
+    : undefined;
+  const bookkept = onIngestDocFailed(db, job.data, { code: 'job-failed', message }).catch((e) => {
+    ingestLog.error(
+      {
+        bullJobId: job.id,
+        ingestId: job.data.ingestId,
+        err: e,
+      },
+      'ingest worker: failure bookkeeping failed — batch counters and ingest.failed callback NOT written',
+    );
+  });
+  await Promise.all([settled, bookkept]);
+}
+
 interface IngestRequestSnapshot {
   callbackUrl: string | null;
   apiKeyId: string | null;
@@ -1329,38 +1375,8 @@ export async function startIngestWorker(
 
   attachWorkerLifecycleLogging(worker, 'ingest worker');
 
-  // BullMQ fires `failed` on each attempt; only emit `ingest.failed` once
-  // retries are exhausted (`job.attemptsMade >= job.opts.attempts`). The
-  // counter bump + callback contract emit happens then.
   worker.on('failed', (job, err) => {
-    ingestLog.error({ bullJobId: job?.id, err }, 'ingest worker: BullMQ-level failure');
-    if (!job) return;
-    const attempts = job.opts?.attempts ?? 1;
-    if (job.attemptsMade >= attempts) {
-      // Retries exhausted: settle the job row. Each failed attempt RELEASED it
-      // back to 'queued', which is what let those retries re-claim; nothing
-      // else will now, so 'failed' is the row's final word.
-      if (job.data.jobId) {
-        void writeIngestJobTerminal(db, job.data.jobId, {
-          status: 'failed',
-          finishedAt: new Date(),
-          error: err.message,
-        }).catch(() => undefined);
-      }
-      void onIngestDocFailed(db, job.data, {
-        code: 'job-failed',
-        message: err.message,
-      }).catch((e) => {
-        ingestLog.error(
-          {
-            bullJobId: job.id,
-            ingestId: job.data.ingestId,
-            err: e,
-          },
-          'ingest worker: failure bookkeeping failed — batch counters and ingest.failed callback NOT written',
-        );
-      });
-    }
+    void onIngestJobFailed(db, job, err);
   });
 
   return {

@@ -24,6 +24,7 @@
 
 import { EFFORT_PROFILES } from '../src/services/registry/resolve.js';
 import { MODEL_PRICING } from '../src/services/ai/router/task-profiles.js';
+import { safeErrMessage } from '../src/errors/log-safe.js';
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 
@@ -152,7 +153,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`refresh-model-pricing failed: ${msg}\n`);
+  process.stderr.write(`refresh-model-pricing failed: ${safeErrMessage(err)}\n`);
   process.exit(1);
 });

@@ -592,7 +592,10 @@ export async function beginPublish(
       data: { publicationStatus: 'publishing', publicationError: null },
       where: [
         { anonymisationStatus: { in: ['ready', 'approved'] } },
-        { redactedText: { exists: true } },
+        // 🔴 THE TEXT ABOUT TO BE SENT, not just "a redaction": `doc` may carry
+        // a redaction a reviewer has since rejected or a re-gate replaced.
+        // (The stored value, untrimmed: `corpusTextFor` trims what it sends.)
+        { redactedText: { equals: doc.redactedText } },
       ],
     })
     if (moved === 0) {
@@ -704,7 +707,7 @@ export async function confirmPublish(
    * retired and the row goes back to a draft. Never flipped to `published`.
    */
   if (rowMustPassGate(doc) && !corpusTextFor(doc).ok) {
-    await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+    await retireSharedCopy(deps.client, organizationId, doc.id, now, loggerOf(deps))
     await deps.payload.update({
       collection: 'documents',
       id: doc.id as never,
@@ -719,30 +722,141 @@ export async function confirmPublish(
     return
   }
 
+  // 🔴 RETENIDO POR CONSENTIMIENTO while `publishing` (audit 2026-11-11, B):
+  // before the draft copy is retired. Checked again under a row lock below.
+  if (isConsentHeld(doc as { consentHeld?: unknown }) || (await readConsentHeld(deps.payload, doc.id))) {
+    await withdrawHeldPublish(doc, deps)
+    return
+  }
+
   await retireFrom(deps.client, draftCorpus(organizationId, userId), doc.id, now, loggerOf(deps))
 
+  const flipped = await markPublished(deps.payload, doc.id)
+  // Held after the check above: the draft copy is already retired, so the
+  // document ends retrievable by nobody, as a held `unpublish` leaves it.
+  if (flipped === 'consent-held') await withdrawHeldPublish(doc, deps)
+  // Withdrawn meanwhile (`unpublishing`/`draft`): neither state has a shared copy.
+  if (flipped === 'moved') await retireSharedCopy(deps.client, organizationId, doc.id, now, loggerOf(deps))
+}
+
+/**
+ * 🔴 THE SHARED COPY COULD NOT BE RETIRED (audit 2026-11-11, second pass).
+ * Thrown by {@link retireSharedCopy} so a caller that turns every other error
+ * into a row message (the callback's `failPublish`, which answers 200) lets
+ * this one through: the callback answers 500 and ai-service sends it again,
+ * up to its retry budget. Every path that throws it is idempotent on retry.
+ */
+export class SharedCopyNotRetiredError extends Error {
+  constructor(documentId: number | string, cause: unknown) {
+    super(`the shared copy of document ${String(documentId)} could not be retired: ${safeErrMessage(cause)}`)
+    this.name = 'SharedCopyNotRetiredError'
+    ;(this as { cause?: unknown }).cause = cause
+  }
+}
+
+export function isSharedCopyNotRetired(err: unknown): err is SharedCopyNotRetiredError {
+  return err instanceof SharedCopyNotRetiredError || (err as { name?: unknown } | null)?.name === 'SharedCopyNotRetiredError'
+}
+
+/** `retireFrom` on the ecosistema's shared corpus; a failure is a {@link SharedCopyNotRetiredError}. */
+export async function retireSharedCopy(
+  client: CorpusMover,
+  organizationId: number | string,
+  documentId: number | string,
+  now: Date,
+  log?: RetireLogger,
+): Promise<void> {
+  try {
+    await retireFrom(client, publishedCorpus(organizationId), documentId, now, log)
+  } catch (err) {
+    throw new SharedCopyNotRetiredError(documentId, err)
+  }
+}
+
+/**
+ * 🔴 A HELD ROW'S PUBLISH ENDS HERE (audit 2026-11-11, B): the shared copy is
+ * retired FIRST, then the row is a draft with the hold's message and no
+ * `publishIngestId`. Used by `confirmPublish` and by the callback on a failed
+ * publish. Idempotent.
+ */
+export async function withdrawHeldPublish(
+  doc: PublishableDocument,
+  deps: Omit<TransitionDeps, 'callbackUrl'>,
+): Promise<void> {
+  const { organizationId } = idsOf(doc)
+  const now = (deps.now ?? (() => new Date()))()
+  await retireSharedCopy(deps.client, organizationId, doc.id, now, loggerOf(deps))
   await deps.payload.update({
     collection: 'documents',
     id: doc.id as never,
-    data: {
-      publicationStatus: 'published',
-      publicationError: null,
-      publishIngestId: null,
-      /**
-       * 🔴 THE PUBLISH MOVE IS AN INGEST, SO IT ENDS ONE. The shared-corpus copy
-       * was just embedded and confirmed, so the document is retrievable and
-       * citable — the definition of `ready`. The callback route returns early on
-       * a publish move, BEFORE its ordinary `ready` write, so nothing else sets
-       * this: without it a row that was never draft-ingested (seeded, or a
-       * markdown note) reads `published` + `pending` ("en cola") forever.
-       */
-      ingestStatus: 'ready',
-      ingestError: null,
-    },
+    data: { publicationStatus: 'draft', publicationError: CONSENT_HELD_MESSAGE, publishIngestId: null },
     overrideAccess: true,
     context: { __skipDocsExtract: true },
   })
 }
+
+/** What a real Payload's `db.drizzle` offers; absent on a unit-test fake. */
+interface TxDb {
+  transaction<T>(fn: (tx: { execute(q: unknown): Promise<unknown> }) => Promise<T>): Promise<T>
+}
+
+/**
+ * 🔴 `publishing` → `published`, ONLY IF NOT HELD, as one transaction: the row
+ * (and a revision's original) is read `FOR SHARE`, so a hold from another
+ * connection waits until this commits, and the UPDATE repeats `publishing`.
+ * `publishDocument.consentHeld.pg.test.ts`.
+ *
+ * ⚠ A handle with no `db.drizzle` is a unit-test fake (a real Payload always
+ * has one): the flip is the plain Payload write, and the check before it is
+ * the caller's.
+ */
+async function markPublished(
+  payload: Payload,
+  id: number | string,
+): Promise<'published' | 'consent-held' | 'moved'> {
+  const db = (payload as unknown as { db?: { drizzle?: Partial<TxDb> } }).db?.drizzle
+  if (typeof db?.transaction !== 'function') {
+    await payload.update({
+      collection: 'documents',
+      id: id as never,
+      data: PUBLISHED_COLUMNS,
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+    return 'published'
+  }
+  const { sql } = await import('@payloadcms/db-postgres')
+  const n = typeof id === 'string' && /^\d+$/.test(id) ? Number(id) : id
+  return (db as TxDb).transaction(async (tx) => {
+    const locked = (await tx.execute(sql`
+      SELECT consent_held AS h FROM documents
+      WHERE id = ${n} OR id = (SELECT revision_of_id FROM documents WHERE id = ${n}) FOR SHARE`)) as {
+      rows?: Array<{ h: unknown }>
+    }
+    if ((locked.rows ?? []).some((r) => r.h === true)) return 'consent-held'
+    const res = (await tx.execute(sql`
+      UPDATE documents SET publication_status = 'published', publication_error = NULL, publish_ingest_id = NULL,
+        ingest_status = 'ready', ingest_error = NULL, updated_at = ${new Date().toISOString()}
+      WHERE id = ${n} AND publication_status = 'publishing' RETURNING id`)) as { rows?: unknown[]; rowCount?: number }
+    return (res.rows?.length ?? res.rowCount ?? 0) > 0 ? 'published' : 'moved'
+  })
+}
+
+const PUBLISHED_COLUMNS = {
+  publicationStatus: 'published',
+  publicationError: null,
+  publishIngestId: null,
+  /**
+   * 🔴 THE PUBLISH MOVE IS AN INGEST, SO IT ENDS ONE. The shared-corpus copy
+   * was just embedded and confirmed, so the document is retrievable and
+   * citable — the definition of `ready`. The callback route returns early on
+   * a publish move, BEFORE its ordinary `ready` write, so nothing else sets
+   * this: without it a row that was never draft-ingested (seeded, or a
+   * markdown note) reads `published` + `pending` ("en cola") forever.
+   */
+  ingestStatus: 'ready',
+  ingestError: null,
+} as const
 
 /**
  * 🔴 THE MESSAGE FOR A FAILURE THAT ARRIVED WITH NO WORDS IN IT, and it exists
@@ -821,7 +935,15 @@ export async function unpublish(
    */
   if (isConsentHeld(doc as { consentHeld?: unknown }) || (await readConsentHeld(deps.payload, doc.id))) {
     const now = (deps.now ?? (() => new Date()))()
-    await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+    try {
+      await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+    } catch (err) {
+      // 🔴 Not swallowed, and not silent: the row keeps its status with the
+      // reason on it (the janitor's and the retry button's signal), and the
+      // endpoint answers 500. Nothing was written, so a retry starts over.
+      await recordTransitionFailure(doc, deps, err, 'unpublish')
+      throw err
+    }
     await deps.payload.update({
       collection: 'documents',
       id: doc.id as never,

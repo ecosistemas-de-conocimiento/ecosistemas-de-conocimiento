@@ -12,28 +12,45 @@
  *   · any identifier bound by `catch (x)`, by `.catch((x) => …)` or by the
  *     rejection handler of `.then(ok, (x) => …)`, whatever its name (wave 11,
  *     2026-11-10);
- *   · a `.message` or `.stack` member;
+ *   · a `.message` or `.stack` member, and `.detail`, `.where`, `.query`,
+ *     `.params` or `.parameters` on any of the identifiers above (a
+ *     postgres.js `PostgresError` quotes the row in `detail` and `where`;
+ *     2026-11-11);
  *   · a `.cause` member, or `.reason` on a `Promise.allSettled` result (`r`,
  *     `result`, `outcome`, `settled`, or ending in `Result`) or on any of the
  *     identifiers above, unless the logger's serializer gets it under `err`.
  *     `.reason` elsewhere is a domain string (`decision.reason`), left alone;
- *   · `String(<any of these>)`, `JSON.stringify(<any of these>)` or
- *     `<any of these>.toString()`.
+ *   · `String(<any of these>)`, `JSON.stringify(<any of these>)`,
+ *     `<any of these>.toString()`, or `util.format(…)` / `util.inspect(…)`
+ *     over one;
+ *   · a `const` bound to any of these: `const msg = err.message` or
+ *     `const { message } = err`, then `msg` / `message` logged (2026-11-11).
+ * In a logger call whose FIRST argument is a string, an error passed
+ * positionally after it is a format argument: pino prints `String(err)` for
+ * `%s` and skips the serializer, so it is rejected there too, as in a
+ * console call. Under `err` in an object it still passes (2026-11-11).
  * A logger call is any call to a member named `info`, `warn`, `error`,
  * `debug`, `fatal` or `trace`, whatever its receiver is called (`ingestLog.*`,
  * `payload.logger.*`, `opts.log?.*`, `logger.child({…}).*`), and `.log` on a
  * receiver named `logger` or `log`. Until 2026-11-10 only receivers named
  * `logger`, `log` or `console` counted, and a child logger under any other
- * name went unchecked.
- * Allowed: `errSummary(…)`, `safeErrMessage(…)`, a member such as `err.name`
+ * name went unchecked. `x.child({…})` counts too: its bindings are logged on
+ * every line, and only the one under `err` gets the serializer. A console
+ * call is also `process.stdout.write` / `process.stderr.write`, and a call
+ * through a `const` bound to a console method (`const log = console.error`).
+ * Allowed: `errSummary(…)`, `safeErrMessage(…)`, `clientErrText(…)`, a member such as `err.name`
  * or `err.code`, and in a logger call the error itself under the `err` key or
- * as a whole argument, which the serializer redacts.
+ * as a whole argument ahead of any string, which the serializer redacts.
  */
 
 const ERRORISH = /^(?:err|error|e|ex|cause|reason)$|(?:Err|Error)$/
 const LEAKY_MEMBERS = new Set(['message', 'stack'])
+/** A database error's row-quoting fields: leaky on an error-like owner only (`req.query` is not). */
+const ERROR_FIELDS = new Set(['detail', 'where', 'query', 'params', 'parameters'])
 const SETTLED = /^(?:r|res|result|outcome|settled)$|(?:Result|Outcome|Settled)$/
-const SAFE_CALLS = new Set(['errSummary', 'safeErrMessage'])
+const SAFE_CALLS = new Set(['errSummary', 'safeErrMessage', 'clientErrText'])
+/** `util.format` / `util.inspect` and their bare imports: they print an error whole. */
+const FORMAT_CALLS = new Set(['format', 'formatWithOptions', 'inspect'])
 const LEVELS = new Set(['info', 'warn', 'error', 'debug', 'trace', 'fatal'])
 
 /** The last name in `a.b.c` / `a?.b`: `c` / `b`. */
@@ -48,16 +65,44 @@ function tailName(node) {
 }
 
 /** 'console', 'logger' or undefined. */
-function logKind(callee) {
-  if (callee.type === 'ChainExpression') return logKind(callee.expression)
+function logKind(callee, sourceCode) {
+  if (callee.type === 'ChainExpression') return logKind(callee.expression, sourceCode)
+  // `const log = console.error; log('…', err)`
+  if (callee.type === 'Identifier') return consoleAlias(sourceCode, callee) ? 'console' : undefined
   if (callee.type !== 'MemberExpression' || callee.computed) return undefined
   if (callee.property.type !== 'Identifier') return undefined
   const method = callee.property.name
   const receiver = tailName(callee.object)
   if (receiver === 'console') return 'console'
-  if (LEVELS.has(method)) return 'logger'
+  if (method === 'write' && (receiver === 'stderr' || receiver === 'stdout')) return 'console'
+  if (LEVELS.has(method) || method === 'child') return 'logger'
   if (method === 'log' && (receiver === 'logger' || receiver === 'log')) return 'logger'
   return undefined
+}
+
+/** Is this identifier a `const` bound to `console.<method>` (or `.bind`'s result)? */
+function consoleAlias(sourceCode, id) {
+  const init = constInit(sourceCode, id)
+  if (!init) return false
+  const target = init.type === 'CallExpression' && tailName(init.callee) === 'bind' ? init.callee.object : init
+  return target?.type === 'MemberExpression' && tailName(target.object) === 'console'
+}
+
+/** The declarator of a `const` this identifier refers to, or undefined. */
+function constDeclarator(sourceCode, id) {
+  for (let scope = sourceCode.getScope(id); scope; scope = scope.upper) {
+    const variable = scope.set.get(id.name)
+    if (!variable) continue
+    const def = variable.defs.length === 1 ? variable.defs[0] : undefined
+    return def?.type === 'Variable' && def.parent?.kind === 'const' && def.node.init ? def.node : undefined
+  }
+  return undefined
+}
+
+/** The initialiser of a plain `const x = …`, or undefined. */
+function constInit(sourceCode, id) {
+  const decl = constDeclarator(sourceCode, id)
+  return decl?.id.type === 'Identifier' ? decl.init : undefined
 }
 
 /** `JSON.stringify`, also as `JSON?.stringify`. */
@@ -101,22 +146,35 @@ function isCaught(sourceCode, id) {
 
 /**
  * The node that leaks, or undefined. `bareOk` is true where the logger's `err`
- * serializer will see the error object itself. `caught(id)` says whether an
- * identifier was bound by a catch.
+ * serializer will see the error object itself. `ctx.caught(id)` says whether
+ * an identifier was bound by a catch; `ctx.derived(id, bareOk)` whether it is
+ * a `const` holding a leak.
  */
-function leak(node, bareOk, caught) {
+/** `(err as Error)`, `err!` and `err?.x`'s owner: the expression inside. */
+function unwrap(node) {
+  let cur = node
+  while (cur && ['ChainExpression', 'TSAsExpression', 'TSNonNullExpression', 'TSSatisfiesExpression', 'TSTypeAssertion'].includes(cur.type)) {
+    cur = cur.expression
+  }
+  return cur
+}
+
+function leak(node, bareOk, ctx) {
   if (!node) return undefined
   switch (node.type) {
     case 'Identifier':
-      return !bareOk && (ERRORISH.test(node.name) || caught(node)) ? node : undefined
+      if (ctx.derived(node, bareOk)) return node
+      return !bareOk && (ERRORISH.test(node.name) || ctx.caught(node)) ? node : undefined
     case 'MemberExpression': {
       const name = !node.computed && node.property.type === 'Identifier' ? node.property.name : undefined
       if (LEAKY_MEMBERS.has(name)) return node
+      const owner = unwrap(node.object)
+      const errorish = owner?.type === 'Identifier' && (ERRORISH.test(owner.name) || ctx.caught(owner))
+      if (ERROR_FIELDS.has(name) && errorish) return node
       if (bareOk) return undefined
       // `.cause` and a settled `.reason` hold an error object, not its text.
       if (name === 'cause') return node
-      const owner = node.object.type === 'Identifier' ? node.object : undefined
-      return name === 'reason' && owner && (SETTLED.test(owner.name) || ERRORISH.test(owner.name) || caught(owner))
+      return name === 'reason' && owner?.type === 'Identifier' && (SETTLED.test(owner.name) || errorish)
         ? node
         : undefined
     }
@@ -125,44 +183,50 @@ function leak(node, bareOk, caught) {
     case 'TSNonNullExpression':
     case 'TSSatisfiesExpression':
     case 'TSTypeAssertion':
-      return leak(node.expression, bareOk, caught)
+      return leak(node.expression, bareOk, ctx)
     case 'CallExpression': {
       const name = tailName(node.callee)
       if (SAFE_CALLS.has(name)) return undefined
-      if (name === 'String' && node.callee.type === 'Identifier') return leak(node.arguments[0], false, caught)
-      if (isJsonStringify(node.callee)) return leak(node.arguments[0], false, caught)
-      if (name === 'toString' && node.callee.type === 'MemberExpression') return leak(node.callee.object, false, caught)
+      if (name === 'String' && node.callee.type === 'Identifier') return leak(node.arguments[0], false, ctx)
+      if (isJsonStringify(node.callee)) return leak(node.arguments[0], false, ctx)
+      if (name === 'toString' && node.callee.type === 'MemberExpression') return leak(node.callee.object, false, ctx)
+      if (FORMAT_CALLS.has(name)) {
+        for (const arg of node.arguments) {
+          const hit = leak(arg, false, ctx)
+          if (hit) return hit
+        }
+      }
       return undefined
     }
     case 'TemplateLiteral':
       for (const expr of node.expressions) {
-        const hit = leak(expr, false, caught)
+        const hit = leak(expr, false, ctx)
         if (hit) return hit
       }
       return undefined
     case 'BinaryExpression':
-      return node.operator === '+' ? leak(node.left, false, caught) ?? leak(node.right, false, caught) : undefined
+      return node.operator === '+' ? leak(node.left, false, ctx) ?? leak(node.right, false, ctx) : undefined
     case 'LogicalExpression':
-      return leak(node.left, bareOk, caught) ?? leak(node.right, bareOk, caught)
+      return leak(node.left, bareOk, ctx) ?? leak(node.right, bareOk, ctx)
     case 'ConditionalExpression':
-      return leak(node.consequent, bareOk, caught) ?? leak(node.alternate, bareOk, caught)
+      return leak(node.consequent, bareOk, ctx) ?? leak(node.alternate, bareOk, ctx)
     case 'ArrayExpression':
       for (const el of node.elements) {
-        const hit = leak(el, bareOk, caught)
+        const hit = leak(el, bareOk, ctx)
         if (hit) return hit
       }
       return undefined
     case 'SpreadElement':
-      return leak(node.argument, bareOk, caught)
+      return leak(node.argument, bareOk, ctx)
     case 'ObjectExpression':
       for (const prop of node.properties) {
         if (prop.type === 'SpreadElement') {
-          const hit = leak(prop.argument, false, caught)
+          const hit = leak(prop.argument, false, ctx)
           if (hit) return hit
           continue
         }
         const key = !prop.computed && prop.key.type === 'Identifier' ? prop.key.name : undefined
-        const hit = leak(prop.value, bareOk && key === 'err', caught)
+        const hit = leak(prop.value, bareOk && key === 'err', ctx)
         if (hit) return hit
       }
       return undefined
@@ -181,18 +245,58 @@ export default {
     },
   },
   create(context) {
-    const caught = (id) => isCaught(context.sourceCode, id)
+    const { sourceCode } = context
+    const caught = (id) => isCaught(sourceCode, id)
+    // A `const` whose initialiser leaks, or a name destructured from an
+    // error-like value (`const { message } = err`). `seen` stops a cycle.
+    const seen = new Set()
+    const derived = (id, bareOk) => {
+      const decl = constDeclarator(sourceCode, id)
+      if (!decl || seen.has(decl)) return false
+      seen.add(decl)
+      try {
+        // An object or array literal is a log field bag, judged where it is
+        // built; following it would flag every `{ reason }` a warning carries.
+        if (decl.id.type === 'Identifier') {
+          return !['ObjectExpression', 'ArrayExpression'].includes(decl.init.type) && Boolean(leak(decl.init, bareOk, ctx))
+        }
+        if (decl.id.type !== 'ObjectPattern') return false
+        const source = unwrap(decl.init)
+        if (source?.type !== 'Identifier' || !(ERRORISH.test(source.name) || caught(source))) return false
+        return decl.id.properties.some(
+          (p) =>
+            p.type === 'Property' &&
+            !p.computed &&
+            p.value.type === 'Identifier' &&
+            p.value.name === id.name &&
+            p.key.type === 'Identifier' &&
+            (LEAKY_MEMBERS.has(p.key.name) || ERROR_FIELDS.has(p.key.name)),
+        )
+      } finally {
+        seen.delete(decl)
+      }
+    }
+    const ctx = { caught, derived }
     return {
       CallExpression(node) {
-        const kind = logKind(node.callee)
+        const kind = logKind(node.callee, sourceCode)
         if (!kind) return
-        for (const arg of node.arguments) {
+        // `log.error('x %s', err)`: after a string first argument, the rest are
+        // format arguments that pino prints without the serializer.
+        const first = node.arguments[0]
+        const formatted =
+          first?.type === 'TemplateLiteral' ||
+          (first?.type === 'Literal' && typeof first.value === 'string') ||
+          (first?.type === 'BinaryExpression' && first.operator === '+')
+        node.arguments.forEach((arg, i) => {
           // Console prints an error whole; a logger hands a bare one, or one
           // under `err`, to the serializer.
-          const bareOk = kind === 'logger'
-          const hit = leak(arg, bareOk && (arg.type === 'Identifier' || arg.type === 'ObjectExpression'), caught)
+          const bareOk =
+            kind === 'logger' &&
+            (arg.type === 'ObjectExpression' || (arg.type === 'Identifier' && !(formatted && i > 0)))
+          const hit = leak(arg, bareOk, ctx)
           if (hit) context.report({ node: hit, messageId: 'raw' })
-        }
+        })
       },
     }
   },
