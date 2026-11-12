@@ -241,7 +241,8 @@ describe.skipIf(!dockerOk)('🔴 switch and pipeline columns vs a stale whole-ro
   })
 
   it('🔴 a USER ingestStatus without a text edit (refused by field access) does not write the stale value back', async () => {
-    await raced(`ingest_status = 'embedding'`, () => userWrite({ name: 'x', ingestStatus: 'ready' }))
+    // ⚠ A value that differs from the one read: the same value would be dropped as a fallback even if access let it through.
+    await raced(`ingest_status = 'embedding'`, () => userWrite({ name: 'x', ingestStatus: 'failed' }))
     expect(await row()).toMatchObject({ n: 'x', i: 'embedding' })
   })
 

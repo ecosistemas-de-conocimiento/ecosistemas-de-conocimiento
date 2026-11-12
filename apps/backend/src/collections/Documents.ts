@@ -15,6 +15,7 @@ import type {
 import { APIError, Forbidden, ValidationError } from 'payload'
 import {
   checkbox as checkboxValidate,
+  json as jsonValidate,
   select as selectValidate,
   text as textValidate,
   textarea as textareaValidate,
@@ -3756,6 +3757,8 @@ export const Documents: CollectionConfig = {
       name: 'testimonioTitle',
       type: 'text',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: testimonioTitleReadable },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('testimonioTitle', textValidate),
       admin: {
         readOnly: true,
         description:
@@ -3823,6 +3826,8 @@ export const Documents: CollectionConfig = {
       name: 'anonymisationSurvivors',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('anonymisationSurvivors', jsonValidate),
       admin: {
         readOnly: true,
         description: 'Posiciones (no texto) de lo que la verificación encontró todavía presente.',
@@ -3927,6 +3932,8 @@ export const Documents: CollectionConfig = {
       name: 'anonymisationReport',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('anonymisationReport', jsonValidate),
       admin: {
         readOnly: true,
         description:
@@ -4090,7 +4097,9 @@ export const Documents: CollectionConfig = {
     {
       name: 'ingestId',
       type: 'text',
-      access: { update: ingestMovesWithTextEdit },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      // Its `access.update` is `ingestMovesWithTextEdit`, as for `ingestStatus`.
+      ...writtenOnlyWhenSent('ingestId', textValidate, ingestMovesWithTextEdit),
       admin: {
         description: 'ai-service ingestId join-back key.',
       },
@@ -4798,12 +4807,28 @@ function retryIngestEndpoint(): Endpoint {
         return fail(409, 'This document has nothing to retry.')
       }
 
-      await req.payload.update({
-        collection: 'documents',
-        id: id as never,
-        data,
-        overrideAccess: true,
-      })
+      /**
+       * 🔴 THE HOLD'S RESET NEVER UNDOES A NEWER VERDICT (audit 2026-11-12, P4).
+       * `doc` was read before this write: a reviewer's reject committed in
+       * between was overwritten with `n/a`. So `n/a` goes through
+       * {@link applyStatusReset}, `WHERE anonymisation_status = <read>` in the
+       * same transaction; no match → 409 and nothing is written.
+       */
+      const { anonymisationStatus: resetTo, ...rest } = data
+      try {
+        await req.payload.update({
+          collection: 'documents',
+          id: id as never,
+          data: rest,
+          overrideAccess: true,
+          ...(resetTo === undefined
+            ? {}
+            : { context: { [STATUS_RESET]: { [String(id)]: doc.anonymisationStatus ?? null } } }),
+        })
+      } catch (err) {
+        if (err instanceof APIError && err.status === 409) return fail(409, err.message)
+        throw err
+      }
 
       return json({ ok: true, ingestStatus: 'pending' }, 202)
     },

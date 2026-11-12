@@ -25,11 +25,23 @@
  * `contentKind = 'documento'`, and the next publish sent the original.
  * `Documents.switchColumnsStaleWrite.pg.test.ts`.
  *
+ * Also on `testimonioTitle`, `anonymisationReport`, `anonymisationSurvivors` and
+ * `ingestId` (audit 2026-11-12, P1-P3): a rename racing an approval put back
+ * the title made from the cleared `heldText`, which every member then read on
+ * the published row; one racing the gate's final write put back a report made
+ * under `keepDocumentAuthor`, whose `redactedTitle` the next publish sent with
+ * the author's name. `Documents.titleColumnsStaleWrite.pg.test.ts`.
+ *
+ * ⚠ Compared DEEPLY (`isDeepStrictEqual` over a JSON round trip): a `json`
+ * column's fallback is a parsed object, never `===` to what was read.
+ *
  * ⚠ "Sent" is recorded in the field's `beforeValidate` hook, BEFORE Payload's
  * fallback fills it, keyed by row id in `req.context`. A hook that writes the
  * same value it read is indistinguishable from the fallback and is dropped:
  * a no-op either way, unless a concurrent write changed it in between.
  */
+
+import { isDeepStrictEqual } from 'node:util'
 
 import type { FieldAccess, FieldHook, Validate } from 'payload'
 
@@ -44,6 +56,10 @@ const sentOf = (context: Record<string, unknown>): SentMap => {
   context[SENT] = map
   return map
 }
+
+/** Null for absent; an object or array as plain JSON, so a clone equals its source. */
+const normalised = (value: unknown): unknown =>
+  value === undefined || value === null ? null : typeof value === 'object' ? JSON.parse(JSON.stringify(value)) : value
 
 const rowKey = (doc: unknown): string | null => {
   const id = (doc as { id?: unknown } | null | undefined)?.id
@@ -78,7 +94,7 @@ export function writtenOnlyWhenSent<V extends (value: any, options: any) => Retu
     const key = rowKey(originalDoc)
     if (key === null) return undefined
     const sent = sentOf(req.context as Record<string, unknown>)[key]?.has(field) === true
-    if (!sent && (value ?? null) === (previousValue ?? null)) delete (siblingData as Record<string, unknown>)[field]
+    if (!sent && isDeepStrictEqual(normalised(value), normalised(previousValue))) delete (siblingData as Record<string, unknown>)[field]
     return undefined
   }
   const wrapped = ((value: unknown, args: { operation?: string }) => {
