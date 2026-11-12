@@ -109,6 +109,30 @@ export const rowsOf = async (db: Db, query: ReturnType<typeof sql>): Promise<Rec
   ((await db.execute(query)) as unknown as { rows: Record<string, unknown>[] }).rows
 
 /** Poll until `check` holds; after-commit work runs asynchronously. */
+/**
+ * Try `UPDATE documents SET consent_held = true WHERE id = <id>` on another
+ * connection with a short `lock_timeout`: `'blocked'` when a row lock held by
+ * someone else stops it (SQLSTATE 55P03; nothing written), `'written'` when it
+ * commits. For pinning a `FOR SHARE` that must keep a hold out until commit.
+ */
+export async function tryHoldElsewhere(db: RealPostgres['db'], id: number, ms = 300): Promise<'blocked' | 'written'> {
+  const { sql } = await import('@payloadcms/db-postgres')
+  try {
+    await db.transaction(async (t) => {
+      await t.execute(sql.raw(`SET LOCAL lock_timeout = '${Math.floor(ms)}ms'`))
+      await t.execute(sql`UPDATE documents SET consent_held = true WHERE id = ${id}`)
+    })
+    return 'written'
+  } catch (err) {
+    let cur: unknown = err
+    for (let i = 0; i < 5 && cur; i++) {
+      if ((cur as { code?: unknown }).code === '55P03') return 'blocked'
+      cur = (cur as { cause?: unknown }).cause
+    }
+    throw err
+  }
+}
+
 export async function eventually(check: () => Promise<boolean>, ms = 8_000): Promise<boolean> {
   const deadline = Date.now() + ms
   while (Date.now() < deadline) {

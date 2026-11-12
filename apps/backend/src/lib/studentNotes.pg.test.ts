@@ -121,7 +121,7 @@ import { autoPublishParticipantDocument } from './autoPublish'
 import { invalidateFeatures } from './features'
 import { BACKFILL_PROCESSED_BODY } from '../migrations/20261028_231948_documents_note_revisions'
 import { documentsOf, topicsByUser } from './student/queries'
-import { bootPayload, dockerOk, eventually, rowsOf, shutdown, startRealPostgres, type RealPostgres } from './testing/realPostgres'
+import { bootPayload, dockerOk, eventually, rowsOf, shutdown, startRealPostgres, tryHoldElsewhere, type RealPostgres } from './testing/realPostgres'
 
 if (!dockerOk) console.warn('[studentNotes.pg.test] docker is not usable — SKIP.')
 
@@ -714,6 +714,41 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
           expect(String((await row(NOTE)).r)).not.toBe(String(before.r))
         }, 60_000)
       }
+
+      it('🔴 the swap holds the note and the revision FOR SHARE: a hold from another connection waits until commit', async () => {
+        const rev = await changeAndWait()
+        // Right after the swap's first statement, another connection tries to hold each row.
+        type Tx = { execute(q: unknown): Promise<unknown> }
+        const drizzle = (payload!.db as unknown as { drizzle: { transaction: (f: (tx: Tx) => Promise<unknown>, c?: unknown) => Promise<unknown> } }).drizzle
+        const realTx = drizzle.transaction.bind(drizzle)
+        const attempts: Record<string, 'blocked' | 'written'> = {}
+        const spy = vi.spyOn(drizzle, 'transaction').mockImplementation((async (f: (tx: Tx) => Promise<unknown>, c?: unknown) =>
+          realTx(async (tx: Tx) => {
+            let first = true
+            const wrapped = new Proxy(tx, {
+              get: (t, k) =>
+                k === 'execute'
+                  ? async (q: unknown) => {
+                      const out = await t.execute(q)
+                      if (first && Object.keys(attempts).length === 0) {
+                        first = false
+                        attempts.revision = await tryHoldElsewhere(pg!.db, rev)
+                        attempts.note = await tryHoldElsewhere(pg!.db, NOTE)
+                      }
+                      return out
+                    }
+                  : Reflect.get(t, k),
+            })
+            return f(wrapped)
+          }, c)) as never)
+        try {
+          expect(await landDraftIngest(rev)).toEqual({ published: true })
+        } finally {
+          spy.mockRestore()
+        }
+        expect(attempts).toEqual({ revision: 'blocked', note: 'blocked' })
+        expect((await rowsOf(pg!.db, sql`SELECT consent_held AS h FROM documents WHERE id = ${NOTE}`))[0]!.h).toBe(false)
+      }, 60_000)
 
       it('a held note: "Publicar cambios" starts nothing — endpoint (CONSENT_HELD_MESSAGE) and the lib for any other caller', async () => {
         expect((await autosave(ANA, NOTE, { bodyMarkdown: nextBody() })).status).toBe(200)

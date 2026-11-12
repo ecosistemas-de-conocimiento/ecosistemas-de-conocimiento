@@ -23,7 +23,7 @@ vi.mock('@/lib/aiClient', () => {
   return { getAdminAIClient: () => anything, getAppAIClient: () => anything }
 })
 
-import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, type RealPostgres } from '../testing/realPostgres'
+import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, tryHoldElsewhere, type RealPostgres } from '../testing/realPostgres'
 import type { GraphGenerateClient } from './extract'
 import { runGraphExtraction, type GraphSchedulerPayload } from './schedule'
 
@@ -53,7 +53,7 @@ const sync = vi.fn(async (_req: unknown) => {
 })
 const client = { generate: { sync } } as unknown as GraphGenerateClient
 
-const run = (over: { anonymise?: boolean } = {}) =>
+const run = (over: { anonymise?: boolean; docId?: number } = {}) =>
   runGraphExtraction({
     payload: payload as unknown as GraphSchedulerPayload,
     docId: DOC,
@@ -206,6 +206,53 @@ describe.skipIf(!dockerOk)('graph job vs consent hold (real Postgres)', () => {
     // The earlier run's mentions, not this run's. (Its entities were upserted
     // before the transaction: those stay, see writer.ts → etapa-2.)
     expect(await mentionedIds()).toEqual([9701, 9702])
+  })
+
+  it('🔴 the writer\'s transaction holds the row FOR SHARE: a hold from another connection waits until commit', async () => {
+    // Inside the transaction (its first delete), another connection tries to hold DOC.
+    const realDelete = payload!.delete.bind(payload!)
+    let attempt: 'blocked' | 'written' | null = null
+    const spy = vi.spyOn(payload!, 'delete').mockImplementation((async (args: { collection: string; req?: unknown }) => {
+      if (args.collection === 'graphMentions' && args.req && attempt === null) attempt = await tryHoldElsewhere(pg!.db, DOC)
+      return realDelete(args as never)
+    }) as never)
+    try {
+      expect(await run()).toBe('ready')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(attempt).toBe('blocked')
+    expect((await state()).m).toBeGreaterThan(0)
+  })
+
+  it('🔴 a revision: the writer reads its NOTE\'s hold, held after the pre-write re-read: nothing written, `skipped`', async () => {
+    const REV = 702
+    await pg!.db.execute(sql`
+      INSERT INTO documents (id, organization_id, uploaded_by_id, publication_status, kind, content_kind, anonymise,
+                             anonymisation_status, extracted_text, name, graph_status, revision_of_id)
+      VALUES (${REV}, ${ORG}, ${USER}, 'published', 'pdf', 'documento', false, 'n/a', ${TEXT}, 'Partería', 'pending', ${DOC})`)
+    const realFind = payload!.find.bind(payload!)
+    let landed = false
+    const spy = vi.spyOn(payload!, 'find').mockImplementation((async (args: { collection: string }) => {
+      if (args.collection === 'graphEntities' && !landed) {
+        landed = true
+        await hold(true) // the NOTE; the revision's own flag stays false
+      }
+      return realFind(args as never)
+    }) as never)
+    try {
+      expect(await run({ docId: REV })).toBe('skipped')
+      expect(landed).toBe(true)
+      const m = await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM graph_mentions WHERE document_id = ${REV}`)
+      expect(Number(m[0]!.n)).toBe(0)
+      const g = await rowsOf(pg!.db, sql`SELECT graph_status AS g, consent_held AS h FROM documents WHERE id = ${REV}`)
+      expect(g[0]).toEqual({ g: 'skipped', h: false })
+    } finally {
+      spy.mockRestore()
+      await pg!.db.execute(sql`DELETE FROM graph_mentions WHERE document_id = ${REV}`)
+      await pg!.db.execute(sql`DELETE FROM graph_relations WHERE document_id = ${REV}`)
+      await pg!.db.execute(sql`DELETE FROM documents WHERE id = ${REV}`)
+    }
   })
 
   it('control: not held, the row is graphed (entities, mentions, relation)', async () => {
