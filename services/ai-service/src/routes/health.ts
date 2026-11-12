@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 
 import { db } from '../db/client.js';
+import { safeErrMessage } from '../errors/log-safe.js';
 
 type Check = { ok: true } | { ok: false; error: string };
 
@@ -10,7 +11,8 @@ async function check(fn: () => Promise<unknown>): Promise<Check> {
     await fn();
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    // Logged, never answered; a database error's text may quote a row.
+    return { ok: false, error: safeErrMessage(err) };
   }
 }
 

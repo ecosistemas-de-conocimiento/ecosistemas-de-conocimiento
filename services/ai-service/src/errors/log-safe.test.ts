@@ -1,6 +1,7 @@
 // `log.error({ err })` must not copy a database error's row text into the log.
 // See `log-safe.ts`. The DB-backed case is `log-safe.integration.test.ts`.
 
+import { readFileSync } from 'node:fs';
 import { Writable } from 'node:stream';
 
 import pino, { type Logger } from 'pino';
@@ -9,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   LOG_SAFE_OPTIONS,
+  ROW_TEXT_SOURCE,
   clientErrText,
   errSummary,
   isDatabaseError,
@@ -193,5 +195,38 @@ describe('clientErrText', () => {
     expect(clientErrText(new Error('upstream 500'))).toBe('upstream 500');
     expect(clientErrText(42)).toBe('42');
     expect(clientErrText(`Failed query: select\nparams: ${ROW_TEXT}`)).not.toContain('Juana');
+  });
+});
+
+/** Postgres messages that quote their input (shapes from a real Postgres 16, 2026-11-12). */
+const QUOTING = [
+  'invalid input value for enum st: "Juana Pérez"',
+  'malformed array literal: "Juana Pérez"',
+  'malformed record literal: "Juana Pérez"',
+  'invalid input syntax for type uuid: "Juana Pérez"',
+  'invalid input syntax for type json Token "Juana" is invalid.',
+  'value "98765432109" is out of range for type integer',
+  'no operand in tsquery: "Juana &"',
+  'Key (email)=(Juana Pérez) already exists.',
+];
+
+describe('a string quoting a value is withheld (audit 2026-11-12)', () => {
+  it.each(QUOTING)('%s', (msg) => {
+    expect(safeErrMessage(msg)).toBe('[database error text withheld]');
+    expect(clientErrText(msg)).toBe('[database error text withheld]');
+    expect(isDatabaseError(new Error(msg))).toBe(true);
+  });
+
+  it('an ordinary message passes', () => {
+    expect(safeErrMessage('ai-service reported a failure')).toBe('ai-service reported a failure');
+    expect(clientErrText('timeout')).toBe('timeout');
+  });
+
+  it("is the backend's pattern, character for character", () => {
+    const backend = readFileSync(new URL('../../../../apps/backend/src/lib/errorSummary.ts', import.meta.url), 'utf8');
+    const list = /export const ROW_TEXT_SOURCE = \[([\s\S]*?)\]\.join/.exec(backend)?.[1];
+    expect(list).toBeTruthy();
+    const items = [...list!.matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1]!.replace(/\\\\/g, '\\'));
+    expect(items.join('|')).toBe(ROW_TEXT_SOURCE);
   });
 });

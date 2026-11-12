@@ -18,6 +18,8 @@
 import { SpanStatusCode, trace, type Span } from '@opentelemetry/api';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
+import { errSummary, safeErrMessage } from '../errors/log-safe.js';
+
 import { serviceName } from './config.js';
 
 /**
@@ -94,11 +96,11 @@ export async function withRouteSpan<T>(
     try {
       return await fn(handle);
     } catch (err) {
-      span.recordException(err as Error);
-      span.setStatus({
-        code: SpanStatusCode.ERROR,
-        message: err instanceof Error ? err.message : String(err),
-      });
+      // Spans leave the process like log lines: a database error's message
+      // and stack may quote a row, so the exception event carries only what
+      // a log line may (`errors/log-safe.ts`).
+      span.recordException({ name: errSummary(err), message: safeErrMessage(err) });
+      span.setStatus({ code: SpanStatusCode.ERROR, message: safeErrMessage(err) });
       throw err;
     } finally {
       span.end();

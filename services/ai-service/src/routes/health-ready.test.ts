@@ -12,14 +12,19 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+// `warn` lines must reach the stream; `env.ts` reads it at the first dynamic import.
+process.env['LOG_LEVEL'] = 'info';
+
 const DB_SECRET_ERROR = 'connect ECONNREFUSED db.internal.example:5432 password=hunter2';
+/** A test may set the next database failure; otherwise DB_SECRET_ERROR. */
+const dbFailure = vi.hoisted(() => ({ next: undefined as Error | undefined }));
 const REDIS_SECRET_ERROR = 'redis auth failed for redis://:sekret@redis.internal:6379';
 
 vi.mock('../db/client.js', async () => {
   const actual = await vi.importActual<typeof import('../db/client.js')>('../db/client.js');
   return {
     ...actual,
-    db: { execute: () => Promise.reject(new Error(DB_SECRET_ERROR)) },
+    db: { execute: () => Promise.reject(dbFailure.next ?? new Error(DB_SECRET_ERROR)) },
   };
 });
 
@@ -59,5 +64,31 @@ describe('GET /health/ready — unauthenticated response carries booleans only',
     expect(res.body).not.toContain('internal');
     expect(res.body).not.toContain('ECONNREFUSED');
     await app.close();
+  });
+});
+
+describe('GET /health/ready — the server-side log never carries database text (audit 2026-11-12)', () => {
+  it('a database error that quotes a value is logged as its summary', async () => {
+    dbFailure.next = Object.assign(new Error('invalid input syntax for type integer: "Juana Perez"'), { code: '22P02' });
+    const { buildServer } = await import('../server.js');
+    const app = await buildServer();
+    const log = app.log as unknown as Record<symbol, unknown>;
+    const streamSym = Object.getOwnPropertySymbols(log).find((s) => s.description === 'pino.stream');
+    const stream = log[streamSym!] as { write: (chunk: string) => unknown };
+    const original = stream.write.bind(stream);
+    const lines: string[] = [];
+    stream.write = (chunk: string) => (lines.push(String(chunk)), true);
+    try {
+      const res = await app.inject({ method: 'GET', url: '/health/ready' });
+      expect(res.statusCode).toBe(503);
+      const dbLine = lines.find((l) => l.includes('readiness check failed: database'));
+      expect(dbLine).toBeDefined();
+      expect(dbLine).toContain('22P02');
+      expect(lines.join('')).not.toContain('Juana');
+    } finally {
+      stream.write = original;
+      dbFailure.next = undefined;
+      await app.close();
+    }
   });
 });

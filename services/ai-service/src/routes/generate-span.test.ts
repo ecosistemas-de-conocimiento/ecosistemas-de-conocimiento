@@ -221,6 +221,22 @@ describe('POST /v1/generate/sync — trace span', () => {
   });
 });
 
+describe('a failed span never carries database text (audit 2026-11-12)', () => {
+  it('the status message and the exception event hold the summary, not the quoted value', async () => {
+    resolveSpecMock.mockRejectedValueOnce(
+      Object.assign(new Error('invalid input value for enum st: "Juana Perez"'), { code: '22P02' }),
+    );
+    const res = await injectSync();
+    expect(res.statusCode).toBe(500);
+    const span = exporter.getFinishedSpans().find((s) => s.name === 'POST /v1/generate/sync');
+    expect(span!.status.code).toBe(2);
+    expect(span!.events.some((e) => e.name === 'exception')).toBe(true);
+    const exported = JSON.stringify({ status: span!.status, events: span!.events });
+    expect(exported).not.toContain('Juana');
+    expect(exported).toContain('22P02');
+  });
+});
+
 describe('POST /v1/generate — trace span on the ASYNC route', () => {
   // The batch route had NO span at all: it was the one generation entry point
   // an operator could not see, and it is the one most consumers actually use.
