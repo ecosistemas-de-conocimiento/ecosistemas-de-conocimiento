@@ -219,6 +219,13 @@ export async function writeGraphForDocument(args: WriteGraphArgs): Promise<Write
   const req = transactionID == null ? undefined : { transactionID }
 
   try {
+    // 🔴 RETENIDO POR CONSENTIMIENTO, INSIDE THE TRANSACTION: the row (and a
+    // revision's note) locked `FOR SHARE`, so a hold cannot land before the
+    // commit. Held: throw, roll back, and the run ends `skipped` with the old
+    // rows (`recordFailure`). ⚠ The entities above are already upserted.
+    if (transactionID != null && (await lockUnheld(payload, transactionID, docId)) === false) {
+      throw new Error('consent held at graph write')
+    }
     // 🔴 Tenancy named explicitly, in its own predicate, on both deletes.
     const thisDocument = {
       and: [
@@ -294,6 +301,33 @@ export async function writeGraphForDocument(args: WriteGraphArgs): Promise<Write
     }
     throw err
   }
+}
+
+/**
+ * Lock the document row (and, for a revision, its note) `FOR SHARE` on the
+ * transaction's own connection and say whether neither is held. `null`: no
+ * adapter session registry at all (a unit-test fake), nothing checked. A
+ * registry without this transaction fails closed (throws).
+ */
+async function lockUnheld(
+  payload: GraphWriterPayload,
+  transactionID: number | string,
+  docId: string | number,
+): Promise<boolean | null> {
+  type Exec = { execute(q: unknown): Promise<{ rows?: Array<Record<string, unknown>> }> }
+  const sessions = (payload.db as { sessions?: Record<string, { db?: Exec }> }).sessions
+  if (sessions === undefined) return null
+  const tx = sessions[String(transactionID)]?.db
+  if (!tx?.execute) throw new Error('graph writer: cannot reach the transaction (adapter shape changed?)')
+  const { sql } = await import('@payloadcms/db-postgres')
+  const doc = (await tx.execute(
+    sql`SELECT consent_held AS h, revision_of_id AS o FROM documents WHERE id = ${Number(docId)} FOR SHARE`,
+  )).rows?.[0]
+  if (!doc || doc.h === true) return false
+  if (doc.o == null) return true
+  const note = (await tx.execute(sql`SELECT consent_held AS h FROM documents WHERE id = ${Number(doc.o)} FOR SHARE`)).rows?.[0]
+  // An original that cannot be read holds the revision (`isConsentHeldNow`).
+  return note?.h === false
 }
 
 /**

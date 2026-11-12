@@ -53,7 +53,7 @@ const sync = vi.fn(async (_req: unknown) => {
 })
 const client = { generate: { sync } } as unknown as GraphGenerateClient
 
-const run = () =>
+const run = (over: { anonymise?: boolean } = {}) =>
   runGraphExtraction({
     payload: payload as unknown as GraphSchedulerPayload,
     docId: DOC,
@@ -64,6 +64,7 @@ const run = () =>
     text: TEXT,
     title: 'Partería',
     client,
+    ...over,
   })
 const state = async () =>
   (
@@ -98,7 +99,8 @@ describe.skipIf(!dockerOk)('graph job vs consent hold (real Postgres)', () => {
     await pg!.db.execute(sql`DELETE FROM graph_relations WHERE organization_id = ${ORG}`)
     await pg!.db.execute(sql`DELETE FROM graph_mentions WHERE organization_id = ${ORG}`)
     await pg!.db.execute(sql`DELETE FROM graph_entities WHERE organization_id = ${ORG}`)
-    await pg!.db.execute(sql`UPDATE documents SET graph_status = 'pending', graph_error = NULL WHERE id = ${DOC}`)
+    await pg!.db.execute(sql`UPDATE documents SET graph_status = 'pending', graph_error = NULL,
+                               anonymise = false, anonymisation_status = 'n/a', redacted_text = NULL WHERE id = ${DOC}`)
   })
 
   afterAll(async () => {
@@ -147,6 +149,63 @@ describe.skipIf(!dockerOk)('graph job vs consent hold (real Postgres)', () => {
     expect(sync).toHaveBeenCalled()
     const after = await state()
     expect({ m: after.m, r: after.r, ent: after.ent, g: after.g }).toEqual({ m: 2, r: 1, ent: 2, g: 'skipped' })
+  })
+
+  /** An earlier run's rows for DOC: mentions of 9701/9702 and one relation. */
+  const earlierRows = async () => {
+    await pg!.db.execute(sql`
+      INSERT INTO graph_entities (id, organization_id, type, label, canonical_key)
+      VALUES (9701, ${ORG}, 'tema', 'Previa', 'previa'), (9702, ${ORG}, 'tema', 'Otra previa', 'otra previa')`)
+    await pg!.db.execute(sql`
+      INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences)
+      VALUES (${ORG}, ${DOC}, 9701, 1), (${ORG}, ${DOC}, 9702, 1)`)
+    await pg!.db.execute(sql`
+      INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type)
+      VALUES (${ORG}, ${DOC}, 9701, 9702, 'relacionado_con')`)
+  }
+  const mentionedIds = async () =>
+    (await rowsOf(pg!.db, sql`SELECT entity_id AS id FROM graph_mentions WHERE document_id = ${DOC} ORDER BY 1`)).map((x) =>
+      Number(x.id),
+    )
+
+  it('🔴 held while the model runs AND the model fails, gated: the earlier rows stay, status `skipped`', async () => {
+    // Gated (`anonymise`, cleared): without the hold check `recordFailure` deletes the rows and says `failed`.
+    await pg!.db.execute(sql`UPDATE documents SET anonymise = true, anonymisation_status = 'ready', redacted_text = ${TEXT} WHERE id = ${DOC}`)
+    await earlierRows()
+    sync.mockImplementationOnce(async () => {
+      await hold(true)
+      throw new Error('modelo caído')
+    })
+    expect(await run({ anonymise: true })).toBe('skipped')
+    expect(sync).toHaveBeenCalled()
+    const after = await state()
+    expect({ m: after.m, r: after.r, g: after.g, e: after.e }).toEqual({ m: 2, r: 1, g: 'skipped', e: null })
+    expect(await mentionedIds()).toEqual([9701, 9702])
+  })
+
+  it('🔴 held after the pre-write re-read, before the writer\'s transaction: nothing replaced, status `skipped`', async () => {
+    await earlierRows()
+    // The writer's first entity lookup runs after the re-read: the hold lands there.
+    const realFind = payload!.find.bind(payload!)
+    let landed = false
+    const spy = vi.spyOn(payload!, 'find').mockImplementation((async (args: { collection: string }) => {
+      if (args.collection === 'graphEntities' && !landed) {
+        landed = true
+        await hold(true)
+      }
+      return realFind(args as never)
+    }) as never)
+    try {
+      expect(await run()).toBe('skipped')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(landed).toBe(true)
+    const after = await state()
+    expect({ m: after.m, r: after.r, g: after.g }).toEqual({ m: 2, r: 1, g: 'skipped' })
+    // The earlier run's mentions, not this run's. (Its entities were upserted
+    // before the transaction: those stay, see writer.ts → etapa-2.)
+    expect(await mentionedIds()).toEqual([9701, 9702])
   })
 
   it('control: not held, the row is graphed (entities, mentions, relation)', async () => {

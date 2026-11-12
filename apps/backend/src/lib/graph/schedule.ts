@@ -198,8 +198,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
   try {
     start = await readGraphableRow(payload, docId, organizationId)
   } catch (err) {
-    await recordFailure(args, 'graph_reread_failed', err)
-    return 'failed'
+    return recordFailure(args, 'graph_reread_failed', err)
   }
   const queued: GraphableRow = {
     ok: true,
@@ -248,8 +247,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
       // A deployment with no `AI_SERVICE_API_KEY` is a normal state for a local
       // run. `failed` rather than `skipped` on purpose: an operator can fix it
       // and the backfill will then pick the row up.
-      await recordFailure(ctx, 'ai_client_unavailable', err)
-      return 'failed'
+      return recordFailure(ctx, 'ai_client_unavailable', err)
     }
   }
 
@@ -332,8 +330,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     )
     return 'ready'
   } catch (err) {
-    await recordFailure(ctx, 'graph_extract_failed', err)
-    return 'failed'
+    return recordFailure(ctx, 'graph_extract_failed', err)
   }
 }
 
@@ -360,8 +357,18 @@ async function recordFailure(
   args: Pick<RunGraphExtractionArgs, 'payload' | 'docId' | 'organizationId' | 'contentKind' | 'anonymise'>,
   code: string,
   err: unknown,
-): Promise<void> {
+): Promise<'failed' | 'skipped'> {
   const { payload, docId, organizationId, contentKind } = args
+  // 🔴 HELD WHILE THE RUN WAS UNDER WAY (the model failed, or the writer
+  // refused the held row): the same as A2. The rows stay as they were and the
+  // status is `skipped`. A read that fails falls through to the failure path.
+  const held = await readGraphableRow(payload, docId, organizationId).then(isHeldRead, () => false)
+  if (held) {
+    await setGraphStatus(payload, docId, { graphStatus: 'skipped' }).catch((updateErr) => {
+      console.error('[graph] could not mark held doc skipped', docId, errSummary(updateErr))
+    })
+    return 'skipped'
+  }
   // 🔴 `anonymise` TOO: a documento filed for anonymisation is gated content.
   const gated = mustPassAnonymisationGate(contentKind, args.anonymise)
   if (gated) {
@@ -391,6 +398,7 @@ async function recordFailure(
   }).catch((updateErr) => {
     console.error('[graph] could not record the failure on doc', docId, errSummary(updateErr))
   })
+  return 'failed'
 }
 
 // ---------------------------------------------------------------------------
