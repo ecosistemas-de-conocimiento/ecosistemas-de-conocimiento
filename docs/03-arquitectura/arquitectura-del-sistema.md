@@ -1,9 +1,9 @@
 # Arquitectura del sistema
 
 - **Versión:** 1.2
-- **Fecha:** 2026-11-10
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
-- **Fuentes:** `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, notas de contexto del equipo, `plan/adr-corpus-graph.md`, `plan/spark-ai-adopcion.md`, `plan/anonimizacion-y-voces.md`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/anonymise/gate.ts`, `apps/backend/src/lib/publishDocument.ts`, `apps/backend/src/lib/corpus.ts`, `apps/web/src/routes/api/generate/+server.ts`, `apps/web/src/lib/server/engine/*`, `packages/chat-engine/src/core/*`, `services/ai-service/src/server.ts`, `services/audio-service/app/*`. Código leído en `main` b7dc944f el 2026-11-10. Lo que está en `main` y no en dev (367c2698, citado de `infra/fleet/edc-1.md`) dice "pendiente de desplegar en dev".
+- **Fuentes:** `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, notas de contexto del equipo, `plan/adr-corpus-graph.md`, `plan/spark-ai-adopcion.md`, `plan/anonimizacion-y-voces.md`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/anonymise/gate.ts`, `apps/backend/src/lib/publishDocument.ts`, `apps/backend/src/lib/corpus.ts`, `apps/web/src/routes/api/generate/+server.ts`, `apps/web/src/lib/server/engine/*`, `packages/chat-engine/src/core/*`, `services/ai-service/src/server.ts`, `services/audio-service/app/*`. Código leído en `main` b7dc944f el 2026-11-10 y revisado contra `main` en `687ff21e` el 2026-11-11. "Pendiente de desplegar en dev" y "en dev" se refieren a lo que corre en dev: `c4f53632`, desplegado el 2026-11-10 a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11).
 
 ## Para quién es y qué responde
 
@@ -26,7 +26,7 @@ Los roles viven por ecosistema en la colección `memberships`. El escalafón, de
 | `estudiante` | estudiante | Conversa, sube y escribe notas; con el interruptor `studentView` ve además la vista "Mi investigación" |
 | `member` | participante | Conversa con el acervo, sube documentos y audio, valora respuestas. Lo que sube se publica solo si `autoPublishMembers` está encendido (lo está por omisión) |
 | `admin` | administra | Además revisa retenciones del gate, sube testimonios y gestiona miembros. El valor existe, pero la pantalla de miembros no lo ofrece (`apps/web/src/lib/miembros.ts`) |
-| `investigador` | investigador | Lo de `admin`, más la administración acotada a sus ecosistemas. Hasta el 2026-11-10 también guardaba Ajustes; el cambio está pendiente de desplegar en dev |
+| `investigador` | investigador | Lo de `admin`, más la administración acotada a sus ecosistemas. Hasta el 2026-11-10 también guardaba Ajustes; el cambio está desplegado |
 | `owner` | responsable | Además guarda los Ajustes del ecosistema (`organization:manage`, desde el 2026-11-10), gestiona investigadores, cambia el `slug` y puede apagar el ecosistema |
 | Administrador de plataforma | Admin. de plataforma | Crea ecosistemas y cuentas, fija estilos de respuesta, decide `keepPublicFigures`, ve `/admin/evals` (Etapa 1) y el ajuste de respaldo del detector |
 
@@ -146,7 +146,7 @@ Dos detalles del diagrama. Primero, ai-service devuelve los callbacks al backend
 |---|---|---|
 | Colecciones Payload | `src/collections/*.ts` | `users`, `organizations`, `memberships`, `teams`, `projects`, `documents`, `media`, `sessions`, `messages`, `ratings`, `studentProfiles`, `suggestions`, `graphEntities`, `graphMentions`, `graphRelations`, `anonymisation-reviews`, `anonymisation-setting-changes`, `eval-items`, `eval-runs`, `aiServiceCallbacks`; global `platform-settings`. Cada una define su control de acceso como restricciones WHERE por ecosistema |
 | Extracción de texto | `src/lib/extract/run.ts`, `src/lib/extract/sandbox.ts` | Saca el texto de PDF, DOCX, XLSX, CSV, HTML y Markdown en un hilo aislado, con guardas contra archivos comprimidos maliciosos |
-| Gate de anonimización | `src/lib/anonymiseDocument.ts`, `src/lib/anonymise/gate.ts`, `detector.ts`, `deterministic.ts`, `structural.ts` | Único punto de paso hacia el índice. Cuatro etapas: estructural, determinista, detección por modelo y verificación. Resultado binario: `ready` o `hold`. En un `documento` con compuerta también redacta el título (`redactedTitle`; pendiente de desplegar en dev) |
+| Gate de anonimización | `src/lib/anonymiseDocument.ts`, `src/lib/anonymise/gate.ts`, `detector.ts`, `deterministic.ts`, `structural.ts` | Único punto de paso hacia el índice. Cuatro etapas: estructural, determinista, detección por modelo y verificación. Resultado binario: `ready` o `hold`. En un `documento` con compuerta también redacta el título (`redactedTitle`; desplegado) |
 | Controles de anonimización | `src/lib/anonymisationControls.ts`, `src/collections/AnonymisationSettingChanges.ts` | Interruptores por documento y por ecosistema, su auditoría y la nueva anonimización cuando cambian ([ADR-0020](adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) |
 | Retención por consentimiento | `src/lib/consentHold.ts`, `scripts/hold-for-consent.ts` | `documents.consentHeld`: sin re-gate, ingesta, grafo ni publicación hasta que los autores consientan. Pendiente de desplegar en dev ([ADR-0022](adr/ADR-0022-retencion-por-consentimiento.md)) |
 | Revisión de retenciones | `src/lib/holdReview.ts`, `src/app/api/holds/*` | Cola de documentos retenidos; aprobar, corregir o rechazar, con registro de auditoría antes de liberar |
@@ -201,7 +201,7 @@ El motor de chat está repartido entre el paquete `@edc/chat-engine` (`packages/
 
 ### 5.1 Subida, gate, ingesta y publicación
 
-Un archivo entra por `web`, se guarda como documento en estado `draft` y el backend extrae su texto. Si el documento es un testimonio, una conversación o un `documento` marcado "Anonimizar", pasa por el gate. Un `documento` normal no pasa por el gate y se indexa tal cual (`apps/backend/src/lib/anonymiseDocument.ts`). Después del gate, el backend pide a ai-service la ingesta en el corpus borrador de quien subió. Al publicar, el documento se re-embebe en el corpus compartido del ecosistema. Los participantes publican sin revisión previa, siempre detrás del gate (`apps/backend/src/lib/autoPublish.ts`). No se publica un documento retenido por consentimiento ni uno cuya nueva anonimización falló o sigue pendiente (`publishBlocker` en `apps/backend/src/lib/publishDocument.ts`; pendiente de desplegar en dev).
+Un archivo entra por `web`, se guarda como documento en estado `draft` y el backend extrae su texto. Si el documento es un testimonio, una conversación o un `documento` marcado "Anonimizar", pasa por el gate. Un `documento` normal no pasa por el gate y se indexa tal cual (`apps/backend/src/lib/anonymiseDocument.ts`). Después del gate, el backend pide a ai-service la ingesta en el corpus borrador de quien subió. Al publicar, el documento se re-embebe en el corpus compartido del ecosistema. Los participantes publican sin revisión previa, siempre detrás del gate (`apps/backend/src/lib/autoPublish.ts`). No se publica un documento retenido por consentimiento ni uno cuya nueva anonimización falló o sigue pendiente (`publishBlocker` en `apps/backend/src/lib/publishDocument.ts`; desplegado).
 
 ```mermaid
 sequenceDiagram
@@ -348,7 +348,7 @@ sequenceDiagram
   B-->>W: nodos y aristas
 ```
 
-Los tipos de entidad son `tema`, `lugar`, `evento`, `organizacion` y `persona`. `persona` se bloquea para testimonios y conversaciones en tres capas: el esquema de respuesta, `personaAllowed()` y un post-filtro (`apps/backend/src/lib/graph/types.ts`). El grafo vive en `edc_backend` y no en `edc_ai` (ADR-0001). La cola de extracción corre en el proceso del backend y no es durable (ver sección 8). El backfill del grafo solo extrae documentos publicados y no retenidos por consentimiento (commit feae7e18, pendiente de desplegar en dev). La re-extracción del grafo de lo publicado está preparada en `apps/backend/scripts/reextract-published-graph.ts` y no se ha corrido.
+Los tipos de entidad son `tema`, `lugar`, `evento`, `organizacion` y `persona`. `persona` se bloquea para testimonios y conversaciones en tres capas: el esquema de respuesta, `personaAllowed()` y un post-filtro (`apps/backend/src/lib/graph/types.ts`). El grafo vive en `edc_backend` y no en `edc_ai` (ADR-0001). La cola de extracción corre en el proceso del backend y no es durable (ver sección 8). El backfill del grafo solo extrae documentos publicados y no retenidos por consentimiento (commit feae7e18, desplegado). La re-extracción del grafo de lo publicado está preparada en `apps/backend/scripts/reextract-published-graph.ts` y no se ha corrido.
 
 ### 5.6 Resonancia (modo entrevista)
 
@@ -416,15 +416,15 @@ El navegador solo habla con `web`. Las rutas `/api/**` de `web` reenvían al bac
 
 ### 7.7 El título también pasa por la compuerta, y falla cerrado; lo retenido por consentimiento no se mueve
 
-El nombre de archivo de un `documento` con compuerta puede nombrar a una persona. Por eso su título visible es el título redactado por el gate o, si no hay, "Documento", en todas las superficies: REST, ingesta, citas, biblioteca, chat, grafo, vista de estudiante y vista de anonimización. Si la columna `anonymise` es NULL o no viene en la fila leída, el título se trata como con compuerta. Solo quien lo subió y la administración de plataforma ven el nombre del archivo. Pendiente de desplegar en dev ([ADR-0021](adr/ADR-0021-titulos-con-compuerta-fallan-cerrado.md)).
+El nombre de archivo de un `documento` con compuerta puede nombrar a una persona. Por eso su título visible es el título redactado por el gate o, si no hay, "Documento", en todas las superficies: REST, ingesta, citas, biblioteca, chat, grafo, vista de estudiante y vista de anonimización. Si la columna `anonymise` es NULL o no viene en la fila leída, el título se trata como con compuerta. Solo quien lo subió y la administración de plataforma ven el nombre del archivo. Desplegado en dev ([ADR-0021](adr/ADR-0021-titulos-con-compuerta-fallan-cerrado.md)).
 
-Un documento retenido por consentimiento (`consentHeld`) no se vuelve a anonimizar, ingerir, graficar ni publicar. Nada se borra; solo deja de moverse. Pendiente de desplegar en dev ([ADR-0022](adr/ADR-0022-retencion-por-consentimiento.md)).
+Un documento retenido por consentimiento (`consentHeld`) no se vuelve a anonimizar, ingerir, graficar ni publicar. Su revisión ("Publicar cambios") queda retenida con él (commit b29c72ba, en `main`, pendiente de desplegar en dev). Nada se borra; solo deja de moverse. Lo demás, desplegado en dev ([ADR-0022](adr/ADR-0022-retencion-por-consentimiento.md)).
 
 ## 8. Límites y decisiones conocidas
 
 | Límite | Consecuencia | Fuente |
 |---|---|---|
-| Estado en memoria por proceso | Los contadores de límite de tasa del grafo (ADR-0007), el throttle de "Preguntas para investigar" y las sesiones del micrófono en vivo viven en la memoria de un proceso. Con N réplicas, el límite se multiplica por N y el micrófono necesitaría enrutamiento por sesión | `apps/backend/src/endpoints/graph.ts`, `apps/web/src/lib/server/preguntas.ts`, `services/audio-service/app/live.py` |
+| Estado en memoria por proceso | Los contadores de límite de tasa del grafo (ADR-0007), del inicio de sesión, de conversaciones nuevas, de miembros agregados y de filtros por relación, las subidas simultáneas, el throttle de "Preguntas para investigar" y las sesiones del micrófono en vivo viven en la memoria de un proceso. Con N réplicas, el límite se multiplica por N y el micrófono necesitaría enrutamiento por sesión | `apps/backend/src/endpoints/graph.ts`, `apps/backend/src/lib/rateLimit.ts`, `apps/backend/src/access/relationFilters.ts`, `apps/backend/src/lib/uploadSlots.ts`, `apps/web/src/lib/server/preguntas.ts`, `services/audio-service/app/live.py` |
 | Sin cola durable del grafo | La extracción corre dentro del proceso del backend. Un reinicio pierde la corrida en curso; `graphStatus` lo deja visible y existe `graph-retry` | `plan/adr-corpus-graph.md` §5.1 |
 | Una sola réplica por servicio | No hay alta disponibilidad; un despliegue interrumpe el servicio | `infra/docker-compose.yml` |
 | Spark sin supervisión | Los modelos del Spark corren en tmux; un reinicio los deja caídos hasta que alguien los levanta | no verificado en esta versión |
@@ -456,8 +456,8 @@ Un documento retenido por consentimiento (`consentHeld`) no se vuelve a anonimiz
 | ADR-0018 | Lenguaje llano en la interfaz |
 | ADR-0019 | Voces sin sujeto ni nivel de consentimiento |
 | ADR-0020 | Anonimizar todo y conservar nombres por documento |
-| ADR-0021 | El título de un `documento` con compuerta pasa por la compuerta y falla cerrado (propuesto) |
-| ADR-0022 | Retenido por consentimiento: una marca que detiene todo procesamiento (propuesto) |
+| ADR-0021 | El título de un `documento` con compuerta pasa por la compuerta y falla cerrado (documento propuesto; decisión aceptada) |
+| ADR-0022 | Retenido por consentimiento: una marca que detiene todo procesamiento (documento propuesto; decisión aceptada) |
 
 Los textos completos están en el [índice de ADR](adr/README.md).
 

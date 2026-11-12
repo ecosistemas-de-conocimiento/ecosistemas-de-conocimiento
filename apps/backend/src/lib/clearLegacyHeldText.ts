@@ -6,9 +6,16 @@
  * 1-2 are all that touched it, so every third-party name is still in it. Rows
  * held BEFORE P-01 still store that text in `documents.held_text`. It is never
  * shown (`holdReview.ts` `modelNeverRan`), but it sits in the database. This
- * sets `held_text` and `held_text_hash` to NULL on those rows. Nothing else
- * changes: the hold stays a hold, its reason, report and status stay, and a
- * reviewer can still only reject it.
+ * sets `held_text` to NULL on those rows. Nothing else changes: the hold stays
+ * a hold, its reason, report and status stay, and a reviewer can still only
+ * reject it.
+ *
+ * 🔴 `held_text_hash` IS KEPT. It is a SHA-256 of the normalised extracted
+ * text (`gatedTextHash.ts`), not the text, and `/retry` needs it:
+ * `planIngestRetry` (`collections/Documents.ts`) compares it with
+ * `extractedText` and fails closed on a held row with no hash, so a NULL hash
+ * would refuse the uploader's retry on that row forever, even after the source
+ * changed. `held_text` is not read by the retry.
  *
  * Selection (the same criterion as `modelNeverRan`, on the stored row):
  *   · `anonymisation_status = 'held'`
@@ -81,7 +88,7 @@ export async function clearLegacyHeldText(
 
   const cleared = rowsOf(
     await db.execute(
-      sql`UPDATE documents SET held_text = NULL, held_text_hash = NULL
+      sql`UPDATE documents SET held_text = NULL
           WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)}) AND ${where}
           RETURNING id`,
     ),

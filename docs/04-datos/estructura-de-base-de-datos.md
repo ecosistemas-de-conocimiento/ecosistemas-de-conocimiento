@@ -1,9 +1,9 @@
 # Estructura de base de datos y almacenamiento
 
 - **Versión:** 1.3
-- **Fecha:** 2026-11-10
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
-- **Fuentes:** `apps/backend/src/migrations/` (25 migraciones en `main`, `index.ts`, `README.md`, snapshot `20261110_181621_consent_held_reviews_keep.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29, revisada contra `main` en `b7dc944f` el 2026-11-10. Estado de dev citado de `infra/fleet/edc-1.md` §4zzzzzzzz (despliegue `367c2698`, 2026-11-10).
+- **Fuentes:** `apps/backend/src/migrations/` (25 migraciones en `main`, `index.ts`, `README.md`, snapshot `20261110_181621_consent_held_reviews_keep.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29, revisada contra `main` en `b7dc944f` el 2026-11-10 y en `687ff21e` el 2026-11-11. Estado de dev: `c4f53632`, desplegado el 2026-11-10 a las 23:03 UTC (versión medida con `docker ps` en edc-1 el 2026-11-11; la migración, citada del reporte del despliegue); "pendiente de desplegar en dev" se refiere a él.
 
 ## Para quién es y qué responde
 
@@ -63,7 +63,7 @@ Payload genera el esquema a partir de la configuración de las colecciones. Los 
 | `suggestions` | `suggestions` | Sugerencias de estudiantes |
 | `eval_items` | `eval-items` | Preguntas y casos de evaluación |
 | `eval_runs` | `eval-runs` | Corridas de evaluación |
-| `ai_service_callbacks` | `aiServiceCallbacks` | Avisos de ai-service ya procesados. Una tarea diaria vacía `raw_body` a los 30 días y deja la fila, que es la llave contra duplicados (`lib/callbackRetention.ts`; Implementado, pendiente de desplegar en dev) |
+| `ai_service_callbacks` | `aiServiceCallbacks` | Avisos de ai-service ya procesados. Una tarea diaria vacía `raw_body` a los 30 días y deja la fila, que es la llave contra duplicados (`lib/callbackRetention.ts`; Implementado y desplegado) |
 | `platform_settings` | global `platform-settings` | Ajustes de plataforma (una fila) |
 
 ### 2.2 Tablas de relación
@@ -164,7 +164,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 - `sessions`: `user_id`, `organization_id`
 - `messages.session_id`
 - `suggestions.author_id` (aquí es intencional: la sugerencia sobrevive sin autor), `eval_runs.triggered_by_id`
-- `anonymisation_reviews.document_id`, desde `20261110_181621_consent_held_reviews_keep` (antes `cascade`). La columna pasa a admitir nulo y `document_id_snapshot` guarda el id del documento borrado. Así, borrar un documento conserva la decisión que tomó otra persona; solo se van con él las filas de revisión de quien lo borra (`deleteOwnReviewRows` en `Documents.ts`). Implementado (pendiente de desplegar en dev)
+- `anonymisation_reviews.document_id`, desde `20261110_181621_consent_held_reviews_keep` (antes `cascade`). La columna pasa a admitir nulo y `document_id_snapshot` guarda el id del documento borrado. Así, borrar un documento conserva la decisión que tomó otra persona; solo se van con él las filas de revisión de quien lo borra (`deleteOwnReviewRows` en `Documents.ts`), también al borrar una conversación que se lo lleva (commit 17a3ee49). Implementado y desplegado, salvo lo de 17a3ee49 (en `main`, pendiente de desplegar en dev)
 
 **Riesgo 23502.** Varias de esas columnas son `NOT NULL`, porque la relación es requerida. Al borrar al padre, Postgres intenta poner `NULL` y falla con el código 23502 (violación de no nulo). En consecuencia, un `DELETE` directo de un usuario o un ecosistema que tenga membresías, conversaciones o documentos falla en la base, salvo que la aplicación borre antes a los hijos. Este comportamiento está afirmado por una prueba automatizada (`apps/backend/src/collections/Ratings.deletePaths.pg.test.ts`, que espera `23502` al borrar un usuario con conversación y un ecosistema con filas), pero no se ha medido contra la base de dev. Para `messages.session_id` el código ya lo resuelve con el gancho `cascadeConversationDelete` de `Sessions.ts`. Para usuarios y ecosistemas no hay solución equivalente; la prueba lo marca como pendiente de una decisión de producto. Ver [../01-proyecto/registro-de-riesgos.md](../01-proyecto/registro-de-riesgos.md).
 
@@ -172,7 +172,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
 ### 2.7 Migraciones
 
-Hay 25 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído en `main` `b7dc944f` el 2026-11-10). Dev tiene aplicadas las 24 primeras: `payload_migrations` pasó de 23 a 24 en el despliegue del 2026-11-10 a las 18:33 UTC (citado, `edc-1.md` §4zzzzzzzz). La 25 está en `main` y no en dev. La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
+Hay 25 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído en `main` `b7dc944f` el 2026-11-10; sin cambio en `687ff21e`, 2026-11-11). `payload_migrations` pasó de 23 a 24 el 2026-11-10 a las 18:33 UTC (citado, `edc-1.md` §4zzzzzzzz) y a 25 con el despliegue de `c4f53632` a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
 
 | # | Migración | Fecha | Propósito |
 |---|---|---|---|
@@ -200,7 +200,7 @@ Hay 25 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído
 | 22 | `20261104_075139_documents_authors_kept` | 2026-11-04 | Agrega `documents.authors_kept` |
 | 23 | `20261108_001902_documents_anonymise_switches` | 2026-11-08 | Agrega `documents.keep_document_author`, `keep_cited_authors` (boolean, admite nulo) y `cited_authors_kept` (jsonb), y crea `anonymisation_setting_changes` (llave a ecosistema en `cascade`, a mano). En dev desde el 2026-11-10, 05:47 UTC |
 | 24 | `20261110_070204_anonymisation_setting_changes_keys` | 2026-11-10 | Agrega `keepPublicFigures` y `detectorFallback` al enum de claves y `plataforma` al de alcance; `anonymisation_setting_changes.organization_id` admite nulo (un cambio de plataforma no tiene ecosistema). Su `down` borra filas de auditoría: solo para bases desechables. En dev desde el 2026-11-10, 18:33 UTC |
-| 25 | `20261110_181621_consent_held_reviews_keep` | 2026-11-10 | Agrega `documents.consent_held` (boolean, `NOT NULL`, falso por defecto); `anonymisation_reviews.document_id` admite nulo y su llave pasa a `set null` (a mano); agrega `anonymisation_reviews.document_id_snapshot` (numeric, con índice) y lo rellena. Su `down` borra filas de auditoría. Implementado (pendiente de desplegar en dev) |
+| 25 | `20261110_181621_consent_held_reviews_keep` | 2026-11-10 | Agrega `documents.consent_held` (boolean, `NOT NULL`, falso por defecto); `anonymisation_reviews.document_id` admite nulo y su llave pasa a `set null` (a mano); agrega `anonymisation_reviews.document_id_snapshot` (numeric, con índice) y lo rellena. Su `down` borra filas de auditoría. Implementado y desplegado |
 
 **Migraciones 23 a 25.** La 23 acompaña a [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md). En `cited_authors_kept` cada entrada es `{name, model, at}`; un valor nulo en `keep_document_author` o `keep_cited_authors` hereda el del ecosistema. Las tres se probaron arriba, abajo y arriba en un Postgres 16 desechable (citado de `apps/backend/src/migrations/README.md`). En dev, después del despliegue del 2026-11-10 a las 18:33 UTC, `information_schema` mostró los dos enums con sus valores nuevos y `organization_id` con nulo admitido (citado, `edc-1.md` §4zzzzzzzz). `consent_held` no se rellena en la migración: las filas del taller se marcan con `scripts/hold-for-consent.ts` (ver [../05-infraestructura/despliegue-y-runbook.md](../05-infraestructura/despliegue-y-runbook.md) §6.20). Las claves nuevas `keepDocumentAuthor` y `keepCitedAuthors`, apagadas por defecto, viven dentro de `organizations.features`, que es JSON, así que no cambian el esquema (inferido de que `features` resuelve las claves que faltan con su valor por defecto, `lib/features.ts`).
 
@@ -214,6 +214,8 @@ La tabla de la cadena en `apps/backend/src/migrations/README.md` omite cuatro mi
 4. **El entorno local también usa migraciones.** Desde el 2026-08-14 el `Dockerfile.dev` corre `payload migrate` antes de `next dev`. Así un índice único que bloquea una carrera en dev también la bloquea en local.
 5. **Trampa del snapshot.** No regenerar la línea base sin copiar a mano el SQL escrito a mano. Con el snapshot borrado, `migrate:create` produce un `CREATE` completo pero sin índices compuestos ni llaves `cascade`. La última vez el SQL se restauró desde git, no se reescribió, y se verificó en una base desechable con inserciones en conflicto y borrados en cascada (citado de `apps/backend/src/migrations/README.md`).
 6. **Push solo para iterar en local.** `PAYLOAD_ALLOW_PUSH=1` sigue disponible para probar cambios de esquema en una base propia. Mientras está activo desaparecen los índices escritos a mano; hay que cortar una migración en lugar de dejar la base en ese estado.
+
+**Pool de conexiones.** El backend espera como máximo 10 s una conexión libre (`connectionTimeoutMillis` en `payload.config.ts`, valor de `apps/backend/src/lib/dbPool.ts`); pasado eso, la petición falla y el pool se recupera. El tamaño sigue en el valor de `pg`, 10. La espera normal más larga fue 1.9 s con 40 altas simultáneas de miembros (medido el 2026-11-10 en torre con Postgres real, citado del comentario de `dbPool.ts`). En `main` (commit c65c63a4).
 
 El procedimiento de despliegue está en [../05-infraestructura/despliegue-y-runbook.md](../05-infraestructura/despliegue-y-runbook.md).
 
@@ -309,7 +311,7 @@ Una URL prefirmada es un enlace temporal que da acceso directo al bucket sin pas
 
 Cada objeto se guarda bajo `eco_{orgId}/u_{uploaderId}/` (o `eco_none` y `u_none` si falta el dato). El prefijo se calcula al crear y no cambia. Sirve para operar el bucket (respaldos, limpieza, inventario). No es una frontera de acceso.
 
-Desde `74306c42` una subida nueva se guarda con un nombre neutro, su id y la extensión, no con el nombre del archivo original (C-12; Implementado, pendiente de desplegar en dev). "Descargar original" baja el archivo con el nombre del documento (`28d84f03`).
+Desde `74306c42` una subida nueva se guarda con un nombre neutro, su id y la extensión, no con el nombre del archivo original (C-12; Implementado y desplegado). "Descargar original" baja el archivo con el nombre del documento (`28d84f03`).
 
 ### 5.4 Tamaño
 
@@ -319,8 +321,8 @@ Desde `74306c42` una subida nueva se guarda con un nombre neutro, su id y la ext
 | Navegador, audio | 200 MiB (`MAX_AUDIO_UPLOAD_BYTES`), unas 3.5 horas a 128 kbps (inferido del comentario del código) | `apps/web/src/lib/config.ts` |
 | Navegador, documentos | 20 MiB (`MAX_UPLOAD_BYTES`) | `apps/web/src/lib/config.ts` |
 | audio-service | 512 MiB o 6 horas | Citado del comentario de `apps/web/src/lib/config.ts` |
-| Servidor, subidas simultáneas | 2 por cuenta y proceso (`UPLOAD_MAX_CONCURRENT_PER_USER`); la siguiente recibe 429. Implementado (pendiente de desplegar en dev) | `apps/backend/src/lib/uploadSlots.ts` |
-| Servidor, cuerpos que no son subida | 8 MiB (`API_BODY_MAX_BYTES`), con o sin `Content-Length`; 408 si el cuerpo se detiene 30 s o tarda más de 120 s (los tiempos, pendientes de desplegar en dev) | `apps/backend/src/lib/bodyCap.ts`, `apps/backend/src/middleware.ts` |
+| Servidor, subidas simultáneas | 2 por cuenta y proceso (`UPLOAD_MAX_CONCURRENT_PER_USER`); la siguiente recibe 429. Implementado y desplegado | `apps/backend/src/lib/uploadSlots.ts` |
+| Servidor, cuerpos que no son subida | 8 MiB (`API_BODY_MAX_BYTES`), con o sin `Content-Length`; 408 si el cuerpo se detiene 30 s o tarda más de 120 s (los tiempos, desplegados) | `apps/backend/src/lib/bodyCap.ts`, `apps/backend/src/middleware.ts` |
 
 El comentario de `MAX_UPLOAD_BYTES` dice que el servidor aplica el mismo tope de 20 MiB a documentos. En `Media.ts` solo se encontró el tope general de 200 MiB; el tope de documentos del proxy inverso no se verificó. busboy, el lector de formularios de Payload, corta el archivo en 200 MiB más un byte y cada campo en 1 MiB (`upload.limits` en `apps/backend/src/payload.config.ts`).
 

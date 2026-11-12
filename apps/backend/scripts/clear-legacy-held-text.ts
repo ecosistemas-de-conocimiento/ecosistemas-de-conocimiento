@@ -1,8 +1,9 @@
 /**
- * ONE-OFF: set `held_text` (and `held_text_hash`) to NULL on `content` holds
- * from before P-01 whose model never ran ("La revisión automática no pudo
- * terminar…"): they still store stage 2's near-raw text. Logic, selection and
- * guards: `src/lib/clearLegacyHeldText.ts`.
+ * ONE-OFF: set `held_text` to NULL on `content` holds from before P-01 whose
+ * model never ran ("La revisión automática no pudo terminar…"): they still
+ * store stage 2's near-raw text. `held_text_hash` is kept: `/retry` needs it
+ * (a hold with no hash is refused for good). Logic, selection and guards:
+ * `src/lib/clearLegacyHeldText.ts`.
  *
  * 🔴 DRY RUN BY DEFAULT: lists ids and the count, never any text. Writes only
  * with HELD_TEXT_CLEAR_APPLY=1. No model, no ai-service, no Payload hooks.

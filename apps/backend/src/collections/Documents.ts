@@ -13,6 +13,8 @@ import type {
   Where,
 } from 'payload'
 import { APIError, Forbidden, ValidationError } from 'payload'
+import { select as selectValidate, text as textValidate, textarea as textareaValidate } from 'payload/shared'
+import { writtenOnlyWhenSent } from './hooks/writtenOnlyWhenSent'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { constrainRelationQueries, sortParts, WHERE_OPERATORS } from '../access/relationFilters'
@@ -3276,6 +3278,8 @@ export const Documents: CollectionConfig = {
       // cannot fall out of step; the labels are the only hand-written part.
       options: PUBLICATION_STATES.map((value) => ({ value, label: PUBLICATION_LABELS[value] })),
       admin: { position: 'sidebar' },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('publicationStatus', selectValidate),
     },
     {
       /**
@@ -3288,6 +3292,25 @@ export const Documents: CollectionConfig = {
       required: true,
       defaultValue: false,
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      /**
+       * 🔴 NEVER IN A PAYLOAD UPDATE. Payload 3.88 hands the adapter the whole
+       * merged row and `@payloadcms/drizzle` writes every column that is not
+       * `undefined`, so an unrelated edit would write back the value it read:
+       * a hold that committed in between would be lifted. The hold's only
+       * writer is raw SQL (`lib/consentHold.ts`). Dropped here, so the column
+       * is left out of the UPDATE; the validator below lets it be absent.
+       * `Documents.consentHeldStaleWrite.pg.test.ts`.
+       */
+      hooks: {
+        beforeChange: [
+          ({ operation, siblingData }) => {
+            if (operation === 'update') delete (siblingData as { consentHeld?: unknown }).consentHeld
+            return undefined
+          },
+        ],
+      },
+      validate: (value: unknown, { operation }: { operation?: string }) =>
+        (operation === 'update' && value === undefined) || typeof value === 'boolean' || 'Retenido: verdadero o falso.',
       admin: {
         readOnly: true,
         position: 'sidebar',
@@ -3628,6 +3651,8 @@ export const Documents: CollectionConfig = {
       maxLength: DOCUMENT_TEXT_MAX_LENGTH,
       // 🔴 See `gateWritesOnly`. `admin.readOnly` is a panel hint; this is the rule.
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('redactedText', textareaValidate),
       admin: {
         readOnly: true,
         description:
@@ -3679,6 +3704,7 @@ export const Documents: CollectionConfig = {
       // 🔴 Read: uploader / platform admin only on gated content. Reviewers read
       // it through `lib/holdReview.ts` (overrideAccess). See `mayReadGatedOriginal`.
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      ...writtenOnlyWhenSent('heldText', textareaValidate),
       admin: {
         readOnly: true,
         description:
@@ -3697,6 +3723,7 @@ export const Documents: CollectionConfig = {
       name: 'heldTextHash',
       type: 'text',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      ...writtenOnlyWhenSent('heldTextHash', textValidate),
       admin: { readOnly: true, hidden: true },
     },
     {
@@ -3794,6 +3821,7 @@ export const Documents: CollectionConfig = {
       // 🔴 THE SINGLE MOST IMPORTANT LOCK IN THIS COLLECTION. A client that could
       // write `approved` here would skip the gate outright — see `gateWritesOnly`.
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      ...writtenOnlyWhenSent('anonymisationStatus', selectValidate),
       admin: { position: 'sidebar' },
     },
     {
@@ -4399,8 +4427,10 @@ async function deleteOwnReviewRowsHook({ id, req }: Parameters<CollectionBeforeD
 
 /**
  * A note's pending "Publicar cambios" revision goes with it. ⚠ BEFORE the
- * delete: the FK is `set null`, so afterwards the revision could no longer be
- * found and would surface as a stray draft. Its own delete hooks retire its
+ * delete: the FK is `ON DELETE cascade`
+ * (`migrations/20261028_231948_documents_note_revisions.ts:41`), so afterwards
+ * Postgres would already have removed the revision without running its hooks.
+ * Deleting it here runs them, and its own delete hooks retire its
  * draft-corpus copy.
  */
 async function deleteRevisionsHook({ id, req }: Parameters<CollectionBeforeDeleteHook>[0]): Promise<void> {

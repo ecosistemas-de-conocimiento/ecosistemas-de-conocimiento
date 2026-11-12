@@ -1,9 +1,9 @@
 # Despliegue y runbook
 
-- **Versión:** 1.2
-- **Fecha:** 2026-11-10
+- **Versión:** 1.3
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (§3, §4, §4b a §4zzzzzzzz, §6, §7, §8, §9), `infra/fleet/runbook.md` (§3, §4, §5, §6, §7, §8), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `apps/backend/scripts/migrate.sh`, `apps/backend/Dockerfile`, `services/ai-service/Dockerfile`, `services/ai-service/.github/workflows/ci.yml`, `TESTING.md`, `package.json` (raíz), `.git/hooks/reference-transaction`, `apps/backend/scripts/hold-for-consent.ts`, `apps/backend/scripts/reextract-published-graph.ts`, `apps/backend/src/lib/consentHold.ts`. Código de `main` en `b7dc944f` (2026-11-10).
+- **Fuentes:** `infra/fleet/edc-1.md` (§3, §4, §4b a §4zzzzzzzz, §6, §7, §8, §9), `infra/fleet/runbook.md` (§3, §4, §5, §6, §7, §8), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `apps/backend/scripts/migrate.sh`, `apps/backend/Dockerfile`, `services/ai-service/Dockerfile`, `services/ai-service/.github/workflows/ci.yml`, `TESTING.md`, `package.json` (raíz), `.git/hooks/reference-transaction`, `apps/backend/scripts/hold-for-consent.ts`, `apps/backend/scripts/reextract-published-graph.ts`, `apps/backend/src/lib/consentHold.ts`. Código de `main` en `687ff21e` (2026-11-11).
 
 ## Para quién es y qué responde
 
@@ -44,7 +44,7 @@ sequenceDiagram
 
 Desde el 2026-11-10 hay dos líneas: `main` solo recibe correcciones, y la funcionalidad nueva va a la rama `etapa-2` (decisión del 2026-11-10). Dev despliega `main`.
 
-**Estado de dev al 2026-11-10.** Dev corre `367c2698`, desplegado ese día a las 18:27 UTC (citado, `edc-1.md` §4zzzzzzzz). `main` está en `b7dc944f`, 40 commits después, con una migración pendiente, `20261110_181621_consent_held_reviews_keep` (medido con `git log --no-merges 367c2698..b7dc944f`). En estos documentos, lo que está en `main` y no en `367c2698` se marca **Implementado (pendiente de desplegar en dev)**.
+**Estado de dev al 2026-11-11.** Dev corre `c4f53632`, desplegado el 2026-11-10 a las 23:03 UTC, con la migración `20261110_181621_consent_held_reviews_keep` aplicada (citado del reporte de ese despliegue; no verificado en este documento, y su entrada aún no está en `edc-1.md`). El despliegue anterior registrado es `367c2698`, del 2026-11-10 a las 18:27 UTC (citado, `edc-1.md` §4zzzzzzzz). `main` está en `687ff21e`, 26 commits después de `c4f53632` y sin migraciones nuevas (medido con `git log --no-merges c4f53632..687ff21e` y `git diff --name-only`). En estos documentos, lo que está en `main` y no en `c4f53632` se marca **Implementado (pendiente de desplegar en dev)**.
 
 **2. Revisión previa.** Es práctica registrada desde `edc-1.md` §4zzz (2026-10-29):
 
@@ -144,7 +144,7 @@ Advertencias:
 | GitHub Actions en la raíz | **No existe.** No hay carpeta `.github/` en la raíz del repositorio | leído el 2026-10-30 (`ls .github`: no existe) |
 | Workflows de ai-service | `services/ai-service/.github/workflows/ci.yml` y `test.yml` son los workflows de CI de ai-service, inactivos en esa ruta: GitHub solo lee workflows en la raíz. Para activarlos hay que copiarlos a la raíz. Correrían lint, typecheck, pruebas, build e imagen Docker de ai-service, más un carril de integración | leído en `ci.yml:1-6` |
 | CI efectivo | **Local y manual.** Desde la raíz: `pnpm test` (unitarias, en paralelo), `pnpm typecheck` y `pnpm build`. Las pruebas de extremo a extremo son aparte y necesitan el stack levantado | leído en `package.json` raíz y `TESTING.md:31-34` |
-| Lint | Solo `apps/backend` tiene script `lint`; `apps/web` usa `check` (svelte-check). Quien toca el código de ai-service debe correr también eslint, porque el CI de ai-service se puso en rojo el 2026-10-17 por omitirlo | leído en los `package.json`; el incidente del 2026-10-17 no está verificado en esta versión |
+| Lint | `apps/backend`, `apps/web` y `services/ai-service` tienen script `lint` (`eslint .`); en los tres, la regla `edc/no-raw-error-log` está en `error`, y solo quedan fuera las pruebas. `apps/web` usa además `check` (svelte-check). Quien toca el código de ai-service debe correr también eslint, porque el CI de ai-service se puso en rojo el 2026-10-17 por omitirlo | leído en los `package.json`; el incidente del 2026-10-17 no está verificado en esta versión |
 | Trampa de copias nuevas | Una copia de trabajo nueva del repositorio debe construir `@edc/ai-client`, `@edc/identity-client` y `@edc/chat-engine` antes de probar, porque su `dist/` está en `.gitignore` y las apps importan `dist`. Un build viejo produce fallas de prueba falsas | citado, `TESTING.md:20-29` |
 
 Los conteos de pruebas medidos están en [Estrategia de pruebas](../07-calidad/estrategia-de-pruebas.md).
@@ -158,7 +158,7 @@ Staging ("montaje") tiene el auto-deploy apagado. Se despliega a mano el commit 
 - `EDC_ENV` debe ser exactamente `stage`. Con otro nombre el seed se niega en silencio.
 - Staging no tiene seed: su organización `Montaje` y su usuario de humo se crearon a mano el 2026-10-17. El registro público está cerrado, así que un reemplazo lo crea el admin de plataforma en `/admin`.
 - Desplegar dev y staging **uno después del otro**, nunca a la vez, y limpiar caché entre ambos.
-- Staging sigue en una versión anterior desde el 2026-10-17. El próximo despliegue lo llevará a través de todas las migraciones acumuladas de golpe; conviene respaldar antes y revisar `payload_migrations` después (inferido de la distancia entre versiones).
+- Staging sigue en una versión anterior desde el 2026-10-17 y por ahora está fuera de alcance (decisión del 2026-11-10). El próximo despliegue lo llevará a través de todas las migraciones acumuladas de golpe; conviene respaldar antes y revisar `payload_migrations` después (inferido de la distancia entre versiones).
 
 ## 4. Cambiar el stack de IA
 
@@ -321,7 +321,7 @@ docker exec -i "$C" psql -U edc -d edc_ai -v ON_ERROR_STOP=1 -v from_org=demo -v
 - Ruido del grafo: `apps/backend/scripts/purge-graph-noise.ts`. Filas con texto sin limpiar: `apps/backend/scripts/purge-unscrubbed-graph-rows.ts`.
 - Reconstrucción o relleno: `payload run src/lib/graph/backfill.cli.ts` y `src/lib/graph/policy.cli.ts`, con los argumentos `GRAPH_BACKFILL_*` y `GRAPH_POLICY_*` solo en la línea de comando, nunca en Coolify (citado, `env-manifests.md` §2f).
 - El relleno corre dentro del contenedor del backend: un redespliegue lo mata. A ritmo de una extracción por minuto, un relleno de 200 documentos tarda de 3 a 4 horas (inferido en `edc-1.md` §4p a partir de 14 extracciones en 16 minutos).
-- El relleno solo extrae documentos publicados y nunca los retenidos por consentimiento (`feae7e18`, `ccce6281`; Implementado, pendiente de desplegar en dev).
+- El relleno solo extrae documentos publicados y nunca los retenidos por consentimiento (`feae7e18`, `ccce6281`; Implementado). Un trabajo del grafo se detiene si la fila quedó retenida mientras corría (`17a5d985`, `c12a0ab5`; Implementado, pendiente de desplegar en dev).
 - Entidades huérfanas: una tarea diaria del backend borra las entidades que ya no menciona ningún documento (`apps/backend/src/lib/graph/orphanJanitor.ts`, `GRAPH_ORPHAN_JANITOR_*`; Implementado). Ya no hace falta correr el relleno a mano para eso.
 - Re-extracción completa: ver §6.21.
 
@@ -338,11 +338,11 @@ Scripts en `apps/backend/scripts/` (leído el 2026-10-30), todos de un solo uso 
 | `repair-pending-published.ts` | Pone `ingestStatus: 'ready'` en documentos publicados atorados en `pending`, solo si ai-service confirma que están en el corpus. En seco por defecto |
 | `reset-infra-holds.ts` | Devuelve a estado reintentable las retenciones causadas solo porque el detector no respondió. Nunca toca retenciones por contenido. En seco por defecto |
 | `auto-publish-participant-drafts.ts`, `backfill-testimonio-titles.ts`, `backfill-lengua.ts`, `reextract-wikilink-notes.ts` | Rellenos de datos tras cambios de reglas |
-| `refresh-ai-titles.ts` | Reescribe en ai-service el título de documentos con compuerta y testimonios publicados, sin volver a calcular vectores. En seco por defecto (`--apply` o `TITLES_APPLY=1`). Implementado (pendiente de desplegar en dev) |
-| `backfill-provenance-titles.ts` | Reescribe el título de las citas guardadas en `messages.provenance` de documentos con compuerta. En seco por defecto (`PROVENANCE_APPLY=1`). Implementado (pendiente de desplegar en dev) |
+| `refresh-ai-titles.ts` | Reescribe en ai-service el título de documentos con compuerta y testimonios publicados, sin volver a calcular vectores. En seco por defecto (`--apply` o `TITLES_APPLY=1`). Implementado |
+| `backfill-provenance-titles.ts` | Reescribe el título de las citas guardadas en `messages.provenance` de documentos con compuerta. En seco por defecto (`PROVENANCE_APPLY=1`). Implementado |
 | `check-turn-corpus.ts` | Revisa turnos de chat en ai-service sin fila en `messages`. Solo lectura por defecto |
 
-Los scripts de re-gate (`regate-documents-by-id.ts`, `regate-member-documentos.ts`) rechazan o saltan las filas retenidas por consentimiento (`28d84f03`; Implementado, pendiente de desplegar en dev).
+Los scripts de re-gate (`regate-documents-by-id.ts`, `regate-member-documentos.ts`) rechazan o saltan las filas retenidas por consentimiento (`28d84f03`; Implementado). Los rellenos de títulos y de lengua, `regate-place-holds.ts` y la semilla del corpus también las saltan (`17a5d985`; Implementado, pendiente de desplegar en dev).
 
 El uso exacto de cada uno está en el encabezado del archivo y en las secciones de `edc-1.md` desde §4q. Desde el 2026-10-29 el gate rechaza reintentar sobre el mismo texto retenido (hash `heldTextHash`), así que un repaso solo cambia el resultado si cambió el texto o la regla.
 
@@ -410,7 +410,7 @@ Crear o borrar `/data/coolify/proxy/dynamic/edc-apex-redirect.yaml` en el servid
 
 ### 6.20 Retener documentos por consentimiento
 
-Implementado (pendiente de desplegar en dev): el código está en `main` desde `512dcc1f` y `7987c171`, y la migración `20261110_181621_consent_held_reviews_keep`, que crea `documents.consent_held`, todavía no corre en dev. Hasta desplegarla, el script no puede marcar nada en dev.
+Implementado: el código (`512dcc1f`, `7987c171`) y la migración `20261110_181621_consent_held_reviews_keep`, que crea `documents.consent_held`, están en dev desde el despliegue de `c4f53632` (citado del reporte de ese despliegue). Que la revisión de una fila retenida también quede retenida es de `b29c72ba` (Implementado, pendiente de desplegar en dev).
 
 Un documento retenido por consentimiento (`consentHeld`) no se vuelve a extraer, ingerir, pasar por la compuerta, graficar ni publicar. No se borra nada: la fila y lo que ya exista quedan como están. Ninguna API escribe la columna; solo el script. No hay camino de liberación en el código: levantar una retención es decisión del responsable y un `UPDATE` a mano (`apps/backend/src/lib/consentHold.ts`).
 
@@ -429,11 +429,11 @@ docker exec -w /repo/apps/backend -e CONSENT_ORG=8 -e CONSENT_IDS_FILE=/tmp/cons
 - No despublica. Las filas que siguen compartidas aparecen en la salida como `notDraft`; se despublican después. Una fila retenida solo se retira, sin volver a calcular vectores.
 - Con la lista del taller de Semiosis del 2026-11-10 da 184 ids, sin 823, 824 ni 1425 (medido por la prueba de `7987c171`). Ver [Corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md) §4.4.
 
-Orden en dev: desplegar `main` (aplica la migración), respaldar antes como siempre, correr en seco, revisar el conteo, aplicar.
+Orden en dev: respaldar como siempre, correr en seco, revisar el conteo, aplicar.
 
 ### 6.21 Re-extraer el grafo de los publicados
 
-Preparado y **sin correr** en dev (`feae7e18`, `apps/backend/scripts/reextract-published-graph.ts`; Implementado, pendiente de desplegar en dev).
+Preparado y **sin correr** en dev (`feae7e18`, `apps/backend/scripts/reextract-published-graph.ts`; Implementado).
 
 - En seco por omisión: lista cada documento que enviaría, con su ecosistema, el largo del texto y un costo estimado. No llama a ningún modelo ni escribe. Aplica con `GRAPH_REEXTRACT_APPLY=1`. `GRAPH_REEXTRACT_ORG` y `GRAPH_REEXTRACT_LIMIT` acotan la corrida.
 - Nunca toca un borrador, una fila retenida por consentimiento ni una fila con compuerta sin texto aprobado.

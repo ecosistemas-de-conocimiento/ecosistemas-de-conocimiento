@@ -27,7 +27,11 @@
  *    row after the access-narrowed fetch (`operations/utilities/update.js`);
  *  - bulk delete: first in `beforeDelete`, per row of the access-narrowed set
  *    (`operations/delete.js`). A refused row lands in the response's `errors`
- *    and the rest go through, as Payload's own check does;
+ *    and the rest go through, as Payload's own check does. Unlike Payload's
+ *    check, a refused bulk row LOSES the other person's lock: `overrideLock`
+ *    makes Payload delete it before this hook throws, and the bulk commits.
+ *    Accepted (audit 2026-11-11): only the admin panel writes in bulk, and
+ *    `?overrideLock=true` already lets any writer skip a lock;
  *  - delete by id: Payload calls `beforeDelete` BEFORE its access check
  *    (`operations/deleteByID.js`), so `beforeOperation` runs that check itself
  *    first, the same way. A caller without access is left to Payload, which
