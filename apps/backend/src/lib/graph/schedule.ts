@@ -441,6 +441,7 @@ async function readGraphableRow(
   // Postgres, `schedule.consentHeld.pg.test.ts`).
   // A revision answers for its note too: read now, as the note may have been
   // held while the revision was in flight (`isConsentHeldNow`, ola 11).
+  // ⚠ No `req`: only the detached queue (`setImmediate`) and the backfill call this, never inside a write.
   if (await isConsentHeldNow(payload, row)) return { ok: false, reason: 'consent held', consentHeld: true }
   const corpus = corpusTextFor(row)
   if (!corpus.ok) return corpus
