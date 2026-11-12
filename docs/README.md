@@ -1,6 +1,6 @@
 # Documentación de Ecosistemas de Conocimiento (EDC)
 
-**Versión** 1.2 · **Fecha** 2026-11-10 · **Estado** vigente · **Código documentado** `main` en `b7dc944f` (2026-11-10) · **Desplegado en dev** `367c2698` (2026-11-10, 18:27 UTC, citado de `infra/fleet/edc-1.md`)
+**Versión** 1.3 · **Fecha** 2026-11-11 · **Estado** vigente · **Código documentado** `main` en `687ff21e` (2026-11-11) · **Desplegado en dev** `c4f53632` (2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11)
 
 Esta carpeta documenta la plataforma entregada en la Etapa 1 (agosto a octubre de 2026) del proyecto SECIHTI IH-2025-I-445 del CIDE, cuyo componente de software es la plataforma **Ecosistemas de Conocimiento** y cuyo marco conceptual se llama **Repositorio de Voces y Resonancias**.
 
@@ -26,7 +26,7 @@ La documentación se derivó del código, de las migraciones, de las pruebas, de
 ### 01 Proyecto
 - [Visión y alcance](01-proyecto/vision-y-alcance.md): qué es, para quién, objetivos de la Etapa 1, lo entregado frente al brief, fuera de alcance.
 - [Actores y glosario](01-proyecto/actores-y-glosario.md): equipo, socios de campo, roles del sistema, ecosistemas, vocabulario.
-- [Cronología e hitos](01-proyecto/cronologia-e-hitos.md): de abril a octubre de 2026, con auditorías, despliegues y videos.
+- [Cronología e hitos](01-proyecto/cronologia-e-hitos.md): de abril a noviembre de 2026, con auditorías, despliegues y videos.
 - [Roadmap](01-proyecto/roadmap.md): horizonte de las Etapas 2 y 3, trabajo pendiente por tema, lo aplazado y por qué, decisiones pendientes.
 - [Registro de riesgos](01-proyecto/registro-de-riesgos.md): riesgos técnicos, de privacidad, operativos y de proyecto.
 
@@ -71,7 +71,7 @@ La documentación se derivó del código, de las migraciones, de las pruebas, de
 - Español de México en la prosa; identificadores de código en inglés tal como aparecen en el repositorio.
 - Fechas absolutas (AAAA-MM-DD).
 - Procedencia en cada número: `medido` (cómo, cuándo, dónde), `inferido` (de qué) o `citado` (de qué documento y fecha). Un documento registra el estado del sistema en la fecha en que se escribió.
-- Estados visibles, sin comentarios ocultos, en toda la carpeta: **Implementado** (en el código y desplegado en dev), **Implementado (pendiente de desplegar en dev)** (en `main`, todavía no en `367c2698`), **Planeado** (sin código, con plan) y **Pendiente** (sin código ni plan).
+- Estados visibles, sin comentarios ocultos, en toda la carpeta: **Implementado** (en el código y desplegado en dev), **Implementado (pendiente de desplegar en dev)** (en `main`, todavía no en `c4f53632`), **Planeado** (sin código, con plan) y **Pendiente** (sin código ni plan).
 - Desde el 2026-11-10, `main` solo recibe correcciones y la funcionalidad nueva va a la rama `etapa-2`. Lo diferido a esa etapa va en una sección "Etapa 2" del documento que corresponda.
 - Nunca se escriben valores de secretos, direcciones IP, correos de usuarios ni contraseñas.
 

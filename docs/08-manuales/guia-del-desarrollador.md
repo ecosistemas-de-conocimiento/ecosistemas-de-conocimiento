@@ -1,9 +1,9 @@
 # Guía del desarrollador
 
-- **Versión:** 1.2
-- **Fecha:** 2026-11-10
+- **Versión:** 1.3
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
-- **Fuentes:** leídas en `main` b7dc944f el 2026-11-10: `package.json` (raíz y de cada paquete), `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `apps/backend/eslint.config.js`, `apps/backend/eslint/noRawErrorLog.js`, `apps/backend/.gitignore`, `infra/.env.example`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/docker-compose.dev.yml`, notas de contexto del equipo (Etapa 1), `TESTING.md`, `apps/backend/src/migrations/README.md`, `apps/backend/src/payload.config.ts`, `apps/backend/src/lib/features.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/lib/design/README.md`, `apps/backend/src/lib/graph/queries.ts`, `apps/backend/src/lib/graph/queries.test.ts`.
+- **Fuentes:** leídas en `main` 687ff21e el 2026-11-11: `package.json` (raíz y de cada paquete), `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `apps/backend/eslint.config.js`, `apps/backend/eslint/noRawErrorLog.js`, `apps/web/eslint.config.js`, `services/ai-service/eslint.config.js`, `apps/backend/.gitignore`, `infra/.env.example`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/docker-compose.dev.yml`, notas de contexto del equipo (Etapa 1), `TESTING.md`, `apps/backend/src/migrations/README.md`, `apps/backend/src/payload.config.ts`, `apps/backend/src/lib/features.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/lib/design/README.md`, `apps/backend/src/lib/graph/queries.ts`, `apps/backend/src/lib/graph/queries.test.ts`.
 
 ## Para quién es y qué responde
 
@@ -48,10 +48,10 @@ flowchart LR
 | `services/ai-service` | 0.1.0 | Motor de IA y RAG agnóstico del dominio: ingesta, embeddings, recuperación, generación, presupuesto | fastify ^5.2, drizzle-orm ^0.38.3, bullmq ^5.34, zod ^4.5.4, vitest ^5.0.0, eslint ^9.17. `engines.node` ^26 |
 | `services/audio-service` | sin versión | Transcripción y nada más | fastapi 0.115.6, arq 0.26.3, faster-whisper 1.1.1 (`requirements.txt`) |
 | `packages/ai-client` | 0.34.0 | Cliente tipado de la API `/v1` de ai-service | sin dependencias de producción; vitest ^5.0.0 |
-| `packages/chat-engine` | 0.9.0 | El turno RAG (condensar, recuperar, armar el prompt) y componentes Svelte del chat | agnóstico del dominio; vitest ^5.0.0 |
+| `packages/chat-engine` | 0.10.0 | El turno RAG (condensar, recuperar, armar el prompt) y componentes Svelte del chat | agnóstico del dominio; vitest ^5.0.0 |
 | `packages/identity-client` | 0.4.0 | Sesión y verificación de tokens con `jose` | la web no lo importa (citado de la auditoría del 2026-10-28); vitest ^5.0.0 |
 
-Versiones medidas: leídas de cada `package.json` y de `pnpm-lock.yaml` en `main` b7dc944f, el 2026-11-10. Hay tres versiones de vitest en el repo: 2.1.9 en el backend, 4.1.10 en la web y 5.0.5 en ai-service y los paquetes (lockfile). Sus banderas no son iguales (sección 6). Infraestructura de datos: Postgres 16 con pgvector (imagen propia basada en `pgvector/pgvector:pg16`), Redis 7 y RustFS como almacenamiento compatible con S3. Dos bases en el mismo servidor: `edc_backend` (Payload) y `edc_ai` (ai-service). Están separadas a propósito: Payload y Drizzle guardan su registro de migraciones en el esquema `public` y se pisarían (citado de `infra/.env.example`).
+Versiones medidas: leídas de cada `package.json` y de `pnpm-lock.yaml` en `main` 687ff21e, el 2026-11-11. Hay tres versiones de vitest en el repo: 2.1.9 en el backend, 4.1.10 en la web y 5.0.5 en ai-service y los paquetes (lockfile). Sus banderas no son iguales (sección 6). Infraestructura de datos: Postgres 16 con pgvector (imagen propia basada en `pgvector/pgvector:pg16`), Redis 7 y RustFS como almacenamiento compatible con S3. Dos bases en el mismo servidor: `edc_backend` (Payload) y `edc_ai` (ai-service). Están separadas a propósito: Payload y Drizzle guardan su registro de migraciones en el esquema `public` y se pisarían (citado de `infra/.env.example`).
 
 `services/ai-service` y los tres `packages/` forman el stack de IA, agnóstico del dominio. Ver la sección 10.
 
@@ -110,16 +110,21 @@ Lo que ya trae un valor útil y conviene conocer:
 
 Todos los valores de `.env.example` son marcadores locales. Nunca subas un `.env` lleno, y genera secretos nuevos para cualquier entorno alcanzable desde la red.
 
-Variables del backend que no están en `.env.example`, o solo aparecen comentadas, y que conviene conocer. Los valores por omisión salen del código (medido: leídos en `main` b7dc944f, 2026-11-10).
+Variables del backend que no están en `.env.example`, o solo aparecen comentadas, y que conviene conocer. Los valores por omisión salen del código (medido: leídos en `main` 687ff21e, 2026-11-11). "Implementado" quiere decir que está en `c4f53632`, la versión que dev corre desde el 2026-11-10 a las 23:03 UTC (citado del reporte de ese despliegue; no verificado aquí).
 
 | Variable | Por omisión | Qué hace | Dónde | Estado |
 |---|---|---|---|---|
 | `SESSION_JANITOR_ENABLED` | apagado (`1` o `true` lo enciende) | Barrido de conversaciones viejas. También `SESSION_JANITOR_INTERVAL_MIN`, `_BATCH`, `_MAX`, `_DRY_RUN` | `apps/backend/src/lib/sessionJanitor.ts` | Implementado |
 | `GRAPH_ORPHAN_JANITOR_ENABLED`, `GRAPH_ORPHAN_JANITOR_INTERVAL_MIN` | encendido; 1440 min (diario) | Borra las entidades del grafo que ya nadie menciona | `apps/backend/src/lib/graph/orphanJanitor.ts`, arrancado en `payload.config.ts` | Implementado |
-| `CALLBACK_RETENTION_DAYS` | 30 | Vacía `ai_service_callbacks.raw_body` de los avisos más viejos; la fila se queda porque es la deduplicación | `apps/backend/src/lib/callbackRetention.ts`, arrancado en `payload.config.ts` | Implementado (pendiente de desplegar en dev; commit f8294d65) |
-| `CALLBACK_RETENTION_JANITOR_ENABLED`, `CALLBACK_RETENTION_JANITOR_INTERVAL_MIN` | encendido; 1440 min (diario) | La tarea de la fila anterior | igual | Implementado (pendiente de desplegar en dev) |
-| `UPLOAD_MAX_CONCURRENT_PER_USER` | 2 (inferido de que la app sube un archivo a la vez, según el commit) | Subidas en curso por cuenta; la siguiente recibe 429 con `Retry-After: 5` | `apps/backend/src/lib/uploadSlots.ts` | Implementado (pendiente de desplegar en dev; commit 780f614d) |
-| `API_BODY_IDLE_TIMEOUT_MS`, `API_BODY_TOTAL_TIMEOUT_MS` | 30000; 120000 (los dos inferidos, según el commit) | Corta con 408 un cuerpo que no manda bytes o que tarda demasiado | `apps/backend/src/lib/bodyCap.ts` | Implementado (pendiente de desplegar en dev; commit 780f614d) |
+| `CALLBACK_RETENTION_DAYS` | 30 | Vacía `ai_service_callbacks.raw_body` de los avisos más viejos; la fila se queda porque es la deduplicación | `apps/backend/src/lib/callbackRetention.ts`, arrancado en `payload.config.ts` | Implementado (commit f8294d65) |
+| `CALLBACK_RETENTION_JANITOR_ENABLED`, `CALLBACK_RETENTION_JANITOR_INTERVAL_MIN` | encendido; 1440 min (diario) | La tarea de la fila anterior | igual | Implementado |
+| `UPLOAD_MAX_CONCURRENT_PER_USER` | 2 (inferido de que la app sube un archivo a la vez, según el commit) | Subidas en curso por cuenta; la siguiente recibe 429 con `Retry-After: 5` | `apps/backend/src/lib/uploadSlots.ts` | Implementado (commit 780f614d) |
+| `API_BODY_IDLE_TIMEOUT_MS`, `API_BODY_TOTAL_TIMEOUT_MS` | 30000; 120000 (los dos inferidos, según el commit) | Corta con 408 un cuerpo que no manda bytes o que tarda demasiado | `apps/backend/src/lib/bodyCap.ts` | Implementado (commit 780f614d) |
+| `QUERY_RELATION_MAX_TERMS`, `QUERY_RELATION_MAX_IDS`, `QUERY_RELATION_MAX_CONCURRENT_PER_USER`, `QUERY_RELATION_RATELIMIT_USER_MAX` | 5; 5000; 2; 30 por minuto | Topes por petición y por persona de un filtro a través de una relación: 400 pasado el tope, 429 pasado el ritmo | `apps/backend/src/access/relationFilters.ts`, `apps/backend/src/lib/rateLimit.ts` | Implementado (pendiente de desplegar en dev; commits 36bf6cf5, 490de211) |
+| `SESSION_RATELIMIT_CREATE_USER_MAX` | 60 por hora (inferido, según el commit) | Conversaciones nuevas por cuenta; la siguiente, 429 | `apps/backend/src/lib/rateLimit.ts` | Implementado (pendiente de desplegar en dev; commit 36bf6cf5) |
+| `MIEMBROS_RATELIMIT_ADD_USER_MAX` | 50 por hora (inferido, según el commit) | Altas por `/miembros` de una misma persona; la siguiente, 429 | `apps/backend/src/endpoints/miembros.ts` | Implementado (pendiente de desplegar en dev; commit 0c639102) |
+| `JANITOR_FIRST_SWEEP_MIN` | 2 (inferido, según el commit) | Minutos hasta el primer barrido de cada tarea programada, salvo el conserje de sesiones | `apps/backend/src/lib/janitorScheduler.ts` | Implementado (pendiente de desplegar en dev; commit bb8852f1) |
+| `EDC_JANITORS_DISABLED` | sin valor | Solo en pruebas (`vitest.setup.ts`): con `1`, ninguna tarea programada arranca; la prueba de una tarea llama a `allowJanitors()` | `apps/backend/src/lib/janitorScheduler.ts` | Implementado (pendiente de desplegar en dev; commit 940b9360) |
 | `ANONYMISE_DETECT_URL`, `ANONYMISE_DETECT_MODEL`, `ANONYMISE_DETECT_API_KEY` | sin valor | El detector autoalojado (Spark). Sin URL, el detector usa el hospedado salvo que el respaldo sea `none` | `apps/backend/src/lib/anonymise/` | Implementado |
 | `ANONYMISE_DETECT_FALLBACK` | `hosted` | Respaldo cuando el Spark no responde. El valor guardado en Ajustes › Plataforma manda sobre esta variable. Ver la sección 8, regla 10 | `fallbackGenerator.ts`, `lib/platformSettings.ts` | Implementado |
 | `ANONYMISE_DETECT_FALLBACK_COOLDOWN_S` | 60 | Segundos que el circuito manda todo al hospedado antes de volver a probar el Spark | `fallbackGenerator.ts` | Implementado |
@@ -203,9 +208,9 @@ Scripts útiles del backend: `migrate`, `migrate:create`, `generate:types`, `gen
 
 Scripts de mantenimiento en `apps/backend/scripts/`. Los tres siguientes corren en seco por omisión y aplican solo con `--apply` o `CONSENT_APPLY=1` (medido: leídos sus encabezados):
 
-- `hold-for-consent.ts`: marca documentos como retenidos por consentimiento, con ids de `CONSENT_IDS` o de `CONSENT_IDS_FILE` (sección 8, regla 12). Implementado (pendiente de desplegar en dev; commits 512dcc1f y 7987c171).
-- `reextract-published-graph.ts`: vuelve a extraer el grafo de lo publicado. Implementado (pendiente de desplegar en dev; commit feae7e18). Preparado y **no se ha corrido** (citado de las reglas de la revisión de documentación del 2026-11-10).
-- `regate-documents-by-id.ts`, `regate-member-documentos.ts`: re-anonimizan filas concretas. Rechazan las retenidas por consentimiento (commit 28d84f03, pendiente de desplegar en dev).
+- `hold-for-consent.ts`: marca documentos como retenidos por consentimiento, con ids de `CONSENT_IDS` o de `CONSENT_IDS_FILE` (sección 8, regla 12; commits 512dcc1f y 7987c171).
+- `reextract-published-graph.ts`: vuelve a extraer el grafo de lo publicado (commit feae7e18). Preparado y **no se ha corrido** (citado de las reglas de la revisión de documentación del 2026-11-10).
+- `regate-documents-by-id.ts`, `regate-member-documentos.ts`: re-anonimizan filas concretas. Rechazan las retenidas por consentimiento (commit 28d84f03).
 
 ### 4.1 Bases de datos
 
@@ -215,7 +220,7 @@ Scripts de mantenimiento en `apps/backend/scripts/`. Los tres siguientes corren 
 
 ## 5. Migraciones
 
-Hay 25 migraciones registradas en `apps/backend/src/migrations/index.ts`, desde la línea base `20260908_092211_baseline` hasta `20261110_181621_consent_held_reviews_keep` (medido: contadas en `index.ts` de `main` b7dc944f, 2026-11-10). La última aún no corre en dev: Implementado (pendiente de desplegar en dev; commit 512dcc1f). `20261110_070204_anonymisation_setting_changes_keys` ya corrió en dev con el despliegue 367c2698 (citado de `infra/fleet/edc-1.md`, 2026-11-10 18:33 UTC). La tabla de la cadena con lo escrito a mano en cada una está en `apps/backend/src/migrations/README.md`.
+Hay 25 migraciones registradas en `apps/backend/src/migrations/index.ts`, desde la línea base `20260908_092211_baseline` hasta `20261110_181621_consent_held_reviews_keep` (medido: contadas en `index.ts` de `main` 687ff21e, 2026-11-11). La última corrió en dev con el despliegue de `c4f53632` del 2026-11-10 a las 23:03 UTC (citado del reporte de ese despliegue; no verificado aquí); `20261110_070204_anonymisation_setting_changes_keys`, con el de `367c2698` (citado de `infra/fleet/edc-1.md`, 2026-11-10 18:33 UTC). La tabla de la cadena con lo escrito a mano en cada una está en `apps/backend/src/migrations/README.md`.
 
 Reglas:
 
@@ -235,6 +240,7 @@ Todo lo de pruebas (niveles, comandos, fixtures, convenciones, conteos y huecos)
 pnpm typecheck
 pnpm test
 pnpm --filter @edc/backend lint     # si tocaste el backend
+pnpm --filter @edc/web lint         # si tocaste la web
 pnpm --filter @edc/ai-service lint  # si tocaste ai-service (eslint y vocabulario de dominio)
 ```
 
@@ -242,9 +248,10 @@ Y los e2e del flujo que tocaste, contra un stack construido con tu código.
 
 ### 6.1 Lint
 
-- **Backend:** `eslint .` con `apps/backend/eslint.config.js`. Casi todas las reglas heredadas están en `warn`. La excepción es **`edc/no-raw-error-log`**, en `error` desde el principio, con su fuente en `apps/backend/eslint/noRawErrorLog.js` (commit 780f614d, 2026-11-10). Rechaza una llamada a `console.*` o a un logger (`logger.*`, `log.*`, `payload.logger.*`) que pase o interpole un identificador `err`, `error`, `e`, `cause` o terminado en `Err`/`Error`, un `.message` o `.stack`, o `String()` de ellos. Pasa `errSummary(err)`, `safeErrMessage(err)`, `err.name`, `err.code`, y el error entero bajo la llave `err` de un logger, que el serializador limpia. Motivo: el `message` de un `DrizzleQueryError` lleva los parámetros de la consulta, es decir, el texto de un testimonio (P-07). Las pruebas (`*.test.ts`, `*.spec.ts`, `e2e/`) están exentas.
-- **ai-service:** `eslint .` y después `scripts/check-domain-vocabulary.mjs`, que rechaza vocabulario del dominio dentro del stack de IA. `pnpm test` de ai-service también corre ese chequeo.
-- **Web y paquetes:** sin eslint. La web se revisa con `svelte-check` (`typecheck`).
+- **Backend:** `eslint .` con `apps/backend/eslint.config.js`. Casi todas las reglas heredadas están en `warn`. La excepción es **`edc/no-raw-error-log`**, en `error` desde el principio, con su fuente en `apps/backend/eslint/noRawErrorLog.js` (commit 780f614d, 2026-11-10). Rechaza una llamada a `console.*` o a un logger (cualquier `.info`, `.warn`, `.error`, `.debug`, `.fatal` o `.trace`, se llame como se llame quien la recibe) que pase o interpole un identificador `err`, `error`, `e`, `ex`, `cause`, `reason` o terminado en `Err`/`Error`, el de un `catch`, un `.message`, `.stack` o `.cause`, o `String()`, `JSON.stringify()` o `.toString()` de ellos (commits 780f614d, ecfc3d1f, 4a3aecc1). Pasa `errSummary(err)`, `safeErrMessage(err)`, `err.name`, `err.code`, y el error entero bajo la llave `err` de un logger, que el serializador limpia. Motivo: el `message` de un `DrizzleQueryError` lleva los parámetros de la consulta, es decir, el texto de un testimonio (P-07). Las pruebas (`*.test.ts`, `*.spec.ts`, `e2e/`) están exentas.
+- **ai-service:** `eslint .` y después `scripts/check-domain-vocabulary.mjs`, que rechaza vocabulario del dominio dentro del stack de IA. `pnpm test` de ai-service también corre ese chequeo. `edc/no-raw-error-log` está en `error`, sin archivos excluidos (Implementado (pendiente de desplegar en dev; commit 4a3aecc1).
+- **Web:** `eslint .` con `apps/web/eslint.config.js`, solo con `edc/no-raw-error-log`, sobre los `.ts` de `src/`; los `.svelte` los revisa `src/lib/noRawErrorLog.lint.test.ts` (Implementado (pendiente de desplegar en dev; commit cc27d332). Además, `svelte-check` (`typecheck`).
+- **Paquetes:** sin eslint.
 
 ### 6.2 vitest: tres versiones, banderas distintas
 
@@ -288,7 +295,7 @@ Todo número en documentos, comentarios y commits dice de dónde sale: `measured
 
 ## 8. Reglas de privacidad que sostienen el sistema
 
-Romper cualquiera de estas reglas es peor que no entregar nada. Vienen de las notas de contexto del equipo, actualizadas con el código de `main` b7dc944f (2026-11-10).
+Romper cualquiera de estas reglas es peor que no entregar nada. Vienen de las notas de contexto del equipo, actualizadas con el código de `main` 687ff21e (2026-11-11).
 
 1. **El grafo lee `corpusTextFor(row)`, nunca `extractedText`.** En un testimonio, `extractedText` es la transcripción cruda sin limpiar. Además exige `anonymisationStatus` en `ready` o `approved`: una fila que pasó la compuerta y luego fue retenida trae un `redactedText` viejo. `corpusTextFor` está en `apps/backend/src/lib/anonymiseDocument.ts`.
 2. **Los títulos pasan por `documentTitleFor(row)`**, que llama a `titleFor(contentKind, name, gate)` (`apps/backend/src/lib/contentKind.ts`). `documents.name` es texto libre que escribió quien subió. El caso que casi llega a una tarjeta de cita: "Testimonio de María López.mp3".
@@ -296,7 +303,7 @@ Romper cualquiera de estas reglas es peor que no entregar nada. Vienen de las no
    - Un `documento` con compuerta se titula con el título redactado por la compuerta (`anonymisationReport.redactedTitle`) o, sin él, "Documento". Nunca con `name`.
    - **Falla cerrado:** solo `anonymise === false` muestra `name`. Un `NULL` o una columna que no vino en el `select` cuentan como compuerta (`titleIsGated`). Si tu consulta quiere el título abierto, tiene que seleccionar `anonymise` y `anonymisationReport`.
    - El nombre del archivo solo lo leen quien subió el documento y la administración de la plataforma (`mayReadGatedOriginal`, `collections/Documents.ts`). Tampoco se puede buscar por `name` en un documento con compuerta: la consulta lo excluye.
-   - Aplica a REST, ingesta, citas, biblioteca, chat, grafo, estudiante y la vista de anonimización. Implementado (pendiente de desplegar en dev; commits b2a51aed, 2dda9a8b, 2f21e91b, 84364f58, a2ba0e19, ed35b605, b7dc944f).
+   - Aplica a REST, ingesta, citas, biblioteca, chat, grafo, estudiante y la vista de anonimización (commits b2a51aed, 2dda9a8b, 2f21e91b, 84364f58, a2ba0e19, ed35b605, b7dc944f).
 3. **Los nodos `persona` no pueden venir de un testimonio.** Tres capas: el esquema de respuesta no incluye `persona` en el enum para testimonios, `personaAllowed()` solo acepta `documento` y falla cerrado, y un filtro posterior incondicional descarta cualquiera que aparezca (`apps/backend/src/lib/graph/types.ts`).
 4. **Cada sentencia SQL del grafo lleva tres compuertas:** la organización nombrada explícitamente, un JOIN a `documents` que exige `published`, y un mínimo de documentos distintos. Una prueba recorre todas las sentencias registradas y verifica las tres. Registra cada consulta nueva en `graphStatements` dentro de `apps/backend/src/lib/graph/queries.test.ts`, o queda sin vigilar.
 5. **El umbral mínimo es hoy 1, no 3.** Las notas de contexto del equipo dicen "`GRAPH_MIN_SUPPORT` es 3 y se queda en 3". Eso cambió el 2026-10-21: `GRAPH_MIN_SUPPORT` ya no se lee, y lo reemplazan `GRAPH_MIN_ENTITY_DOCS`, `GRAPH_MIN_EDGE_DOCS` y `GRAPH_MIN_COMENTION_DOCS`, todos con valor por defecto 1 (`apps/backend/src/lib/graph/queries.ts`, `GRAPH_MIN_ENTITY_DOCS_DEFAULT = 1`, leído el 2026-10-30). Las garantías contra la reidentificación del ADR del grafo descansaban en 3. Con datos reales, esta decisión debe revisarse; no bajes ni subas el umbral sin una decisión registrada.
@@ -304,11 +311,11 @@ Romper cualquiera de estas reglas es peor que no entregar nada. Vienen de las no
 7. **Las columnas de la compuerta solo las escribe la compuerta** (`gateWritesOnly`): `heldText`, `anonymisationSurvivors` y similares no se pueden escribir por la API.
 8. **Sin URL prefirmadas.** Todos los bytes de archivos pasan por `GET /api/media/file/:filename` después del control de acceso. `signedDownloads`, `disablePayloadAccessControl`, `clientUploads` y `generateFileURL` están prohibidas (`apps/backend/src/lib/storage/plugin.ts`).
 9. **Las conversaciones son solo de su dueño**, sin excepción para administradores (`ownOnly` en `collections/Sessions.ts`).
-10. **El respaldo del detector manda texto crudo a un proveedor hospedado** cuando el Spark no responde, si el modo es `hosted`. El modo sale primero del valor guardado en Ajustes › Plataforma (`detectorFallback`, caché de 30 s, `TTL_MS` en `lib/platformSettings.ts`) y, si no hay, de `ANONYMISE_DETECT_FALLBACK` (por omisión `hosted`, `lib/anonymise/fallbackGenerator.ts`). Con `none` no hay llamada hospedada, haya o no `ANONYMISE_DETECT_URL`: sin URL, el detector falla y la compuerta retiene el documento (`lib/anonymise/detector.ts`, P-05). Debe quedar en `none` antes del primer testimonio real. Cada cambio del valor guardado deja una fila en `anonymisation-setting-changes`.
+10. **El respaldo del detector manda texto crudo a un proveedor hospedado** cuando el Spark no responde, si el modo es `hosted`. El modo sale primero del valor guardado en Ajustes › Plataforma (`detectorFallback`, caché de 30 s, `TTL_MS` en `lib/platformSettings.ts`) y, si no hay, de `ANONYMISE_DETECT_FALLBACK` (por omisión `hosted`, `lib/anonymise/fallbackGenerator.ts`). Con `none` no hay llamada hospedada, haya o no `ANONYMISE_DETECT_URL`: sin URL, el detector falla y la compuerta retiene el documento (`lib/anonymise/detector.ts`, P-05). La decisión vigente es `hosted`, con ZDR en OpenRouter (del responsable técnico, 2026-11-09, confirmada el 2026-11-10). Cada cambio del valor guardado deja una fila en `anonymisation-setting-changes`.
 11. **Toda regla negativa de privacidad lleva una prueba positiva** que demuestre que lo suprimido existe. Ver [Estrategia de pruebas](../07-calidad/estrategia-de-pruebas.md), sección 4.
-12. **Retenido por consentimiento (`consentHeld`).** Una fila con `documents.consentHeld = true` nunca se re-ingiere, re-anonimiza, grafica ni publica; nada se borra. Solo la escribe `holdForConsent` (`lib/consentHold.ts`) desde `scripts/hold-for-consent.ts`, con ids de `CONSENT_IDS_FILE`. No hay forma de liberarla en código. Toda función nueva que ingiera, publique, re-anonimice o extraiga grafo debe llamar a `isConsentHeld` o filtrar con `NOT_CONSENT_HELD`. Implementado (pendiente de desplegar en dev; commits 512dcc1f, 7987c171, ccce6281, 28d84f03, feae7e18).
-13. **Ningún log lleva el texto crudo de un error** (P-07). Usa `safeErrMessage(err)` o `errSummary(err)`, o pasa el error bajo la llave `err` de un logger. La regla de lint `edc/no-raw-error-log` lo hace cumplir (sección 6.1). Implementado (pendiente de desplegar en dev; commits 780f614d, 752b60f3).
-14. **Los archivos subidos se guardan con nombre neutro** (id y extensión), no con el nombre que traían; `documents.name` no cambia (`collections/Media.ts`, `neutralUploadName`). La descarga del original devuelve el nombre del documento. Implementado (pendiente de desplegar en dev; commits 74306c42 y 28d84f03). Los objetos anteriores conservan su nombre: ver [Etapa 2](#etapa-2).
+12. **Retenido por consentimiento (`consentHeld`).** Una fila con `documents.consentHeld = true` nunca se re-ingiere, re-anonimiza, grafica ni publica; nada se borra. Solo la escribe `holdForConsent` (`lib/consentHold.ts`) desde `scripts/hold-for-consent.ts`, con ids de `CONSENT_IDS_FILE`. No hay forma de liberarla en código. Toda función nueva que ingiera, publique, re-anonimice o extraiga grafo debe llamar a `isConsentHeldNow` o `readConsentHeld`, o filtrar con `NOT_CONSENT_HELD` (commits 512dcc1f, 7987c171, ccce6281, 28d84f03, feae7e18). Una revisión queda retenida si su original lo está; `isConsentHeld`, síncrona, solo lee la fila que recibe (Implementado (pendiente de desplegar en dev; commits b29c72ba, c12a0ab5).
+13. **Ningún log lleva el texto crudo de un error** (P-07). Usa `safeErrMessage(err)` o `errSummary(err)`, o pasa el error bajo la llave `err` de un logger. La regla de lint `edc/no-raw-error-log` lo hace cumplir en backend, web y ai-service (sección 6.1; commits 780f614d, 752b60f3; en la web y ai-service, Implementado (pendiente de desplegar en dev; commits cc27d332, 4a3aecc1)).
+14. **Los archivos subidos se guardan con nombre neutro** (id y extensión), no con el nombre que traían; `documents.name` no cambia (`collections/Media.ts`, `neutralUploadName`). La descarga del original devuelve el nombre del documento (commits 74306c42 y 28d84f03). Los objetos anteriores conservan su nombre: ver [Etapa 2](#etapa-2).
 
 Lo demás sobre privacidad está en [Protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md).
 
@@ -413,14 +420,14 @@ Detalle en [Despliegue y runbook](../05-infraestructura/despliegue-y-runbook.md)
 
 ## Etapa 2
 
-Lo que sigue quedó fuera de `main` por ser funcionalidad nueva (clasificación de la auditoría del 2026-11-10, `plan/orchestration/auditoria-2026-11-10/`). Si se hace, va en la rama `etapa-2`. Estado de cada punto: Pendiente, salvo que diga otra cosa.
+Lo que sigue quedó fuera de `main` por ser funcionalidad nueva (clasificación de la auditoría del 2026-11-10). Si se hace, va en la rama `etapa-2`. Estado de cada punto: Pendiente, salvo que diga otra cosa.
 
 - **Renombrar los objetos ya guardados** con su nombre original. Las subidas nuevas ya se guardan con nombre neutro (sección 8, regla 14); las anteriores no se renombran (citado del mensaje del commit 74306c42).
 - **Reintentar el borrado en ai-service** cuando falla. Hoy se intenta una vez (P-08).
 - **Purgar `edc_ai.traces`** de la salida del detector hospedado y de los títulos de testimonio (P-14).
 - **ZDR con DeepInfra.** OpenRouter se llama con ZDR; DeepInfra (rerank y embeddings de respaldo) no tiene ese parámetro (P-06).
 - **Cambio de contraseña** en la web y cambio obligatorio de la contraseña temporal (A-04); **verificación del correo** (A-03).
-- **Endurecer la regla de "edición sustantiva"** en Revisión (R4-12, `plan/orchestration/auditoria-2026-11-10/revision-ola4.md`).
+- **Endurecer la regla de "edición sustantiva"** en Revisión (R4-12, revisión de la ola 4 del 2026-11-10).
 
 ## Referencias
 

@@ -1,9 +1,9 @@
 # Referencia de API
 
 - **Versión:** 1.3
-- **Fecha:** 2026-11-10
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
-- **Fuentes:** `apps/web/src/routes/api/**`, `apps/web/src/hooks.server.ts`, `apps/web/src/lib/server/auth.ts`, `apps/web/Dockerfile`, `apps/web/src/lib/config.ts`, `apps/backend/src/app/api/**`, `apps/backend/src/endpoints/*.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/collections/Organizations.ts`, `apps/backend/src/lib/anonymisationControls.ts`, `apps/backend/src/lib/consentHold.ts`, `apps/backend/src/lib/loginRateLimit.ts`, `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/lib/hmac.ts`, `apps/backend/src/lib/jwt/*`, `packages/ai-client/src/callbacks/verify.ts`, `services/ai-service/src/server.ts`, `services/ai-service/src/server-limits.ts`, `services/ai-service/src/plugins/auth.ts`, `services/audio-service/app/main.py`, `services/audio-service/app/routes/*.py`, `services/audio-service/app/live.py`. Rutas verificadas en `main` b7dc944f el 2026-11-10. Lo que está en `main` pero no en dev (367c2698, citado de `infra/fleet/edc-1.md`) dice "pendiente de desplegar en dev".
+- **Fuentes:** `apps/web/src/routes/api/**`, `apps/web/src/hooks.server.ts`, `apps/web/src/lib/server/auth.ts`, `apps/web/Dockerfile`, `apps/web/src/lib/config.ts`, `apps/backend/src/app/api/**`, `apps/backend/src/endpoints/*.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/collections/Organizations.ts`, `apps/backend/src/lib/anonymisationControls.ts`, `apps/backend/src/lib/consentHold.ts`, `apps/backend/src/lib/loginRateLimit.ts`, `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/lib/hmac.ts`, `apps/backend/src/lib/jwt/*`, `packages/ai-client/src/callbacks/verify.ts`, `services/ai-service/src/server.ts`, `services/ai-service/src/server-limits.ts`, `services/ai-service/src/plugins/auth.ts`, `services/audio-service/app/main.py`, `services/audio-service/app/routes/*.py`, `services/audio-service/app/live.py`. Rutas verificadas en `main` b7dc944f el 2026-11-10 y revisadas contra `main` en `687ff21e` el 2026-11-11. "Pendiente de desplegar en dev" y "en dev" se refieren a lo que corre en dev: `c4f53632`, desplegado el 2026-11-10 a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11).
 
 ## Para quién es y qué responde
 
@@ -43,7 +43,7 @@ flowchart LR
 - Sin sesión: `/api/*` responde 401; un `GET` de página redirige con 303 a `/sign-in`; cualquier otro método responde 401.
 - `/api/auth/login` y la acción `default` de `/sign-in` cuentan los intentos fallidos antes de llamar al backend, en memoria del proceso: 4 por hora por (IP, correo) y 100 por hora por IP, configurables (`apps/web/src/lib/server/loginRateLimit.ts`). Pasado el tope responden 429 con `Retry-After`. Un correo de más de 254 caracteres se rechaza antes de contarlo. El backend aplica los mismos dos topes (sección 3.8).
 
-Cada ruta reenvía al backend con el JWT del usuario. El navegador nunca manda la org, el dueño ni nombres de corpus; el backend los deriva de la sesión.
+Cada ruta reenvía al backend con el JWT del usuario. El navegador nunca manda la org, el dueño ni nombres de corpus; el backend los deriva de la sesión. Ante un 429 del backend, la ruta pasa su `Retry-After` y agrega `Cache-Control: no-store` (`apps/web/src/lib/server/backendResponse.ts`; en `main`).
 
 ### 2.2 Tabla de rutas
 
@@ -56,7 +56,7 @@ Cada ruta reenvía al backend con el JWT del usuario. El navegador nunca manda l
 | POST | `/api/auth/register` | Siempre 403: el registro está cerrado desde 2026-10-21 | Público |
 | GET, POST | `/api/ecosistemas` | Lista los ecosistemas del usuario / elige uno (cookie `eco_selected`) | Con sesión |
 | GET | `/api/funciones` | Interruptores del ecosistema seleccionado, para ocultar funciones en la interfaz | Todos |
-| GET, POST | `/api/sessions` | Lista conversaciones / crea una | Todos (`chat:use`) |
+| GET, POST | `/api/sessions` | Lista conversaciones / crea una. Crear: 60 por hora por cuenta (`SESSION_RATELIMIT_CREATE_USER_MAX`; inferido, citado de `infra/fleet/env-manifests.md`), luego 429 con `Retry-After`; en `main` | Todos (`chat:use`) |
 | PATCH, DELETE | `/api/sessions/[id]` | Cambia título, estado del panel o alcance / borra con cascada | Dueño de la conversación |
 | GET, POST | `/api/sessions/[id]/messages` | Lee o agrega mensajes | Dueño de la conversación |
 | GET, POST, DELETE | `/api/sessions/[id]/ratings` | Valoración de 1 a 5 con motivos | Dueño (`ratings:write`) |
@@ -66,7 +66,7 @@ Cada ruta reenvía al backend con el JWT del usuario. El navegador nunca manda l
 | POST | `/api/generate` | Turno de chat en streaming (motor `@edc/chat-engine`) | Dueño (`chat:use`) |
 | GET | `/api/context-search` | Autocompletado de menciones `@` | Todos |
 | GET, POST | `/api/documentos` | Mis documentos / subida sin conversación | Todos |
-| GET, PATCH, DELETE | `/api/documents/[id]` | Estado (para sondeo) / nombre, cuerpo, fijado / borrar | Quien subió. Cambiar pide además un asiento con `documents:write` en su ecosistema. Borrar: un borrador propio siempre; algo publicado o en movimiento, solo con ese asiento (pendiente de desplegar en dev; sección 3.2) |
+| GET, PATCH, DELETE | `/api/documents/[id]` | Estado (para sondeo) / nombre, cuerpo, fijado / borrar | Quien subió. Cambiar pide además un asiento con `documents:write` en su ecosistema. Borrar: un borrador propio siempre; algo publicado o en movimiento, solo con ese asiento (desplegado; sección 3.2) |
 | PATCH | `/api/documents/[id]/note` | Autoguardado de una nota | Quien subió |
 | PATCH | `/api/documents/[id]/transcript` | Corregir la transcripción de un borrador y reindexar | Quien subió |
 | POST | `/api/documents/[id]/publish` | Publicar o publicar cambios; el cuerpo va vacío | Quien subió |
@@ -93,7 +93,7 @@ Las páginas SvelteKit tienen acciones de formulario (envíos `POST` a la misma 
 | `/miembros` | `add`, `role`, `remove` | `members:manage` |
 | `/revision` | `rechazar` | `holds:review` |
 | `/revision/[id]` | `decide` | `holds:review` |
-| `/ajustes` | `funciones`, `estilo`, `reintentar`, `plataforma` | `organization:manage`: el responsable del ecosistema (rol `owner`) desde el 2026-11-10, pendiente de desplegar en dev (en dev también lo tiene el investigador); `estilo` y `plataforma` solo administrador de plataforma. `reintentar` llama a `POST /api/organizations/:id/anonimizacion/reintentar` |
+| `/ajustes` | `funciones`, `estilo`, `reintentar`, `plataforma` | `organization:manage`: el responsable del ecosistema (rol `owner`) desde el 2026-11-10 (desplegado); `estilo` y `plataforma` solo administrador de plataforma. `reintentar` llama a `POST /api/organizations/:id/anonimizacion/reintentar` |
 | `/documentos/[id]/anonimizacion` | `guardar`, `reintentar` | Quien puede abrir la vista de anonimización del documento (sección 3.2) |
 | `/admin/evals` | `guardar`, `borrar`, `cargar`, `ejecutar` | Administrador de plataforma |
 
@@ -114,9 +114,9 @@ Definidos en `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/
 
 | Método | Ruta | Propósito | Notas |
 |---|---|---|---|
-| POST | `/api/documents/:id/publish` | Mueve el borrador al corpus compartido `eco-{org}` | Responde al encolar, no al terminar; la fila queda en `publishing` hasta el callback. Lee bajo control de acceso: solo quien subió publica, y necesita un asiento con `documents:write` en el ecosistema del documento (403 si no). 409 si el documento está retenido por consentimiento, si su nueva anonimización falló o si su texto aún conserva un nombre que la configuración actual quita (`publishBlocker` en `apps/backend/src/lib/publishDocument.ts`; pendiente de desplegar en dev) |
+| POST | `/api/documents/:id/publish` | Mueve el borrador al corpus compartido `eco-{org}` | Responde al encolar, no al terminar; la fila queda en `publishing` hasta el callback. Lee bajo control de acceso: solo quien subió publica, y necesita un asiento con `documents:write` en el ecosistema del documento (403 si no). 409 si el documento está retenido por consentimiento, si su nueva anonimización falló o si su texto aún conserva un nombre que la configuración actual quita (`publishBlocker` en `apps/backend/src/lib/publishDocument.ts`; desplegado) |
 | POST | `/api/documents/:id/unpublish` | Retira del corpus compartido | Estado `unpublishing` hasta el callback. No pide asiento. Un documento retenido por consentimiento se retira sin volver a embeber |
-| PATCH | `/api/documents/:id/note` | Edita el cuerpo de una nota | Quien subió, con asiento. 409 si está retenido por consentimiento |
+| PATCH | `/api/documents/:id/note` | Edita el cuerpo de una nota | Quien subió, con asiento. 409 si está retenido por consentimiento; también "Publicar cambios" de una nota retenida, antes de la compuerta (una revisión hereda la retención de su original; commits 17a5d985 y b29c72ba, en `main`) |
 | POST | `/api/documents/:id/retry` | Reintenta la ingesta | Quien subió, con asiento. 409 si está retenido por consentimiento, si es una retención con el mismo texto o si no hay nada que reintentar |
 | POST | `/api/documents/:id/graph-retry` | Reprograma la extracción del grafo | Solo quien subió. 409 si está retenido por consentimiento o si no se puede graficar |
 | GET, PATCH | `/api/documents/:id/anonimizacion` | Lee la vista de anonimización / cambia los interruptores `keepDocumentAuthor`, `keepCitedAuthors` y `keepPublicFigures` (`true`, `false` o `null` = lo del ecosistema) | Ver abajo |
@@ -125,27 +125,28 @@ Definidos en `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/
 | POST | `/api/organizations/:id/anonimizacion/reintentar` | Arranca el trabajo del ecosistema sobre lo pendiente o fallido | 202 `{ started, pendingRegate }`. Mismo acceso que el GET |
 
 **Vista de anonimización** (`AnonimizacionView` en `apps/backend/src/lib/anonymisationControls.ts`). Lleva el estado de la compuerta, los nombres que la compuerta dejó y que el texto publicado todavía muestra, conteos por etapa y los interruptores efectivos. Nunca lleva un nombre quitado, un par nombre-seudónimo, `redactedText`, `heldText` ni `extractedText`. Tres campos guían la pantalla:
-- `editable`: qué interruptor puede cambiar quien llama. `keepPublicFigures` solo es editable para la administración de plataforma y solo en un `documento` (pendiente de desplegar en dev).
+- `editable`: qué interruptor puede cambiar quien llama. `keepPublicFigures` solo es editable para la administración de plataforma y solo en un `documento` (desplegado).
 - `retryable`: hay una nueva anonimización fallida o pendiente y nadie más está escribiendo la fila. La pantalla ofrece "Reintentar".
 - `unpublishedByRegate`: una nueva anonimización lo sacó del corpus compartido y sigue en borrador. Un documento de participante se vuelve a publicar solo si el nuevo veredicto es `ready`.
 
 `name` es el nombre del archivo solo para quien puede leerlo (`mayReadGatedOriginal(…, 'identity')`: en un `documento` con compuerta, quien lo subió y la administración de plataforma). Los demás ven el título con compuerta: el título redactado o, si no hay, el neutro (sección 3.2.1).
 
-**Quién.** Una cuenta activa y, con membresía activa en el ecosistema del documento, quien lo subió o quien tiene `holds:review`; o la administración de plataforma. Quien revisa solo entra a filas retenidas o publicadas (A-07, pendiente de desplegar en dev). Otro miembro del mismo ecosistema: 403. Otro ecosistema o cuenta inactiva: 404. `keepPublicFigures` de alguien que no es administración de plataforma: 403.
+**Quién.** Una cuenta activa y, con membresía activa en el ecosistema del documento, quien lo subió o quien tiene `holds:review`; o la administración de plataforma. Quien revisa solo entra a filas retenidas o publicadas (A-07, desplegado). Otro miembro del mismo ecosistema: 403. Otro ecosistema o cuenta inactiva: 404. `keepPublicFigures` de alguien que no es administración de plataforma: 403.
 
-**Códigos del PATCH y del reintento.** Conversación: 400. Documento `pending`, `publishing` o `unpublishing`: 409, sin guardar. La fila cambió mientras se guardaba: 409. Retenido por consentimiento: 409 con el mensaje de `CONSENT_HELD_MESSAGE` (`apps/backend/src/lib/consentHold.ts`; pendiente de desplegar en dev). Falla de ai-service al borrar las copias viejas: 502, con el interruptor guardado y la falla marcada para que la vista ofrezca "Reintentar". Un 200 trae la vista y `regate`: `started`, `not-needed` o `saved-only`. Cada interruptor cambiado escribe primero una fila en `anonymisation-setting-changes`. Por ecosistema, los interruptores se cambian con `PATCH /api/funciones` (sección 3.4) y también dejan fila de auditoría; apagar uno vuelve a anonimizar lo que conservaba un nombre bajo él.
+**Códigos del PATCH y del reintento.** Conversación: 400. Documento `pending`, `publishing` o `unpublishing`: 409, sin guardar. La fila cambió mientras se guardaba: 409. Retenido por consentimiento: 409 con el mensaje de `CONSENT_HELD_MESSAGE` (`apps/backend/src/lib/consentHold.ts`; desplegado). Falla de ai-service al borrar las copias viejas: 502, con el interruptor guardado y la falla marcada para que la vista ofrezca "Reintentar". Un 200 trae la vista y `regate`: `started`, `not-needed` o `saved-only`. Cada interruptor cambiado escribe primero una fila en `anonymisation-setting-changes`. Por ecosistema, los interruptores se cambian con `PATCH /api/funciones` (sección 3.4) y también dejan fila de auditoría; apagar uno vuelve a anonimizar lo que conservaba un nombre bajo él.
 
-Implementado (las rutas y la vista, desde [ADR-0020](adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)); `editable`, A-07 y los 409 por consentimiento, pendientes de desplegar en dev.
+Implementado (las rutas y la vista, desde [ADR-0020](adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)); `editable`, A-07 y los 409 por consentimiento, desplegados.
 
 #### 3.2.1 Títulos y consultas sobre documentos con compuerta
 
 - Un `documento` con compuerta se titula por su título redactado (o el neutro) en REST, ingesta, citas, biblioteca, chat, grafo y vista. Si la columna `anonymise` es NULL o no viene en la fila, el título falla cerrado y sale con compuerta (`documentTitleFor` en `apps/backend/src/lib/contentKind.ts`; [ADR-0021](adr/ADR-0021-titulos-con-compuerta-fallan-cerrado.md)). Quien lo subió y la administración de plataforma ven el nombre del archivo. Pendiente de desplegar en dev.
 - `GET /api/published` titula igual (`apps/backend/src/lib/rejectPublished.ts`). Pendiente de desplegar en dev.
 - En las filas que quien llama no puede leer completas, un `where` o un `sort` sobre `documents` solo puede usar las rutas de `GATED_FILTERABLE_PATHS` (`id`, `createdAt`, `updatedAt`, `organization`, `contentKind`, `kind`, `anonymise`, `publicationStatus`, `ingestStatus`, `anonymisationStatus`, `graphStatus`, `redactedText`). Cualquier otra ruta, a cualquier profundidad, restringe la consulta a las filas que sí puede leer; un `sort` fuera de la lista se quita. Lo mismo aplica a las bitácoras de revisión (commit b7dc944f). Pendiente de desplegar en dev.
+- En todas las colecciones, un `where` que cruza una relación (`session.title`, `uploadedBy.email`…) se reescribe a los ids que quien llama puede leer, y un campo oculto no se puede filtrar (commit 95c113c7). Por petición: hasta 5 búsquedas y 5000 ids (`QUERY_RELATION_MAX_TERMS`, `QUERY_RELATION_MAX_IDS`); pasado eso, 400. Por persona y proceso: 2 en curso y 30 por minuto (`QUERY_RELATION_MAX_CONCURRENT_PER_USER`, `QUERY_RELATION_RATELIMIT_USER_MAX`); pasado eso, 429 con `Retry-After`. La administración de plataforma no cuenta. Cifras por omisión inferidas; mediciones en `infra/fleet/env-manifests.md` (`apps/backend/src/access/relationFilters.ts`; en `main`).
 
 #### 3.2.2 Borrar y cambiar por REST
 
-- `DELETE /api/documents/:id` (REST de Payload): quien subió borra siempre su borrador; algo publicado o en movimiento, solo con un asiento `documents:write` en su ecosistema. La administración de plataforma pasa (`uploaderMayDelete`; pendiente de desplegar en dev).
+- `DELETE /api/documents/:id` (REST de Payload): quien subió borra siempre su borrador; algo publicado o en movimiento, solo con un asiento `documents:write` en su ecosistema. La administración de plataforma pasa (`uploaderMayDelete`; desplegado).
 - `PATCH /api/documents/:id`: quien subió, con ese asiento (`uploaderWithWriteSeat`).
 - Los títulos que ya viven en ai-service se corrigen sin volver a embeber con `PATCH /v1/corpus/:name/titles` (sección 4.2), que usa `apps/backend/scripts/refresh-ai-titles.ts` (ver [Pila de IA](pila-de-ia.md)).
 - Retenido por consentimiento (`consentHeld`): ninguna API escribe la columna. La escribe `scripts/hold-for-consent.ts`, que lee los ids de `CONSENT_IDS_FILE`. No hay ruta para liberarla ([ADR-0022](adr/ADR-0022-retencion-por-consentimiento.md)). Pendiente de desplegar en dev.
@@ -159,7 +160,7 @@ Publicar no es escribir un campo: re-embebe el documento en otro corpus, cuesta 
 | GET | `/api/holds?organization=<id>[&limit=<n>]` | Cola de documentos retenidos por el gate; la lista no lleva texto | `holds:review` |
 | GET | `/api/holds/:id` | `heldText` (la salida rechazada del gate; vacío si el modelo nunca corrió), `survivors` como posiciones y el reporte del gate; nunca `extractedText` | `holds:review` |
 | POST | `/api/holds/:id` | Decisión: `{ "decision": "approve" }`, `{ "decision": "approve", "text": "…" }` o `{ "decision": "reject", "note": "…" }`. Una retención de la etapa del modelo exige `text` distinto de `heldText`; una cuyo modelo nunca corrió solo admite `reject`. 409 si la retención se hizo con otros interruptores de anonimización (`HoldSettingsChangedError`): hay que volver a anonimizarla | `holds:review` |
-| GET | `/api/published?organization=<id>` | Testimonios publicados (y `documento` con gate) que se pueden rechazar después de publicados. Un `documento` con compuerta lleva su título con compuerta, no el nombre del archivo (pendiente de desplegar en dev) | `holds:review` |
+| GET | `/api/published?organization=<id>` | Testimonios publicados (y `documento` con gate) que se pueden rechazar después de publicados. Un `documento` con compuerta lleva su título con compuerta, no el nombre del archivo (desplegado) | `holds:review` |
 | POST | `/api/published/:id` | `{ "decision": "reject", "note"?: "…" }`: rechaza un testimonio ya publicado y lo retira | `holds:review` |
 
 Una aprobación escribe primero un registro en `anonymisation-reviews` (quién, cuándo y copia del reporte del gate) y después libera el texto (`apps/backend/src/lib/holdReview.ts`).
@@ -169,11 +170,11 @@ Una aprobación escribe primero un registro en `anonymisation-reviews` (quién, 
 | Método | Ruta | Propósito | Quién |
 |---|---|---|---|
 | GET | `/api/miembros` | Personas del ecosistema | `members:manage` o administrador de plataforma |
-| POST | `/api/miembros` | Crea una cuenta o agrega una existente. Una cuenta nueva recibe una contraseña temporal que se muestra una sola vez; un correo existente recibe la misma forma de respuesta con una contraseña señuelo | `members:manage` |
+| POST | `/api/miembros` | Crea una cuenta o agrega una existente. Una cuenta nueva recibe una contraseña temporal que se muestra una sola vez; un correo existente recibe la misma forma de respuesta con una contraseña señuelo. 50 por hora por quien agrega (`MIEMBROS_RATELIMIT_ADD_USER_MAX`; inferido), luego 429 con `Retry-After`; la administración de plataforma no cuenta (en `main`) | `members:manage` |
 | PATCH | `/api/miembros/:id` | Cambia rol | `members:manage` |
 | DELETE | `/api/miembros/:id` | Quita la membresía | `members:manage` |
 | GET | `/api/funciones`, `/api/funciones/editables` | Interruptores del ecosistema y cuáles puede cambiar quien llama | Miembro / `organization:manage` |
-| PATCH | `/api/funciones` | Cambia interruptores, incluidos los de anonimización del ecosistema. Cada cambio de `keepDocumentAuthor`, `keepCitedAuthors` o `keepPublicFigures` escribe una fila en `anonymisation-setting-changes`; apagar uno arranca una nueva anonimización de lo que conservaba un nombre bajo él | `organization:manage` (el responsable; pendiente de desplegar en dev, en dev también el investigador). `keepPublicFigures` y `studentTestimonios`: solo administrador de plataforma |
+| PATCH | `/api/funciones` | Cambia interruptores, incluidos los de anonimización del ecosistema. Cada cambio de `keepDocumentAuthor`, `keepCitedAuthors` o `keepPublicFigures` escribe una fila en `anonymisation-setting-changes`; apagar uno arranca una nueva anonimización de lo que conservaba un nombre bajo él | `organization:manage` (el responsable; desplegado). `keepPublicFigures` y `studentTestimonios`: solo administrador de plataforma |
 | PATCH | `/api/funciones/estilo` | Cambia los tres estilos de respuesta | Administrador de plataforma |
 | PATCH | `/api/plataforma` | Ajustes de plataforma: `detectorFallback` (`hosted` o `none`, respaldo del detector) | Administrador de plataforma |
 | GET | `/api/metrics/ecosystem?organization=<id>` | Conteos del ecosistema (solo números) | `canAdminOrg` |
@@ -247,7 +248,7 @@ El backend es el proveedor de identidad (IdP) de EDC.
 | `POST /v1/retrieve/multi` | Varios corpus, condense opcional | app | 30/min | web (modo híbrido) |
 | `POST /v1/embed` | Embeddings directos | app | 100/min | casi sin uso |
 | `GET/POST/PATCH/DELETE /v1/corpora[/:name]` | Alta, consulta, ajuste y baja de corpus | app | 100/min | backend |
-| `PATCH /v1/corpus/:name/titles` | Cambia el título de hasta 200 documentos y de sus fragmentos sin volver a embeber; `dryRun` informa sin escribir (commit d72094e5, pendiente de desplegar en dev) | admin | 100/min | `apps/backend/scripts/refresh-ai-titles.ts` |
+| `PATCH /v1/corpus/:name/titles` | Cambia el título de hasta 200 documentos y de sus fragmentos sin volver a embeber; `dryRun` informa sin escribir (commit d72094e5, desplegado) | admin | 100/min | `apps/backend/scripts/refresh-ai-titles.ts` |
 | `PATCH /v1/corpus/:name/documents/:ext/validity` | Retirar o reactivar un documento (cierra o abre `valid_to`) | app | 100/min | backend (publicar, despublicar) |
 | `DELETE /v1/corpus/:name/documents/:ext` | Borrar un documento | app | 100/min | backend |
 | `DELETE /v1/corpus/:name` | Borrar un corpus | admin | 100/min | backend con `AI_SERVICE_ADMIN_API_KEY` |
@@ -349,8 +350,8 @@ Lo usan ai-service y audio-service para avisar al backend que terminó un trabaj
 | Validación de la web por tipo | 20 MB documentos, 200 MB audio (`MAX_UPLOAD_BYTES`, `MAX_AUDIO_UPLOAD_BYTES`) | `apps/web/src/lib/config.ts` |
 | `web` a `backend`, colección `media` | 200 MiB para todo tipo (`MAX_MEDIA_UPLOAD_BYTES`). Solo `POST /api/media` y `PATCH /api/media/:id` con multipart quedan sin contar; ahí el parser multipart deja de guardar en memoria al pasar el tope y descarta el resto, y luego `beforeValidate` rechaza el archivo. Un archivo por petición. Sin una cuenta activa responden 403, como Payload, antes de leer el cuerpo | `apps/backend/src/collections/Media.ts`:231, clave `upload` de `apps/backend/src/payload.config.ts`, `isUploadRoute` en `apps/backend/src/lib/bodyCap.ts` |
 | `backend`, campos de texto multipart | 8 campos de 1 MiB y 10 partes por petición. Un campo más largo se corta y un `_payload` cortado falla al parsearse; los campos y partes de más se descartan sin guardarse | clave `upload` de `apps/backend/src/payload.config.ts` |
-| `backend`, subidas simultáneas | 2 subidas en curso por cuenta (`UPLOAD_MAX_CONCURRENT_PER_USER`; inferido del uso de la app, que sube un archivo a la vez). La siguiente responde 429 con `Retry-After: 5`. Por proceso; hoy hay uno (pendiente de desplegar en dev) | `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/app/(payload)/api/[...slug]/route.ts` |
-| `backend`, cuerpos lentos | Toda lectura contada se corta a los 30 s sin bytes (`API_BODY_IDLE_TIMEOUT_MS`) o a los 120 s en total (`API_BODY_TOTAL_TIMEOUT_MS`) y responde 408. Ambas cifras inferidas. Una subida solo tiene el tope de Node (`server.requestTimeout`, 300 s; citado de la documentación de Node) (pendiente de desplegar en dev) | `apps/backend/src/lib/bodyCap.ts` |
+| `backend`, subidas simultáneas | 2 subidas en curso por cuenta (`UPLOAD_MAX_CONCURRENT_PER_USER`; inferido del uso de la app, que sube un archivo a la vez). La siguiente responde 429 con `Retry-After: 5`. Por proceso; hoy hay uno (desplegado) | `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/app/(payload)/api/[...slug]/route.ts` |
+| `backend`, cuerpos lentos | Toda lectura contada se corta a los 30 s sin bytes (`API_BODY_IDLE_TIMEOUT_MS`) o a los 120 s en total (`API_BODY_TOTAL_TIMEOUT_MS`) y responde 408. Ambas cifras inferidas. Una subida solo tiene el tope de Node (`server.requestTimeout`, 300 s; citado de la documentación de Node) (desplegado) | `apps/backend/src/lib/bodyCap.ts` |
 | `backend` `/api/*`, cualquier otro cuerpo | 8 MiB, diga lo que diga su `Content-Type`. El middleware rechaza con 413 un `Content-Length` mayor, salvo en multipart (en cualquier combinación de mayúsculas), que no pasa por él. Las rutas REST de Payload, incluidos los endpoints propios, cuentan los bytes al leer y responden 413 al pasar el tope, también sin `Content-Length` y también con multipart. Un formulario del panel (multipart con `_payload`) se cuenta igual y Payload lo parsea después | `apps/backend/src/middleware.ts`, `apps/backend/src/lib/bodyCap.ts`, `apps/backend/src/app/(payload)/api/[...slug]/route.ts` |
 | `backend` `/api/ai-service/callback` | 2 MiB, contados al leer y antes de la firma | `apps/backend/src/lib/bodyCap.ts` |
 | `backend` `/api/live/:sid` | 4 MiB por rebanada, contada mientras se lee, porque Next.js no pone límite a los route handlers | `apps/backend/src/app/api/live/[sid]/route.ts`:36 |
@@ -370,7 +371,8 @@ Un desajuste entre saltos tiene un síntoma conocido: el 2026-10-24, en dev, tod
 - Las negativas por pertenencia son 404, no 403, en holds, métricas, grafo, documentos y trabajos de audio.
 - ai-service responde 402 cuando el presupuesto de la org no alcanza o la org no tiene fila de presupuesto.
 - Las rutas que llevan texto sensible o estado cambiante responden con `Cache-Control: no-store`.
-- Los logs del backend no llevan el texto crudo de un error: una regla de lint (`edc/no-raw-error-log`) lo impide, y los sitios usan `safeErrMessage` o `errSummary` (commit 780f614d).
+- Los logs no llevan el texto crudo de un error: la regla de lint `edc/no-raw-error-log` revisa toda llamada `.info`/`.warn`/`.error`/`.debug`/`.fatal`/`.trace` y `console.*` en backend, web y ai-service, sin exclusiones, y los sitios usan `safeErrMessage` o `errSummary` (commits 780f614d y 4a3aecc1; en `main`).
+- Las columnas de error que el navegador puede leer (`ingestError`, `corpusError`, `publicationError`, `anonymisationError`) y los `detail` de las respuestas de la web no llevan el texto de un error de base de datos ni el `err.message` crudo del aviso `job-failed` de ai-service (commit f26bb848; en `main`). Las filas escritas antes conservan su texto.
 
 ## 9. Discrepancias conocidas
 

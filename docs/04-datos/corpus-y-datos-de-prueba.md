@@ -1,9 +1,9 @@
 # Corpus y datos de prueba
 
 - **Versión:** 1.2
-- **Fecha:** 2026-11-10
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
-- **Fuentes:** repositorio hermano `corpus-generativo/` (`PROMPT_MAESTRO.md`, `resultados/gen_corpus.py`, `resultados/MANIFEST.csv`, `resultados/README.md`, `v2/dengue/`, `v2/discapacidad/`), manifiestos de ingesta e inventario de exclusiones de Semiosis práctica (carpeta de trabajo del proyecto, fuera del repositorio), bitácora del proyecto (2026-10-28 y 2026-10-30), medición del 2026-10-29 en dev, `apps/backend/src/seed/`, `scripts/demo-ecosistemas.sh`, `scripts/demo-ecosistemas-4.sh`, `scripts/corpus-fixtures.sh`, `scripts/corpus-voices.sh`, `scripts/ingest/`. Informe de reunión con desarrollo del 2026-10-21. Medición del taller de Semiosis en dev del 2026-11-10 (`plan/orchestration/taller-2026-11-10/informe.md` y `consent-ids.txt`). `infra/fleet/edc-1.md` hasta §4zzzzzzzz. `apps/backend/src/lib/consentHold.ts` y `apps/backend/scripts/hold-for-consent.ts` en `main` (`b7dc944f`).
+- **Fuentes:** repositorio hermano `corpus-generativo/` (`PROMPT_MAESTRO.md`, `resultados/gen_corpus.py`, `resultados/MANIFEST.csv`, `resultados/README.md`, `v2/dengue/`, `v2/discapacidad/`), manifiestos de ingesta e inventario de exclusiones de Semiosis práctica (carpeta de trabajo del proyecto, fuera del repositorio), bitácora del proyecto (2026-10-28 y 2026-10-30), medición del 2026-10-29 en dev, `apps/backend/src/seed/`, `scripts/demo-ecosistemas.sh`, `scripts/demo-ecosistemas-4.sh`, `scripts/corpus-fixtures.sh`, `scripts/corpus-voices.sh`, `scripts/ingest/`. Informe de reunión con desarrollo del 2026-10-21. Medición del taller de Semiosis en dev del 2026-11-10 (`plan/orchestration/taller-2026-11-10/informe.md` y `consent-ids.txt`, fuera del repositorio). `infra/fleet/edc-1.md` hasta §4zzzzzzzz. `apps/backend/src/lib/consentHold.ts` y `apps/backend/scripts/hold-for-consent.ts` en `main` (`b7dc944f`; revisados en `687ff21e` el 2026-11-11).
 
 ## Para quién es y qué responde
 
@@ -197,7 +197,7 @@ El presupuesto por defecto de cada ecosistema es `AI_ECOSYSTEM_BUDGET_USD`; es u
 
 **Decisión.** Los materiales del taller esperan el consentimiento de sus autores (decisión del 2026-11-04). No se borró nada: pasaron a borrador por la misma ruta que usa una persona, `POST /api/documents/:id/unpublish` (citado, `edc-1.md` §4zzzzz y §4zzzzzz, 2026-11-04 y 2026-11-06).
 
-**Estado en dev**, medido el 2026-11-10 en el Postgres de dev, en transacciones de solo lectura (citado de `plan/orchestration/taller-2026-11-10/informe.md`, 07:54 a 08:03 UTC, y `consent-ids.txt`, 18:42 UTC):
+**Estado en dev**, medido el 2026-11-10 en el Postgres de dev, en transacciones de solo lectura (citado de `plan/orchestration/taller-2026-11-10/informe.md`, fuera del repositorio, 07:54 a 08:03 UTC, y `consent-ids.txt`, 18:42 UTC):
 
 | Conjunto | Filas en borrador |
 |---|---:|
@@ -214,7 +214,7 @@ El presupuesto por defecto de cada ecosistema es `AI_ECOSYSTEM_BUDGET_USD`; es u
 - Ninguna escritura sobre estas filas desde el 2026-11-07 a las 00:37 UTC.
 - Las tres filas que no son del taller: dos documentos de estudiante sin compuerta del 2026-10-27 y un testimonio de estudiante rechazado del 2026-10-29.
 
-**Retención por consentimiento (`consentHeld`).** Implementado (pendiente de desplegar en dev). La columna `documents.consent_held` llega con la migración `20261110_181621_consent_held_reviews_keep`, que dev todavía no tiene. Una fila marcada no se vuelve a extraer, ingerir, pasar por la compuerta, graficar ni publicar (`apps/backend/src/lib/consentHold.ts`). La marca la pone solo el script `hold-for-consent.ts`, que lee los ids de `CONSENT_IDS_FILE` y omite las líneas `EXTRA-NO-TALLER`: con la lista del 2026-11-10 marca las 184 del taller y deja fuera las otras 3. El procedimiento está en [Despliegue y runbook](../05-infraestructura/despliegue-y-runbook.md) §6.20. Mientras no se despliegue y se corra, en dev estas filas solo están protegidas por estar en borrador. Eso no basta: con el código de dev, apagar `keepDocumentAuthor` o `keepCitedAuthors` en org 8 vuelve a pasar por la compuerta los borradores que conservaron al autor (citado, informe del 2026-11-10 §2; reproducido con Postgres real).
+**Retención por consentimiento (`consentHeld`).** Implementado y desplegado. La columna `documents.consent_held` llega con la migración `20261110_181621_consent_held_reviews_keep`, que dev tiene desde el despliegue de `c4f53632` (2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11). Una fila marcada no se vuelve a extraer, ingerir, pasar por la compuerta, graficar ni publicar (`apps/backend/src/lib/consentHold.ts`). La marca la pone solo el script `hold-for-consent.ts`, que lee los ids de `CONSENT_IDS_FILE` y omite las líneas `EXTRA-NO-TALLER`: con la lista del 2026-11-10 marca las 184 del taller y deja fuera las otras 3. Una revisión de una nota retenida queda retenida por su original, sin marca propia (commit b29c72ba, en `main`, pendiente de desplegar en dev). No consta que el script se haya aplicado en dev. El procedimiento está en [Despliegue y runbook](../05-infraestructura/despliegue-y-runbook.md) §6.20. Mientras no se despliegue y se corra, en dev estas filas solo están protegidas por estar en borrador. Eso no basta: con el código de dev, apagar `keepDocumentAuthor` o `keepCitedAuthors` en org 8 vuelve a pasar por la compuerta los borradores que conservaron al autor (citado, informe del 2026-11-10 §2; reproducido con Postgres real).
 
 **Pendiente.** Si se vuelven a publicar las filas que parecen material del equipo, y si se cierran también las copias en `eco-8-draft-1` (preguntas abiertas del informe del 2026-11-10).
 
@@ -266,7 +266,7 @@ Ese reparto en cuatro fue la decisión del 2026-10-21. Desde el 2026-10-27 los e
 
 **Matiz desde el 2026-10-27.** Desde esa fecha dev contiene documentos reales del proyecto, con nombres reales en los textos originales y en los manifiestos. La regla de borrado sigue igual: borrar es seguro. Lo que cambia es el trato de lo que se conserva. Esos textos son datos personales y deben tratarse como tales: no copiarlos a otros entornos, no pegarlos en registros ni en tickets y no versionar los manifiestos. Esta lectura es inferida de la combinación de ambas reglas; no hay una decisión escrita que la formule así. Ver [../06-privacidad-y-seguridad/proteccion-de-datos.md](../06-privacidad-y-seguridad/proteccion-de-datos.md).
 
-**Respaldo del detector de nombres.** Dev lo pasó a `none` el 2026-11-06 y lo regresó a `hosted` el 2026-11-10, después de activar en OpenRouter la retención cero de datos (ZDR): un texto que sale a un modelo hospedado no queda guardado en el proveedor (citado, `edc-1.md` §4zzzzzz y §4zzzzzzz). El ajuste de plataforma `detectorFallback` permite cambiarlo sin desplegar. Qué valor usar antes de recibir testimonios reales sigue Pendiente de decisión.
+**Respaldo del detector de nombres.** Dev lo pasó a `none` el 2026-11-06 y lo regresó a `hosted` el 2026-11-09 (hora de México; 2026-11-10 UTC), después de activar en OpenRouter la retención cero de datos (ZDR): un texto que sale a un modelo hospedado no queda guardado en el proveedor (citado, `edc-1.md` §4zzzzzz y §4zzzzzzz). El ajuste de plataforma `detectorFallback` permite cambiarlo sin desplegar. La regla vigente en dev es `hosted` por OpenRouter con ZDR (decisión del responsable del 2026-11-09, confirmada el 2026-11-10).
 
 ## Referencias
 
@@ -274,7 +274,7 @@ Ese reparto en cuatro fue la decisión del 2026-10-21. Desde el 2026-10-27 los e
 - `corpus-generativo/v2/dengue/` y `corpus-generativo/v2/discapacidad/` (`MANIFEST.csv`, `FICHAS.md`, `DEMO_PREGUNTAS.md`)
 - Manifiestos de ingesta e inventario de exclusiones de Semiosis práctica (carpeta de trabajo fuera del repositorio; contienen nombres reales)
 - Bitácora del proyecto (2026-10-28 y 2026-10-30) y medición del 2026-10-29 en dev
-- `plan/orchestration/taller-2026-11-10/informe.md` y `consent-ids.txt` (medición del taller en dev, 2026-11-10)
+- `plan/orchestration/taller-2026-11-10/informe.md` y `consent-ids.txt` (fuera del repositorio; medición del taller en dev, 2026-11-10)
 - `infra/fleet/edc-1.md` §4zzzzz a §4zzzzzzzz
 - `apps/backend/src/lib/consentHold.ts`, `apps/backend/scripts/hold-for-consent.ts`, `apps/backend/scripts/reextract-published-graph.ts`
 - [../05-infraestructura/despliegue-y-runbook.md](../05-infraestructura/despliegue-y-runbook.md)

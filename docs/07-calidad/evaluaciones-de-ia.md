@@ -3,7 +3,7 @@
 - **Versión:** 1.2
 - **Fecha:** 2026-11-10
 - **Estado:** vigente
-- **Fuentes:** `apps/web/src/lib/server/evals/` (`runner.ts`, `score.ts`, `judge.ts`), `apps/backend/src/eval/RESULTS.md`, `plan/adr-corpus-graph.md` §19, `plan/spark-chat-eval-2026-10-26.md`, `scripts/spark-chat-eval/`, `scripts/cite-eval/`, mensaje de commit del 2026-10-28, `apps/backend/scripts/measurements/q24/README.md`, `plan/spark-ai-adopcion.md`, resultados de la corrida del 2026-10-29 para los ecosistemas 6, 7 y 8 (fuera del repo), kit diferencial de la compuerta (kit3) y sus corridas del 2026-11-07 y del 2026-11-10 (fuera del repo, en la carpeta de trabajo de la flota), `plan/orchestration/auditoria-2026-11-10/revision-ola4.md`.
+- **Fuentes:** `apps/web/src/lib/server/evals/` (`runner.ts`, `score.ts`, `judge.ts`), `apps/backend/src/eval/RESULTS.md`, `plan/adr-corpus-graph.md` §19, `plan/spark-chat-eval-2026-10-26.md`, `scripts/spark-chat-eval/`, `scripts/cite-eval/`, mensaje de commit del 2026-10-28, `apps/backend/scripts/measurements/q24/README.md`, `plan/spark-ai-adopcion.md`, resultados de la corrida del 2026-10-29 para los ecosistemas 6, 7 y 8 (fuera del repo), kit diferencial de la compuerta (kit3) y sus corridas del 2026-11-07 y del 2026-11-10 (fuera del repo, en la carpeta de trabajo de la flota), `plan/orchestration/auditoria-2026-11-10/revision-ola4.md` (fuera del repositorio).
 
 ## Para quién es y qué responde
 
@@ -292,7 +292,7 @@ Vive fuera del repositorio, en la carpeta de trabajo de la flota del equipo de d
 
 ### 9.2 Resultados del 2026-11-10
 
-Medido en la estación de trabajo del equipo de desarrollo (16 núcleos), el 2026-11-10; horas de México (UTC−6). Corrió junto con otras suites: la carga promedio al arrancar la corrida de las 11:56 era 13.4 (1 min) y 8.7 (15 min). Citado de los totales de cada corrida (`res/TOTAL`) y de `plan/orchestration/auditoria-2026-11-10/revision-ola4.md`.
+Medido en la estación de trabajo del equipo de desarrollo (16 núcleos), el 2026-11-10; horas de México (UTC−6). Corrió junto con otras suites: la carga promedio al arrancar la corrida de las 11:56 era 13.4 (1 min) y 8.7 (15 min). Citado de los totales de cada corrida (`res/TOTAL`) y de `plan/orchestration/auditoria-2026-11-10/revision-ola4.md` (fuera del repositorio).
 
 | Corrida | Base contra nueva | Casos | `leak-at-head` | Más redactado | Texto distinto |
 |---|---|---:|---:|---:|---:|
@@ -304,7 +304,7 @@ Medido en la estación de trabajo del equipo de desarrollo (16 núcleos), el 202
 
 Lectura:
 
-- Las 2 "fugas" de la ola 2 las revisó la auditoría independiente del mismo día: en esos casos la versión nueva redacta más, no menos (citado de `plan/orchestration/2026-11-09-edc.md`). No son fugas.
+- Las 2 "fugas" de la ola 2 las revisó la auditoría independiente del mismo día: en esos casos la versión nueva redacta más, no menos (citado de `plan/orchestration/2026-11-09-edc.md`, fuera del repositorio). No son fugas.
 - Las corridas de la ola 4 no encontraron ningún caso que la base ocultara y la versión nueva dejara ver. La única diferencia es un caso más redactado.
 - La revisión de la ola 4 encontró aparte, con sondas propias, fechas que la compuerta todavía no oculta ("3 de Mayo del 90", el primer día de un rango). Eso no es una regresión que kit3 detecte: la base tampoco las ocultaba.
 

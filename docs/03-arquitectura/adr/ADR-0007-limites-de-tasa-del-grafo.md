@@ -1,7 +1,7 @@
 # ADR-0007. Límites de tasa del grafo por usuario y por ecosistema, sin bucket por IP
 
 - **Versión:** 1.2
-- **Fecha del documento:** 2026-11-10
+- **Fecha del documento:** 2026-11-11
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada e implementada
 - **Fecha de la decisión:** 2026-08-28
@@ -50,6 +50,8 @@ La explicación vive en los propios buckets de `lib/rateLimit.ts`, porque ahí m
 ## Estado al 2026-11-10
 
 La decisión sigue en el código: el grafo no tiene bucket por IP (`apps/backend/src/endpoints/graph.ts`). Cambió una de sus premisas. Desde el 2026-11-10 (commit 93ff9aba, desplegado en dev), `backendFetch` sí manda `X-Forwarded-For` con la IP del navegador (`forwardClientIp` en `apps/web/src/lib/server/clientIp.ts`), y el backend la lee con `clientIp` para los límites de inicio de sesión. Ya no es cierto que todos los usuarios lleguen al backend con la IP `'unknown'`. Un bucket por IP en el grafo ya no sería un contador global; si conviene agregarlo es una pregunta abierta, no una decisión tomada.
+
+2026-11-11, en `main`: `lib/rateLimit.ts` también cuenta, en la memoria del proceso, las conversaciones nuevas, los miembros agregados y los filtros por relación de cada persona. La advertencia de réplicas aplica igual.
 
 ## Fuentes
 

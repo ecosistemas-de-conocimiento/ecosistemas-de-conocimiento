@@ -5,8 +5,9 @@
  * rule): while the corpus holds no real testimony, a dead DGX Spark must not
  * stall the gate. A call the Spark cannot answer goes to ai-service → OpenRouter,
  * the path every document took before `ANONYMISE_DETECT_URL` existed. That path
- * sends the raw text to a hosted model. Set `ANONYMISE_DETECT_FALLBACK=none` to
- * fail closed again — that is the switch to flip before the first real Voz.
+ * sends the raw text to a hosted model; ai-service asks OpenRouter for zero
+ * data retention on every call (owner decision, 2026-11-09). Set
+ * `ANONYMISE_DETECT_FALLBACK=none` to fail closed instead.
  *
  * ── WHAT FALLS BACK, AND WHAT DOES NOT ─────────────────────────────────────
  *

@@ -1,13 +1,13 @@
 # Cronología e hitos
 
-- **Versión:** 1.2
-- **Fecha:** 2026-11-10
+- **Versión:** 1.3
+- **Fecha:** 2026-11-11
 - **Estado:** vigente
-- **Fuentes:** historial de git de `main` (hasta el 2026-10-29; la §4.1 llega hasta b7dc944f, del 2026-11-10); `infra/fleet/edc-1.md` (bitácora de despliegues §4); `plan/auditoria-ia-2026-10-17.md`; `plan/auditoria-codigo-2026-10-28.md`; `plan/adr-corpus-graph.md`; `plan/spark-chat-eval-2026-10-26.md`; `apps/backend/src/eval/RESULTS.md`. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v0-brief-proyecto-plataforma-ia.md`, `briefs/v1-brief-repositorio-voces-resonancias.md`, `reus/260418/`, `reus/260511-kickoff/`, minutas de `docs/Textos del proyecto/Desarrollo (metodología)/`, «Estado del Proyecto IH-2025-I-445», la bitácora del proyecto (registros del 2026-10-17, 2026-10-21, 2026-10-27 y 2026-10-28), los resultados de evaluación del 2026-10-29, la carpeta de respaldos de edc-1 y `evidencia/`.
+- **Fuentes:** historial de git de `main` (hasta el 2026-10-29; la §4.1 llega hasta 687ff21e, del 2026-11-11); `infra/fleet/edc-1.md` (bitácora de despliegues §4); `plan/auditoria-ia-2026-10-17.md`; `plan/auditoria-codigo-2026-10-28.md`; `plan/adr-corpus-graph.md`; `plan/spark-chat-eval-2026-10-26.md`; `apps/backend/src/eval/RESULTS.md`. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v0-brief-proyecto-plataforma-ia.md`, `briefs/v1-brief-repositorio-voces-resonancias.md`, `reus/260418/`, `reus/260511-kickoff/`, minutas de `docs/Textos del proyecto/Desarrollo (metodología)/`, «Estado del Proyecto IH-2025-I-445», la bitácora del proyecto (registros del 2026-10-17, 2026-10-21, 2026-10-27 y 2026-10-28), los resultados de evaluación del 2026-10-29, la carpeta de respaldos de edc-1 y `evidencia/`.
 
 ## Para quién es y qué responde
 
-Este documento es para quien redacte el informe de la Etapa 1, para revisores que necesiten ubicar un hecho en el tiempo y para quien herede el desarrollo y quiera entender por qué el código tiene la forma que tiene. Responde: qué pasó y cuándo, de abril a octubre de 2026; cuánto trabajo hubo cada semana y en qué temas; cuándo se auditó, se desplegó y se grabó la evidencia; y cómo cerró la Etapa 1 el 2026-10-28. La §4.1 agrega lo que pasó después, hasta el 2026-11-10. Todas las fechas son absolutas. Los conteos de commits son **medidos** con `git log` sobre `main` el 2026-10-30, por fecha de autor, salvo los de la §4.1, medidos el 2026-11-10.
+Este documento es para quien redacte el informe de la Etapa 1, para revisores que necesiten ubicar un hecho en el tiempo y para quien herede el desarrollo y quiera entender por qué el código tiene la forma que tiene. Responde: qué pasó y cuándo, de abril a octubre de 2026; cuánto trabajo hubo cada semana y en qué temas; cuándo se auditó, se desplegó y se grabó la evidencia; y cómo cerró la Etapa 1 el 2026-10-28. La §4.1 agrega lo que pasó después, hasta el 2026-11-11. Todas las fechas son absolutas. Los conteos de commits son **medidos** con `git log` sobre `main` el 2026-10-30, por fecha de autor, salvo los de la §4.1, medidos el 2026-11-11.
 
 ## 1. Vista general
 
@@ -121,7 +121,7 @@ gantt
 
 ### 4.1 Noviembre de 2026: correcciones después del cierre
 
-Commits sin merges en `main`, por fecha de autor (medido con `git log --no-merges` sobre b7dc944f el 2026-11-10): 18 el 2026-11-04, 2 el 2026-11-06, 9 el 2026-11-07, 3 el 2026-11-09 y 66 el 2026-11-10.
+Commits sin merges en `main`, por fecha de autor (medido con `git log --no-merges` sobre 687ff21e el 2026-11-11): 18 el 2026-11-04, 2 el 2026-11-06, 9 el 2026-11-07, 3 el 2026-11-09 y 99 el 2026-11-10.
 
 | Fecha | Hito | Detalle | Fuente |
 |---|---|---|---|
@@ -130,12 +130,14 @@ Commits sin merges en `main`, por fecha de autor (medido con `git log --no-merge
 | 2026-11-06 | El resto del taller a borrador; vectores de respaldo en DeepInfra | Dev queda con 187 borradores y 566 publicados en la org 8 (medido, citado de `edc-1.md`) | `infra/fleet/edc-1.md` §4zzzzzz |
 | 2026-11-07 | **Anonimizar todo por omisión** | Conservar al autor y a los autores citados pasa a interruptores apagados por omisión, con controles por documento, auditoría de cada cambio y re-gate ([ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) | `git log` (87e2468f, 491841fb) |
 | 2026-11-07 | ZDR en OpenRouter | ai-service pide retención cero de datos en cada llamada a OpenRouter y falla cerrado si no hay proveedor que la cumpla | `git log` (9b755298) |
+| 2026-11-09 | Nombres inventados para las cuentas de estudiante de la demo | Las 9 cuentas de estudiante de Semiosis práctica (org 8), sembradas por `apps/backend/src/seed/fixtures/semiosisTrabajos.ts`, tenían nombres inventados pero realistas, que podían coincidir con personas reales. Pasan a nombres que no son palabras del diccionario ni aparecen en el corpus de Semiótica; lo cuidan las pruebas de `src/seed/semiosisDemo.test.ts`. En dev se actualizaron 18 filas de `users.display_name` y `memberships.person_name`, con respaldo previo, y un re-escaneo de las dos bases encontró 0 nombres viejos (medido el 2026-11-10 por la sesión que hizo el cambio). Staging no tenía estudiantes. En dev desde el despliegue de las 05:34 UTC | `git log` (3f14306b) |
 | 2026-11-10 | Despliegue de dev, 05:34 a 05:51 UTC | Entra a dev lo del 2026-11-07. El respaldo del detector vuelve a `hosted` (decisión del 2026-11-09), ahora con ZDR | `infra/fleet/edc-1.md` §4zzzzzzz |
 | 2026-11-10 | **Auditoría de `main`** | Cuatro frentes (privacidad, login y permisos, carga y repositorio, chat e interfaz) sobre a84baacf: 54 hallazgos, 7 altos, 23 medios, 24 bajos, ningún crítico | `plan/orchestration/auditoria-2026-11-10/resumen.md` (fuera del repositorio) |
 | 2026-11-10 | Dos ramas | `main` solo lleva correcciones de la Etapa 1; la rama `etapa-2`, creada sobre a84baacf, lleva la funcionalidad nueva | `git log` |
 | 2026-11-10 | Despliegue de dev, 18:24 a 18:45 UTC | 367c2698: re-gate con reintento, cuentas desactivadas fuera, límites de inicio de sesión, tope de 8 MiB a los cuerpos JSON, registros sin parámetros de consultas. Staging sin tocar | `infra/fleet/edc-1.md` §4zzzzzzzz |
 | 2026-11-10 | Primera purga de volcados | Se quedan los 7 más recientes por entorno; en dev se borran 52 volcados y se liberan 1231.3 MB en cada lado (medido, citado de `edc-1.md`) | `infra/fleet/edc-1.md` §7 |
-| 2026-11-10 | Correcciones en `main` sin desplegar | De 367c2698 a b7dc944f, 40 commits sin merges (medido con `git log --no-merges`): Ajustes solo para el responsable, títulos de `documento` con compuerta redactados en todas las superficies, retenido por consentimiento, plazo de 30 días para el cuerpo de los avisos, subidas acotadas por cuenta, roster acotado para estudiantes | `git log` |
+| 2026-11-10 | Despliegue de dev, 23:03 UTC | c4f53632 en backend, web y ai-service; migraciones de 24 a 25 (`consent_held`). De 367c2698 a c4f53632, 47 commits sin merges (medido con `git log --no-merges` el 2026-11-11): Ajustes solo para el responsable, títulos de `documento` con compuerta redactados en todas las superficies, retenido por consentimiento, plazo de 30 días para el cuerpo de los avisos, subidas acotadas por cuenta, roster acotado para estudiantes | `docker ps` en edc-1 (medido el 2026-11-11); `git log` |
+| 2026-11-10 | Olas 10 y 11 en `main`, sin desplegar | De c4f53632 a 687ff21e, 26 commits sin merges (medido con `git log --no-merges` el 2026-11-11): filtros por relación y conversaciones nuevas acotados, retenido por consentimiento en rutas, scripts y grafo, registros y respuestas sin el texto de errores crudos (regla `edc/no-raw-error-log`), tiempo de espera del pool de base de datos, conserjes y más formas de fecha en la compuerta | `git log` |
 
 ## 5. Actividad por semana
 
@@ -162,7 +164,7 @@ Leído de `git log` sobre `main` el 2026-10-30, por fecha de autor. La semana em
 | 2026-08-29 | Revisión de la regla `fragmento` del grafo | `plan/adr-corpus-graph.md` §16 | Registró que una suite de solo aserciones negativas no distingue «suprimido» de «nunca producido». Regla: cada control de privacidad lleva su prueba positiva | Aplicada |
 | 2026-10-17 | Auditoría del stack de IA | Cuatro frentes: grafo (G), ingesta y privacidad (I), chat (C), pruebas y operación (T) | Tres bloqueantes: `/api/graph/retrieve` daba error 500 (G-1); un testimonio publicado mostraba su texto sin redactar (I-1); 648 menciones y 386 relaciones sacadas de texto sin depurar (G-2) (citado de `plan/auditoria-ia-2026-10-17.md`) | Los tres cerrados. Abiertos: T-13 (dos arneses de prueba), I-13 en parte, C-3 |
 | 2026-10-28 | Auditoría completa de código | Once frentes de revisión sobre `main` del 2026-10-28 | 1 crítico, 6 altos, 32 medios, 51 bajos. Limpio: JWT, SQL del grafo, aislamiento por organización en el servicio de IA, arranque de seeds (citado de `plan/auditoria-codigo-2026-10-28.md`) | Los siete de «arreglar ahora» cerrados en las ramas A a E, salvo la llave de audio-service (abierta) y la CSP de imágenes (sin verificar). Unos 70 hallazgos medios y bajos quedan listados para después |
-| 2026-11-10 | Auditoría de `main` | Cuatro frentes sobre a84baacf: privacidad, login y permisos, carga y repositorio, chat e interfaz | 54 hallazgos: 7 altos, 23 medios, 24 bajos, ningún crítico (citado de `plan/orchestration/auditoria-2026-11-10/resumen.md`) | Parte de las correcciones está desplegada en dev desde el 2026-11-10 (367c2698), parte está en `main` pendiente de desplegar, y lo clasificado como funcionalidad nueva va a la rama `etapa-2` ([Roadmap](roadmap.md#etapa-2)) |
+| 2026-11-10 | Auditoría de `main` | Cuatro frentes sobre a84baacf: privacidad, login y permisos, carga y repositorio, chat e interfaz | 54 hallazgos: 7 altos, 23 medios, 24 bajos, ningún crítico (citado de `plan/orchestration/auditoria-2026-11-10/resumen.md`, fuera del repositorio) | Parte de las correcciones está desplegada en dev desde el 2026-11-10 (c4f53632), parte está en `main` pendiente de desplegar, y lo clasificado como funcionalidad nueva va a la rama `etapa-2` ([Roadmap](roadmap.md#etapa-2)) |
 
 El detalle está en [Seguridad](../06-privacidad-y-seguridad/seguridad.md) y [Estrategia de pruebas](../07-calidad/estrategia-de-pruebas.md).
 
@@ -170,7 +172,7 @@ El detalle está en [Seguridad](../06-privacidad-y-seguridad/seguridad.md) y [Es
 
 - **Entorno.** EDC vive desde el 2026-10-17 en una sola caja, edc-1, con dev y staging. No hay producción. Ver [Infraestructura y entornos](../05-infraestructura/infraestructura-y-entornos.md).
 - **Bitácora.** La sección §4 de `infra/fleet/edc-1.md` registra cada despliegue. Los registros citados aquí van del 2026-10-17 (§4g) al 2026-10-29 (§4zzzz).
-- **Dev.** Último despliegue de la Etapa 1: el 2026-10-29 a las 06:50 UTC (citado de `edc-1.md` §4zzzz). Después: el 2026-11-10 a las 05:47 UTC y a las 18:33 UTC, este último con 367c2698 (citado de `edc-1.md` §4zzzzzzz y §4zzzzzzzz).
+- **Dev.** Último despliegue de la Etapa 1: el 2026-10-29 a las 06:50 UTC (citado de `edc-1.md` §4zzzz). Después: el 2026-11-10 a las 05:47 UTC, a las 18:33 UTC con 367c2698 (citado de `edc-1.md` §4zzzzzzz y §4zzzzzzzz) y a las 23:03 UTC con c4f53632 (medido con `docker ps` en edc-1 el 2026-11-11).
 - **Staging.** Congelado en una versión anterior desde el 2026-10-17 a las 23:03 UTC (citado de `edc-1.md` §4zzzz). Seguía sin tocar el 2026-11-10 (citado de `edc-1.md` §4zzzzzzzz).
 - **Respaldos.** 63 respaldos lógicos manuales, del `20261017T0421Z` al `20261029T0643Z`, unos 2.7 GB en total (medido con `ls` y `du` el 2026-10-30 sobre la carpeta de respaldos de edc-1, fuera del repositorio). Desde el 2026-11-10 se conservan los 7 más recientes por entorno (citado de `edc-1.md` §7).
 
