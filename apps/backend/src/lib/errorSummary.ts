@@ -82,8 +82,12 @@ function framesOnly(stack: unknown): string | undefined {
 /**
  * Text that can only come from a database error and may quote a value: the
  * row being written, a key, the input Postgres refused. drizzle's shape (also
- * when a wrapper copied it into its own message), and every Postgres 16
- * message, DETAIL or CONTEXT that cites its input:
+ * when a wrapper copied it into its own message), and the Postgres 16
+ * messages, DETAILs and CONTEXTs this app can produce that cite their input
+ * (English `lc_messages` only). NOT every Postgres message: PL/pgSQL `RAISE`,
+ * time zone / unit / encoding / identifier / JSON path errors and COPY
+ * context still pass (audit 2026-11-12; none take user text in this app, and
+ * a live error is held by its SQLSTATE in `isDatabaseError` anyway):
  *   · `Key (email)=(…)`, `Failing row contains (…)` (23505, 23503, 23502, 23514);
  *   · `invalid input syntax for type integer: "…"`, `invalid input value for
  *     enum x: "…"`, `malformed array|record|range literal: "…"` (22P02);
