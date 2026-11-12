@@ -719,30 +719,107 @@ export async function confirmPublish(
     return
   }
 
+  // 🔴 RETENIDO POR CONSENTIMIENTO while `publishing` (audit 2026-11-11, B):
+  // before the draft copy is retired. Checked again under a row lock below.
+  if (isConsentHeld(doc as { consentHeld?: unknown }) || (await readConsentHeld(deps.payload, doc.id))) {
+    await withdrawHeldPublish(doc, deps)
+    return
+  }
+
   await retireFrom(deps.client, draftCorpus(organizationId, userId), doc.id, now, loggerOf(deps))
 
+  const flipped = await markPublished(deps.payload, doc.id)
+  // Held after the check above: the draft copy is already retired, so the
+  // document ends retrievable by nobody, as a held `unpublish` leaves it.
+  if (flipped === 'consent-held') await withdrawHeldPublish(doc, deps)
+  // Withdrawn meanwhile (`unpublishing`/`draft`): neither state has a shared copy.
+  if (flipped === 'moved') await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+}
+
+/**
+ * 🔴 A HELD ROW'S PUBLISH ENDS HERE (audit 2026-11-11, B): the shared copy is
+ * retired FIRST, then the row is a draft with the hold's message and no
+ * `publishIngestId`. Used by `confirmPublish` and by the callback on a failed
+ * publish. Idempotent.
+ */
+export async function withdrawHeldPublish(
+  doc: PublishableDocument,
+  deps: Omit<TransitionDeps, 'callbackUrl'>,
+): Promise<void> {
+  const { organizationId } = idsOf(doc)
+  const now = (deps.now ?? (() => new Date()))()
+  await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
   await deps.payload.update({
     collection: 'documents',
     id: doc.id as never,
-    data: {
-      publicationStatus: 'published',
-      publicationError: null,
-      publishIngestId: null,
-      /**
-       * 🔴 THE PUBLISH MOVE IS AN INGEST, SO IT ENDS ONE. The shared-corpus copy
-       * was just embedded and confirmed, so the document is retrievable and
-       * citable — the definition of `ready`. The callback route returns early on
-       * a publish move, BEFORE its ordinary `ready` write, so nothing else sets
-       * this: without it a row that was never draft-ingested (seeded, or a
-       * markdown note) reads `published` + `pending` ("en cola") forever.
-       */
-      ingestStatus: 'ready',
-      ingestError: null,
-    },
+    data: { publicationStatus: 'draft', publicationError: CONSENT_HELD_MESSAGE, publishIngestId: null },
     overrideAccess: true,
     context: { __skipDocsExtract: true },
   })
 }
+
+/** What a real Payload's `db.drizzle` offers; absent on a unit-test fake. */
+interface TxDb {
+  transaction<T>(fn: (tx: { execute(q: unknown): Promise<unknown> }) => Promise<T>): Promise<T>
+}
+
+/**
+ * 🔴 `publishing` → `published`, ONLY IF NOT HELD, as one transaction: the row
+ * (and a revision's original) is read `FOR SHARE`, so a hold from another
+ * connection waits until this commits, and the UPDATE repeats `publishing`.
+ * `publishDocument.consentHeld.pg.test.ts`.
+ *
+ * ⚠ A handle with no `db.drizzle` is a unit-test fake (a real Payload always
+ * has one): the flip is the plain Payload write, and the check before it is
+ * the caller's.
+ */
+async function markPublished(
+  payload: Payload,
+  id: number | string,
+): Promise<'published' | 'consent-held' | 'moved'> {
+  const db = (payload as unknown as { db?: { drizzle?: Partial<TxDb> } }).db?.drizzle
+  if (typeof db?.transaction !== 'function') {
+    await payload.update({
+      collection: 'documents',
+      id: id as never,
+      data: PUBLISHED_COLUMNS,
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+    return 'published'
+  }
+  const { sql } = await import('@payloadcms/db-postgres')
+  const n = typeof id === 'string' && /^\d+$/.test(id) ? Number(id) : id
+  return (db as TxDb).transaction(async (tx) => {
+    const locked = (await tx.execute(sql`
+      SELECT consent_held AS h FROM documents
+      WHERE id = ${n} OR id = (SELECT revision_of_id FROM documents WHERE id = ${n}) FOR SHARE`)) as {
+      rows?: Array<{ h: unknown }>
+    }
+    if ((locked.rows ?? []).some((r) => r.h === true)) return 'consent-held'
+    const res = (await tx.execute(sql`
+      UPDATE documents SET publication_status = 'published', publication_error = NULL, publish_ingest_id = NULL,
+        ingest_status = 'ready', ingest_error = NULL, updated_at = ${new Date().toISOString()}
+      WHERE id = ${n} AND publication_status = 'publishing' RETURNING id`)) as { rows?: unknown[]; rowCount?: number }
+    return (res.rows?.length ?? res.rowCount ?? 0) > 0 ? 'published' : 'moved'
+  })
+}
+
+const PUBLISHED_COLUMNS = {
+  publicationStatus: 'published',
+  publicationError: null,
+  publishIngestId: null,
+  /**
+   * 🔴 THE PUBLISH MOVE IS AN INGEST, SO IT ENDS ONE. The shared-corpus copy
+   * was just embedded and confirmed, so the document is retrievable and
+   * citable — the definition of `ready`. The callback route returns early on
+   * a publish move, BEFORE its ordinary `ready` write, so nothing else sets
+   * this: without it a row that was never draft-ingested (seeded, or a
+   * markdown note) reads `published` + `pending` ("en cola") forever.
+   */
+  ingestStatus: 'ready',
+  ingestError: null,
+} as const
 
 /**
  * 🔴 THE MESSAGE FOR A FAILURE THAT ARRIVED WITH NO WORDS IN IT, and it exists

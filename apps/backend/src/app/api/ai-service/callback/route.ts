@@ -438,6 +438,8 @@ async function dispatchCallback(
         return
       }
 
+      if (await retiredLateSharedLanding(payload, doc, envelope)) return
+
       if (!ingestCallbackMatches(doc, envelope.ingestId)) {
         console.warn(
           '[callback] ignoring',
@@ -683,6 +685,8 @@ interface DocumentSnapshot {
   ingestStatus?: unknown
   ingestId?: unknown
   transcribeId?: unknown
+  /** `lib/consentHold.ts`. Read again from the table where it decides. */
+  consentHeld?: unknown
 }
 
 /**
@@ -933,6 +937,43 @@ async function dispatchNoteReindex(
 }
 
 /**
+ * 🔴 A SHARED-CORPUS INGEST LANDED THAT THE ROW IS NOT WAITING FOR, while the
+ * row may not be shared (audit 2026-11-11, first publish).
+ *
+ * `beginPublish` enqueues J and ai-service answers when it QUEUES it; the
+ * worker writes the copy later with `validTo = null`, clearing any retirement
+ * done meanwhile. If the row was unpublished while J was queued (held or not),
+ * `publishIngestId` was cleared or overwritten by the draft re-embed, so J's
+ * callback matches nothing, and J's copy stayed in search.
+ *
+ * Retired when the row is not `publishing`/`published`, or is held (read now):
+ * no other state has a shared copy. Both events: a partial landing is still a
+ * landing. Idempotent (`retireFrom`); a failure throws, so ai-service retries.
+ * A landing the envelope places in another corpus, and the row's own draft
+ * ingest, go on as before.
+ */
+async function retiredLateSharedLanding(
+  payload: Awaited<ReturnType<typeof getPayload>>,
+  doc: DocumentSnapshot,
+  envelope: Extract<CallbackEnvelope, { event: 'ingest.completed' | 'ingest.failed' }>,
+): Promise<boolean> {
+  const organizationId = relationId(doc.organization)
+  if (organizationId == null) return false
+  const { publishedCorpus } = await import('@/lib/corpus')
+  const shared = publishedCorpus(organizationId)
+  if (envelope.corpus !== undefined && envelope.corpus !== shared) return false
+  if (envelope.corpus !== shared && ingestCallbackMatches(doc, envelope.ingestId)) return false
+  const { isConsentHeld, readConsentHeld } = await import('@/lib/consentHold')
+  const mayBeShared = doc.publicationStatus === 'publishing' || doc.publicationStatus === 'published'
+  if (mayBeShared && !isConsentHeld(doc) && !(await readConsentHeld(payload, doc.id))) return false
+  const { getAdminAIClient } = await import('@/lib/aiClient')
+  const { retireFrom } = await import('@/lib/publishDocument')
+  await retireFrom(getAdminAIClient(organizationId) as never, shared, doc.id, new Date())
+  console.warn('[callback] retired a late shared-corpus landing for doc', doc.id, envelope.event, envelope.ingestId)
+  return true
+}
+
+/**
  * 🔴 AN INGEST LANDED FOR A ROW THAT NO LONGER EXISTS: ERASE IT.
  *
  * A deleted document must not be in any corpus. The delete erased what existed
@@ -980,8 +1021,23 @@ async function dispatchPublishMove(
   doc: DocumentSnapshot,
   envelope: Extract<CallbackEnvelope, { event: 'ingest.completed' | 'ingest.failed' }>,
 ): Promise<void> {
-  const { confirmPublish, confirmUnpublish, failPublish } = await import('@/lib/publishDocument')
+  const { confirmPublish, confirmUnpublish, failPublish, retireFrom, withdrawHeldPublish } = await import(
+    '@/lib/publishDocument'
+  )
   const wasPublishing = doc.publicationStatus === 'publishing'
+  const organizationId = relationId(doc.organization)
+
+  // 🔴 HELD WHILE `publishing` (audit 2026-11-11, B): whatever landed is retired
+  // and the row is a draft, on a failure too (a partial landing is a landing).
+  // The success path re-checks inside `confirmPublish`, under a row lock.
+  if (wasPublishing && envelope.event === 'ingest.failed' && organizationId != null) {
+    const { isConsentHeld, readConsentHeld } = await import('@/lib/consentHold')
+    if (isConsentHeld(doc) || (await readConsentHeld(payload, doc.id))) {
+      const { getAdminAIClient } = await import('@/lib/aiClient')
+      await withdrawHeldPublish(doc as never, { payload, client: getAdminAIClient(organizationId) as never })
+      return
+    }
+  }
 
   if (envelope.event === 'ingest.failed') {
     // ⚠ Stored as `publicationError`, which the web hands to the browser: the
@@ -1014,7 +1070,6 @@ async function dispatchPublishMove(
       const { getAdminAIClient } = await import('@/lib/aiClient')
       // The draft copy lives in the document's ecosistema org. A row with no
       // ecosistema throws here and stays `publishing` — retryable, never lost.
-      const organizationId = relationId(doc.organization)
       if (organizationId == null) throw new Error('document has no ecosistema')
       await confirmPublish(doc as never, {
         payload,
@@ -1055,7 +1110,15 @@ async function dispatchPublishMove(
       }
     } else {
       // Unpublish already retired the shared copy before this re-ingest was
-      // enqueued, so there is nothing left to retire — just record the state.
+      // enqueued. 🔴 Unless this landing IS the shared copy: J's id stored after
+      // the unpublish wrote K's (the two writes interleave). Retired again.
+      if (organizationId != null) {
+        const { publishedCorpus } = await import('@/lib/corpus')
+        if (envelope.corpus === publishedCorpus(organizationId)) {
+          const { getAdminAIClient } = await import('@/lib/aiClient')
+          await retireFrom(getAdminAIClient(organizationId) as never, envelope.corpus, doc.id, new Date())
+        }
+      }
       await confirmUnpublish(doc as never, { payload })
     }
   } catch (err) {
