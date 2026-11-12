@@ -69,6 +69,24 @@ vi.mock('@/lib/anonymise', async (importOriginal) => {
   }
 })
 
+/**
+ * Each revision's background `onGraphSettled` (`graph/schedule.ts` pump), by id.
+ * It races the test's own `landDraftIngest`: both may promote, and the second
+ * gets `busy`, by design (one promotion). Tests wait for it first.
+ */
+vi.mock('@/lib/studentNotes', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./studentNotes')>()
+  const settles = ((globalThis as { __settles?: Map<string, Promise<void>> }).__settles ??= new Map())
+  return {
+    ...real,
+    onGraphSettled: (id: number | string) => {
+      const p = real.onGraphSettled(id)
+      settles.set(String(id), p)
+      return p
+    },
+  }
+})
+
 vi.mock('@/lib/graph/client', () => ({
   getGraphAIClient: async () => ({
     generate: {
@@ -388,6 +406,12 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         )
       )[0]
     /** What ai-service's callback does when a draft ingest lands: `ready`, then auto-publish. */
+    /** The revision's background promotion attempt (see the `@/lib/studentNotes` mock) has run to its end. */
+    const graphSettled = async (id: number) => {
+      const settles = (globalThis as { __settles?: Map<string, Promise<void>> }).__settles ?? new Map()
+      expect(await eventually(async () => settles.has(String(id)), 20_000)).toBe(true)
+      await settles.get(String(id))
+    }
     const landDraftIngest = async (id: number) => {
       await pg!.db.execute(sql`UPDATE documents SET ingest_status = 'ready' WHERE id = ${id}`)
       return autoPublishParticipantDocument({ payload: payload!, documentId: id, clientFor: (o) => getAdminAIClient(o) as never })
@@ -406,7 +430,9 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
       const res = await publicar(ANA, NOTE)
       expect([res.status, res.body.processing, res.body.publicationStatus]).toEqual([202, true, 'published'])
       expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'ready', 20_000)).toBe(true)
-      return Number((await revisionOf(NOTE))!.id)
+      const id = Number((await revisionOf(NOTE))!.id)
+      await graphSettled(id)
+      return id
     }
 
     it('setup: a published note, its topics visible to peers', async () => {
@@ -504,6 +530,7 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
       await new Promise((r) => setTimeout(r, 500))
       expect(Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM documents WHERE revision_of_id = ${NOTE}`))[0]!.n)).toBe(1)
       expect(detectorCalls - before).toBe(perRun)
+      await graphSettled(Number((await revisionOf(NOTE))!.id))
       expect(await landDraftIngest(Number((await revisionOf(NOTE))!.id))).toEqual({ published: true })
     }, 60_000)
 
@@ -516,6 +543,7 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         expect((await autosave(ANA, NOTE, { bodyMarkdown: body })).status).toBe(200)
         expect((await publicar(ANA, NOTE)).status).toBe(202)
         expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'ready', 20_000)).toBe(true)
+        await graphSettled(Number((await revisionOf(NOTE))!.id))
         expect(await landDraftIngest(Number((await revisionOf(NOTE))!.id))).toEqual({ published: true })
         expect(await revisionOf(NOTE)).toBeUndefined()
       }
@@ -659,6 +687,11 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
           }
           try {
             expect(sharedEnqueues()).toHaveLength(1) // the re-index did go out: the hold landed inside it
+            // 🔴 ...so it is taken back out of the shared corpus, after it went in.
+            const enq = aiCalls.findIndex((c) => c.path === 'ingest.enqueue' && (c.args[0] as { corpus?: string }).corpus === 'eco-8')
+            const ret = aiCalls.findIndex((c) => c.path === 'admin.setDocumentValidity' && c.args[0] === 'eco-8' && c.args[1] === String(NOTE))
+            expect(retiresOf(NOTE)).toHaveLength(1)
+            expect(ret).toBeGreaterThan(enq)
             // No swap: the note's text, gate columns and graph rows are the old ones.
             expect(await row(NOTE)).toEqual(before)
             expect(await noteLabels()).toEqual(labelsBefore)
