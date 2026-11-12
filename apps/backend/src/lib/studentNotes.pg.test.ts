@@ -638,6 +638,45 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         }, 60_000)
       }
 
+      for (const which of ['note', 'revision'] as const) {
+        it(`🔴 the ${which} held DURING the re-index: no swap, the published note intact, 'consent-held'; released, it is promoted`, async () => {
+          const rev = await changeAndWait()
+          const before = await row(NOTE)
+          const labelsBefore = await noteLabels()
+          const reindexOf = async () =>
+            (await rowsOf(pg!.db, sql`SELECT reindex_ingest_id AS x FROM documents WHERE id = ${NOTE}`))[0]!.x
+          const reindexBefore = await reindexOf()
+          const heldId = which === 'note' ? NOTE : rev
+          // The hold lands while ai-service takes the re-index: after the entry check, before the swap.
+          ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = async () => {
+            await hold(heldId, true)
+          }
+          aiCalls.length = 0
+          try {
+            expect(await landDraftIngest(rev)).toEqual({ published: false, reason: 'consent-held' })
+          } finally {
+            ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = undefined
+          }
+          try {
+            expect(sharedEnqueues()).toHaveLength(1) // the re-index did go out: the hold landed inside it
+            // No swap: the note's text, gate columns and graph rows are the old ones.
+            expect(await row(NOTE)).toEqual(before)
+            expect(await noteLabels()).toEqual(labelsBefore)
+            expect(await reindexOf()).toEqual(reindexBefore)
+            // The revision is kept and its claim handed back.
+            const kept = await revisionOf(NOTE)
+            expect([Number(kept?.id), kept?.p]).toEqual([rev, 'draft'])
+          } finally {
+            await hold(heldId, false)
+          }
+          // Control: the same revision, no longer held, is promoted.
+          aiCalls.length = 0
+          expect(await landDraftIngest(rev)).toEqual({ published: true })
+          expect(await revisionOf(NOTE)).toBeUndefined()
+          expect(String((await row(NOTE)).r)).not.toBe(String(before.r))
+        }, 60_000)
+      }
+
       it('a held note: "Publicar cambios" starts nothing — endpoint (CONSENT_HELD_MESSAGE) and the lib for any other caller', async () => {
         expect((await autosave(ANA, NOTE, { bodyMarkdown: nextBody() })).status).toBe(200)
         await hold(NOTE, true)

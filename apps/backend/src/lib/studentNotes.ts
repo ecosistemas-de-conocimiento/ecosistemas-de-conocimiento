@@ -501,6 +501,15 @@ export async function promoteRevision(args: {
       { label: `republish note ${String(note.id)}` },
     )
 
+    // 🔴 RETENIDO POR CONSENTIMIENTO, READ AGAIN RIGHT BEFORE THE SWAP. The
+    // check at entry is minutes old by now (the re-index above, the ingest
+    // before it); a hold that landed in between stops the swap. The claim is
+    // handed back: the revision stays a draft, the note keeps its text.
+    if (await noteOrRevisionHeld(payload, revision, note.id as Id)) {
+      await release()
+      return 'consent-held'
+    }
+
     // 2. The swap, in one transaction, only while the note is still published.
     const { sql } = await import('@payloadcms/db-postgres')
     const r = revision
