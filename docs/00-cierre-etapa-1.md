@@ -3,8 +3,8 @@
 - **Versión:** 1.0
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Código documentado:** código en `f971d54c` (2026-11-12), la Etapa 1 con correcciones; la etiqueta `etapa-1-con-correcciones` marca esta versión de los docs (mismo código, solo agrega documentación)
-- **Fuentes:** [Visión y alcance](01-proyecto/vision-y-alcance.md), [Roadmap](01-proyecto/roadmap.md), [Cronología e hitos](01-proyecto/cronologia-e-hitos.md), [Seguridad](06-privacidad-y-seguridad/seguridad.md), [Protección de datos](06-privacidad-y-seguridad/proteccion-de-datos.md), [Evaluaciones de IA](07-calidad/evaluaciones-de-ia.md), [Estrategia de pruebas](07-calidad/estrategia-de-pruebas.md); `git log` y el árbol de `apps/` en `f971d54c`, leídos el 2026-11-12
+- **Código documentado:** la rama `main` del 2026-11-12, la Etapa 1 con correcciones; la etiqueta `etapa-1-con-correcciones` marca esta versión de los docs (mismo código, solo agrega documentación)
+- **Fuentes:** [Visión y alcance](01-proyecto/vision-y-alcance.md), [Roadmap](01-proyecto/roadmap.md), [Cronología e hitos](01-proyecto/cronologia-e-hitos.md), [Seguridad](06-privacidad-y-seguridad/seguridad.md), [Protección de datos](06-privacidad-y-seguridad/proteccion-de-datos.md), [Evaluaciones de IA](07-calidad/evaluaciones-de-ia.md), [Estrategia de pruebas](07-calidad/estrategia-de-pruebas.md); `git log` y el árbol de `apps/` en `main`, leídos el 2026-11-12
 
 Resumen para quien redacte el informe de la Etapa 1. Cada fila remite al documento o al código que la respalda.
 
@@ -17,7 +17,7 @@ Resumen para quien redacte el informe de la Etapa 1. Cada fila remite al documen
 
 ## 2. Entregables de la Etapa 1
 
-Estados: **Implementado** (en `f971d54c`, desplegado en dev), **Planeado** (con plantilla o diseño, sin código), **Pendiente** (sin código). La lista sale de [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.1, §6.2 y §7; cada ruta y archivo se comprobó en el árbol de `f971d54c` el 2026-11-12 (medido con `ls` y `grep`).
+Estados: **Implementado** (en la rama `main`, desplegado en dev), **Planeado** (con plantilla o diseño, sin código), **Pendiente** (sin código). La lista sale de [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.1, §6.2 y §7; cada ruta y archivo se comprobó en el árbol de `main` el 2026-11-12 (medido con `ls` y `grep`).
 
 ### 2.1 Entregable 1: plataforma del repositorio
 
@@ -71,7 +71,7 @@ Criterios de éxito: contribución de punta a punta **implementado** (sin compro
 
 ## 4. Correcciones posteriores al cierre (29 oct - 12 nov)
 
-167 commits sin merges con fecha de autor del 2026-10-29 al 2026-11-12 (medido con `git log --no-merges` sobre `f971d54c` el 2026-11-12): 4 el 29 oct, 18 el 4 nov, 2 el 6, 9 el 7, 3 el 9, 103 el 10, 18 el 11 y 10 el 12. Desde el 2026-11-10, `main` solo recibe correcciones y la funcionalidad nueva va a `etapa-2`. La lista completa está en [Cronología e hitos](01-proyecto/cronologia-e-hitos.md) §4.1.
+167 commits sin merges con fecha de autor del 2026-10-29 al 2026-11-12 (medido con `git log --no-merges` sobre `main` el 2026-11-12): 4 el 29 oct, 18 el 4 nov, 2 el 6, 9 el 7, 3 el 9, 103 el 10, 18 el 11 y 10 el 12. Desde el 2026-11-10, `main` solo recibe correcciones y la funcionalidad nueva va a `etapa-2`. La lista completa está en [Cronología e hitos](01-proyecto/cronologia-e-hitos.md) §4.1.
 
 | Tema | Qué se corrigió | Fechas |
 |---|---|---|
@@ -119,16 +119,15 @@ No hay entorno de producción ni testimonio real de personas externas (citado de
 
 ## 6. Ramas y versión
 
-| Referencia | Commit | Qué contiene |
-|---|---|---|
-| `etapa-1` | `52a4a1a1` | La Etapa 1 sin correcciones: todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después |
-| Código de la Etapa 1 con correcciones | `f971d54c` (2026-11-12) | La línea de corte del código |
-| `main` | código en `f971d54c` | La Etapa 1 con correcciones: el código de `f971d54c` más commits que solo cambian `docs/` e `infra/fleet/` |
-| `etapa-1-con-correcciones` (etiqueta fija) | esta versión de los docs | `main` al entregar los docs, 2026-11-12 |
-| `etapa-2` | igual a `main` al 2026-11-12 | Trabajo nuevo |
-| Desplegado en dev | `f971d54c` (2026-11-12) | Antes: `6c0f65ad`, y antes `a6026876`, `c4f53632` y `367c2698`. Staging sigue en su imagen del 2026-10-17 |
+| Referencia | Qué contiene |
+|---|---|
+| `etapa-1` | La Etapa 1 sin correcciones: todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después |
+| `main` | La Etapa 1 con correcciones; su código es la línea de corte del 2026-11-12, y lo posterior solo cambia `docs/` e `infra/fleet/` |
+| `etapa-1-con-correcciones` (etiqueta fija) | `main` al entregar los docs, 2026-11-12 |
+| `etapa-2` | Trabajo nuevo; igual a `main` al 2026-11-12 |
+| Desplegado en dev | La versión de `main` del 2026-11-12. Staging sigue en su imagen del 2026-10-17. Historial de despliegues en [Despliegue y runbook](05-infraestructura/despliegue-y-runbook.md) |
 
-Lo encontrado después de `f971d54c` va a la Etapa 2.
+Lo encontrado después del 2026-11-12 va a la Etapa 2.
 
 ## 7. Lo que quedó abierto
 

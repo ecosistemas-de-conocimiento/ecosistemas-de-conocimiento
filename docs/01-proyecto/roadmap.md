@@ -3,7 +3,7 @@
 - **Versión:** 1.4
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** en el repositorio: `plan/ux-demo-backlog.md`, `plan/corpus-recomendaciones.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/auditoria-ia-2026-10-17.md`, `plan/auditoria-codigo-2026-10-28.md`, `plan/servidor-desarrollo.md` y `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, `plan/adr-corpus-graph.md`, `TESTING.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, historial de git de `main` (hasta el 2026-10-29; la versión 1.2 lo contrasta con `main` en b7dc944f y con lo desplegado en dev a las 18:33 UTC, 367c2698, el 2026-11-10; la 1.3, con `main` en 687ff21e y con lo desplegado en dev, c4f53632, el 2026-11-11; la 1.4, con `main` y dev en f971d54c, la línea de corte de la Etapa 1, el 2026-11-12). Fuera del repositorio: el brief v1 (2026-05-11), el informe de reunión con desarrollo del 21 de octubre de 2026 (§I a §VIII), la bitácora del proyecto (registros del 2026-10-21 y 2026-10-28) y los resultados de evaluación del 2026-10-29.
+- **Fuentes:** en el repositorio: `plan/ux-demo-backlog.md`, `plan/corpus-recomendaciones.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/auditoria-ia-2026-10-17.md`, `plan/auditoria-codigo-2026-10-28.md`, `plan/servidor-desarrollo.md` y `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, `plan/adr-corpus-graph.md`, `TESTING.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, historial de git de `main` (hasta el 2026-10-29; la versión 1.2 lo contrasta con `main` y con lo desplegado en dev a las 18:33 UTC el 2026-11-10; la 1.3, con `main` y con lo que corría en dev el 2026-11-11; la 1.4, con `main` y dev en la línea de corte de la Etapa 1, el 2026-11-12). Fuera del repositorio: el brief v1 (2026-05-11), el informe de reunión con desarrollo del 21 de octubre de 2026 (§I a §VIII), la bitácora del proyecto (registros del 2026-10-21 y 2026-10-28) y los resultados de evaluación del 2026-10-29.
 
 ## Para quién es y qué responde
 
@@ -11,7 +11,7 @@ Este documento es para quien planee y ejecute las etapas siguientes del proyecto
 
 Lo construido en la Etapa 1 está en [Visión y alcance](vision-y-alcance.md) §6 y en [Historias de usuario](../02-requisitos/historias-de-usuario.md). La secuencia de hechos está en [Cronología e hitos](cronologia-e-hitos.md).
 
-Ramas: `etapa-1` (52a4a1a1) es la Etapa 1 sin correcciones; `main` es la Etapa 1 con correcciones: código en f971d54c, la línea de corte; la etiqueta `etapa-1-con-correcciones` marca la versión entregada de los docs (2026-11-12, mismo código, solo agrega documentación); la rama `etapa-2` lleva la funcionalidad nueva. Lo que quedó abierto al cierre está en [Lo que quedó abierto al cierre de la Etapa 1](#lo-que-quedó-abierto-al-cierre-de-la-etapa-1). Lo que la revisión del 2026-11-10 clasificó como funcionalidad nueva está en la sección [Etapa 2](#etapa-2), al final.
+Ramas: `etapa-1` es la Etapa 1 sin correcciones; `main` es la Etapa 1 con correcciones, con el código de la línea de corte del 2026-11-12; la etiqueta `etapa-1-con-correcciones` marca la versión entregada de los docs (2026-11-12, mismo código, solo agrega documentación); la rama `etapa-2` lleva la funcionalidad nueva. Lo que quedó abierto al cierre está en [Lo que quedó abierto al cierre de la Etapa 1](#lo-que-quedó-abierto-al-cierre-de-la-etapa-1). Lo que la revisión del 2026-11-10 clasificó como funcionalidad nueva está en la sección [Etapa 2](#etapa-2), al final.
 
 ## 1. Punto de partida
 
@@ -80,33 +80,33 @@ El informe del 21 de octubre §VIII lista acciones del equipo que no son código
 
 ### 3.0 Hecho del 2026-11-10 al 2026-11-12
 
-La revisión de `main` del 2026-11-10 y las correcciones que siguieron cerraron varios pendientes de esta lista. Salen de las tablas de abajo. «Desplegado» quiere decir que el commit corre en dev, que tiene f971d54c desde el 2026-11-12 (antes: c4f53632 el 2026-11-10, medido con `docker ps`; a6026876 y 6c0f65ad el 2026-11-12, citado de `infra/fleet/edc-1.md` §4).
+La revisión de `main` del 2026-11-10 y las correcciones que siguieron cerraron varios pendientes de esta lista. Salen de las tablas de abajo. «Desplegado» quiere decir que el cambio corre en dev, que tiene la versión de `main` del 2026-11-12 desde ese día (antes: la del despliegue del 2026-11-10 a las 23:03 UTC, medido con `docker ps`, y las de los despliegues del 2026-11-12 a las 02:22 y 15:31 UTC, citados de `infra/fleet/edc-1.md` §4).
 
 | Hecho | Estado | Prueba |
 |---|---|---|
-| Límite de intentos de inicio de sesión por (IP, correo) y por IP, antes del bloqueo de Payload | Desplegado | `apps/backend/src/lib/loginRateLimit.ts`; commits a7ca4b48, 2a4b8a44 |
-| Una cuenta desactivada no inicia sesión, pierde sus sesiones y no lee ni sube (A-01) | Desplegado | commits ce46db7b, 6841b71a, b2d6958d |
-| Cuerpos JSON y campos de texto acotados (8 MiB) | Desplegado | `apps/backend/src/lib/bodyCap.ts`; commit cac9d6ad |
-| Subidas simultáneas por cuenta (2) y cuerpos lentos (30 s sin bytes, 120 s en total) | Desplegado | commit 780f614d |
-| Barrido diario de entidades huérfanas del grafo | Desplegado | `apps/backend/src/lib/graph/orphanJanitor.ts`; commits 3d971397, fdee543a |
-| Cuerpo de los avisos entre servicios vaciado a los 30 días, tarea diaria | Desplegado | `apps/backend/src/lib/callbackRetention.ts`; commit f8294d65 |
+| Límite de intentos de inicio de sesión por (IP, correo) y por IP, antes del bloqueo de Payload | Desplegado | `apps/backend/src/lib/loginRateLimit.ts` |
+| Una cuenta desactivada no inicia sesión, pierde sus sesiones y no lee ni sube (A-01) | Desplegado | `git log` de `main` |
+| Cuerpos JSON y campos de texto acotados (8 MiB) | Desplegado | `apps/backend/src/lib/bodyCap.ts` |
+| Subidas simultáneas por cuenta (2) y cuerpos lentos (30 s sin bytes, 120 s en total) | Desplegado | `git log` de `main` |
+| Barrido diario de entidades huérfanas del grafo | Desplegado | `apps/backend/src/lib/graph/orphanJanitor.ts` |
+| Cuerpo de los avisos entre servicios vaciado a los 30 días, tarea diaria | Desplegado | `apps/backend/src/lib/callbackRetention.ts` |
 | Volcados de base de datos: se quedan los 7 más recientes por entorno; primera purga hecha (52 volcados de dev, 1231.3 MB por lado, medido el 2026-11-10) | Hecho en edc-1 y en la copia fuera de él; paso manual del runbook | `infra/fleet/edc-1.md` |
-| Cambios de `keepPublicFigures` y del respaldo del detector auditados y con re-gate | Desplegado | commit 887fae32 |
-| Ajustes solo para el responsable; `keepPublicFigures` solo para la administración de plataforma; quien revisa no entra a borradores ajenos (A-07) | Desplegado | commit 50bde2ae |
-| Un estudiante solo ve en el roster al personal, a sí mismo y a quien activó `shareWithPeers` | Desplegado | commit f685923d |
-| Título de un `documento` con compuerta redactado en todas las superficies; falla cerrado si falta `anonymise` | Desplegado | commits b2a51aed, 2f21e91b, a2ba0e19, ed35b605, b7dc944f |
-| Retenido por consentimiento (`consentHeld`): bloquea re-gate, backfill, ingesta y publicación | Desplegado | `apps/backend/src/lib/consentHold.ts`; commits 512dcc1f, 7987c171, ccce6281 |
-| Ningún registro lleva el texto de un error crudo ni los parámetros de una consulta (P-07) | Desplegado | commits c50608fd, fdee543a, 780f614d, 752b60f3 |
-| Desde el 2026-11-11, la regla de eslint `edc/no-raw-error-log` lo hace cumplir en web, backend y ai-service, y ninguna columna o respuesta que lee el navegador lleva el texto de un error crudo | Desplegado | commits cc27d332, f26bb848, 4a3aecc1 |
-| Filtros a través de una relación acotados: 5 cruces y 5,000 ids por petición (`QUERY_RELATION_MAX_TERMS`, `QUERY_RELATION_MAX_IDS`; 400 al pasarse), 2 a la vez y 30 por minuto por persona (429) | Desplegado | `apps/backend/src/access/relationFilters.ts`; commits 36bf6cf5, 490de211, 0c639102 |
-| Conversaciones nuevas por cuenta: 60 por hora (`SESSION_RATELIMIT_CREATE_USER_MAX`, 429) | Desplegado | `apps/backend/src/collections/Sessions.ts`; commit 36bf6cf5 |
-| Retenido por consentimiento en todas las rutas, scripts y el grafo: ninguna ruta reprocesa una fila retenida y la revisión de una nota retenida también queda retenida | Desplegado | commits 17a5d985, b29c72ba, c12a0ab5, 31de008a |
-| Escrituras con una sola conexión; el chequeo de bloqueos ya no revela filas de otro ecosistema | Desplegado | commits fd738ba9, 3e619794 |
-| Retención por consentimiento en el grafo, en «Publicar cambios» y en la ingesta tardía del re-índice | Desplegado | commits 1ac2669e, d97271fb, 0d3f2de6, ca5cf2b4, 6a9a3e45, 4a6c77dc |
-| Una primera publicación que aterriza tras una retención o un retiro se retira; un retiro fallido responde 500 y se reintenta | Desplegado | commits 3f5f2a29, dd7b7bce |
-| Enmascarado de errores en ai-service y huecos de la regla `edc/no-raw-error-log` | Desplegado | commits da6e838f, cbf8d7ee |
-| Columnas de error guardadas ocultas al leer, con un patrón único de mensajes de Postgres que citan valores; script `clean-stored-errors.ts` (0 filas en dev, 2026-11-12) | Desplegado | commits b202fb1c, 196105ca; `infra/fleet/edc-1.md` §4zzzzzzzzzz |
-| Una escritura vieja de fila entera ya no revierte ninguna columna de `documents`; editar el texto contra un veredicto concurrente responde 409 | Desplegado | commits fdab9a5f, aa140d5d, bb1fc42d, f971d54c |
+| Cambios de `keepPublicFigures` y del respaldo del detector auditados y con re-gate | Desplegado | `git log` de `main` |
+| Ajustes solo para el responsable; `keepPublicFigures` solo para la administración de plataforma; quien revisa no entra a borradores ajenos (A-07) | Desplegado | `git log` de `main` |
+| Un estudiante solo ve en el roster al personal, a sí mismo y a quien activó `shareWithPeers` | Desplegado | `git log` de `main` |
+| Título de un `documento` con compuerta redactado en todas las superficies; falla cerrado si falta `anonymise` | Desplegado | `git log` de `main` |
+| Retenido por consentimiento (`consentHeld`): bloquea re-gate, backfill, ingesta y publicación | Desplegado | `apps/backend/src/lib/consentHold.ts` |
+| Ningún registro lleva el texto de un error crudo ni los parámetros de una consulta (P-07) | Desplegado | `git log` de `main` |
+| Desde el 2026-11-11, la regla de eslint `edc/no-raw-error-log` lo hace cumplir en web, backend y ai-service, y ninguna columna o respuesta que lee el navegador lleva el texto de un error crudo | Desplegado | `git log` de `main` |
+| Filtros a través de una relación acotados: 5 cruces y 5,000 ids por petición (`QUERY_RELATION_MAX_TERMS`, `QUERY_RELATION_MAX_IDS`; 400 al pasarse), 2 a la vez y 30 por minuto por persona (429) | Desplegado | `apps/backend/src/access/relationFilters.ts` |
+| Conversaciones nuevas por cuenta: 60 por hora (`SESSION_RATELIMIT_CREATE_USER_MAX`, 429) | Desplegado | `apps/backend/src/collections/Sessions.ts` |
+| Retenido por consentimiento en todas las rutas, scripts y el grafo: ninguna ruta reprocesa una fila retenida y la revisión de una nota retenida también queda retenida | Desplegado | `git log` de `main` |
+| Escrituras con una sola conexión; el chequeo de bloqueos ya no revela filas de otro ecosistema | Desplegado | `git log` de `main` |
+| Retención por consentimiento en el grafo, en «Publicar cambios» y en la ingesta tardía del re-índice | Desplegado | `git log` de `main` |
+| Una primera publicación que aterriza tras una retención o un retiro se retira; un retiro fallido responde 500 y se reintenta | Desplegado | `git log` de `main` |
+| Enmascarado de errores en ai-service y huecos de la regla `edc/no-raw-error-log` | Desplegado | `git log` de `main` |
+| Columnas de error guardadas ocultas al leer, con un patrón único de mensajes de Postgres que citan valores; script `clean-stored-errors.ts` (0 filas en dev, 2026-11-12) | Desplegado | `infra/fleet/edc-1.md` §4zzzzzzzzzz |
+| Una escritura vieja de fila entera ya no revierte ninguna columna de `documents`; editar el texto contra un veredicto concurrente responde 409 | Desplegado | `git log` de `main` |
 | Scripts de datos en dev: `hold-for-consent` (184 filas), `refresh-ai-titles` (52 documentos), `backfill-provenance-titles` (0 pendientes), `clear-legacy-held-text` (2 filas), `clean-stored-errors` (0 filas) | Hecho en dev el 2026-11-12 (medido por el agente de despliegue) | `infra/fleet/edc-1.md` §4zzzzzzzzz y §4zzzzzzzzzz |
 
 
@@ -116,7 +116,7 @@ Antes de recibir el primer testimonio real conviene cerrar los tres primeros pun
 
 | Pendiente | Prioridad | Fuente |
 |---|---|---|
-| Obtener el visto bueno sobre el equipo que aloja el Spark. El respaldo del detector en dev es `hosted`, por OpenRouter con ZDR (`provider.zdr: true`, nunca se reintenta sin esa marca), por decisión del 2026-11-09, confirmada el 2026-11-10. `none` sigue disponible como ajuste y desde el 2026-11-10 frena también el hospedado cuando no hay URL del Spark (commit 14e958e2, desplegado) | **Alta** | `apps/backend/src/lib/anonymise/fallbackGenerator.ts`; `apps/backend/src/lib/anonymise/detector.ts`; `plan/spark-ai-adopcion.md` |
+| Obtener el visto bueno sobre el equipo que aloja el Spark. El respaldo del detector en dev es `hosted`, por OpenRouter con ZDR (`provider.zdr: true`, nunca se reintenta sin esa marca), por decisión del 2026-11-09, confirmada el 2026-11-10. `none` sigue disponible como ajuste y desde el 2026-11-10 frena también el hospedado cuando no hay URL del Spark (desplegado) | **Alta** | `apps/backend/src/lib/anonymise/fallbackGenerator.ts`; `apps/backend/src/lib/anonymise/detector.ts`; `plan/spark-ai-adopcion.md` |
 | Encontrar la causa de la fuga del ecosistema 6 en la primera corrida de evals: un `documento` sintético terminó `ready` con sus 3 nombres privados. Puede ser el detector, la regla de figuras públicas o el comparador de la evaluación | **Alta** | Resultados de evaluación del 2026-10-29 |
 | Construir el aviso de privacidad, el consentimiento y el comprobante (ver §2.2) | **Alta** | Brief v1 §3 y §4 |
 | Quitar el valor por defecto público de la llave de administración de audio-service y confirmar qué valor usa dev | **Alta** | `infra/docker-compose.yml`; auditoría del 2026-10-28, hallazgo 11 |
@@ -126,7 +126,7 @@ Antes de recibir el primer testimonio real conviene cerrar los tres primeros pun
 | Verificar que la cabecera CSP de imágenes existe; el código muestra la imagen como texto, la cabecera no está verificada | Media | Auditoría del 2026-10-28, hallazgo 6 |
 | Conserje de conversaciones, apagado por omisión (`SESSION_JANITOR_ENABLED`). Los cuerpos de los avisos y los volcados ya tienen plazo (ver §3.0); el plazo de `edc_ai.traces` es Etapa 2 | Media | [Registro de riesgos](registro-de-riesgos.md), R-10; `apps/backend/src/lib/sessionJanitorScheduler.ts` |
 | Borrado de cuenta y canal para derechos ARCO | Media | [Registro de riesgos](registro-de-riesgos.md), R-07 |
-| Correr en dev la re-extracción del grafo de los documentos publicados (`scripts/reextract-published-graph.ts`, preparada el 2026-11-10 y sin correr), que reemplaza las filas sacadas antes de que la compuerta quitara autores | Media | `plan/auditoria-ia-2026-10-17.md`, G-2; commit feae7e18 |
+| Correr en dev la re-extracción del grafo de los documentos publicados (`scripts/reextract-published-graph.ts`, preparada el 2026-11-10 y sin correr), que reemplaza las filas sacadas antes de que la compuerta quitara autores | Media | `plan/auditoria-ia-2026-10-17.md`, G-2 |
 
 ### 3.2 Infraestructura y operación
 
@@ -159,7 +159,7 @@ El NVIDIA DGX Spark prestado sirve hoy la transcripción, el detector de anonimi
 | Corpus nuevo de unas 280 piezas (costo estimado de $2 a $3.5 USD, inferido en la fuente) | Media | `plan/corpus-recomendaciones.md` |
 | Semiosis práctica: reconocimiento de texto para 72 PDF escaneados sin capa de texto y siembra por wikilinks | Media | Bitácora del proyecto (2026-10-28) |
 | Volver a medir el estado del grafo en los ecosistemas 6, 7 y 8 tras el despliegue del 2026-10-29. Las entidades huérfanas ya las limpia un barrido diario (ver §3.0) | Media | Bitácora del proyecto (2026-10-28) |
-| Semiosis práctica: decidir qué filas del taller se republican cuando haya consentimiento. Las retenidas por consentimiento se marcan con `scripts/hold-for-consent.ts` a partir de `CONSENT_IDS_FILE` | Media | `apps/backend/src/lib/consentHold.ts`; commit 7987c171 |
+| Semiosis práctica: decidir qué filas del taller se republican cuando haya consentimiento. Las retenidas por consentimiento se marcan con `scripts/hold-for-consent.ts` a partir de `CONSENT_IDS_FILE` | Media | `apps/backend/src/lib/consentHold.ts` |
 | Resolver los documentos retenidos a propósito para la demostración de Revisión (1031, 1039 y 1129) | Baja | Bitácora del proyecto (2026-10-28) |
 | Limpiar ecosistemas y usuarios de prueba acumulados en dev | Baja | Lista de pendientes del proyecto |
 
@@ -210,17 +210,17 @@ El 2026-10-28, antes de grabar la evidencia en video, el proyecto adoptó un cri
 
 ## Lo que quedó abierto al cierre de la Etapa 1
 
-Pendientes de software conocidos en la línea de corte (f971d54c, 2026-11-12). Pasan a la Etapa 2 por la regla del 2026-11-12: un error o pendiente que no sea una fuga de datos personales va a la Etapa 2. Ninguna ocurre hoy como fuga. Las dos limitaciones conocidas podrían dejar publicada una copia y se declaran tal cual ([Registro de riesgos](registro-de-riesgos.md), R-43 y R-44).
+Pendientes de software conocidos en la línea de corte (2026-11-12). Pasan a la Etapa 2 por la regla del 2026-11-12: un error o pendiente que no sea una fuga de datos personales va a la Etapa 2. Ninguna ocurre hoy como fuga. Las dos limitaciones conocidas podrían dejar publicada una copia y se declaran tal cual ([Registro de riesgos](registro-de-riesgos.md), R-43 y R-44).
 
 | Tema | Por qué no bloquea el cierre | Referencia |
 |---|---|---|
-| Excepción de fechas que no son fechas («art. 3-IV-2020»): se revirtió porque dejaba pasar fechas reales | Hoy se tachan de más; censurar de más es aceptable | `git log` (f6f6daf6, e85c8b9a) |
+| Excepción de fechas que no son fechas («art. 3-IV-2020»): se revirtió porque dejaba pasar fechas reales | Hoy se tachan de más; censurar de más es aceptable | `git log` de `main` |
 | Entidades sin menciones en el grafo si la retención llega a mitad de la escritura | No expone texto; el barrido diario de entidades huérfanas las quita (inferido) | `apps/backend/src/lib/graph/orphanJanitor.ts` |
-| Cuando solo la revisión de una nota está retenida, también se retira del corpus el texto viejo de la nota | Censura de más, no fuga | `git log` (0d3f2de6) |
+| Cuando solo la revisión de una nota está retenida, también se retira del corpus el texto viejo de la nota | Censura de más, no fuga | `git log` de `main` |
 | **Limitación conocida:** copia viva en el corpus compartido si ai-service agota sus 7 intentos (unas 2 h 42 min) justo durante una retención o un retiro | No ocurre hoy; requiere que el aviso falle durante más de 2 h 42 min justo en ese momento (inferido de los 7 intentos, citados de `services/ai-service/src/services/callbacks/emit.ts`) | [Registro de riesgos](registro-de-riesgos.md), R-43 |
 | **Limitación conocida:** `backfillLengua.ts` re-ingesta sin `callbackUrl`; un documento retenido o retirado con ese trabajo en cola puede quedar publicado | No ocurre hoy; es un script de operador que se corre a mano | [Registro de riesgos](registro-de-riesgos.md), R-44 |
 | Lápidas de borrado; una ingesta que llega antes de guardar su id; una ingesta vieja que sobrescribe a una más nueva | Carreras de consistencia, no fuga | Handoff del coordinador del 2026-11-11 (fuera del repositorio) |
-| 17 formas raras de mensajes de Postgres sin cubrir; mensajes de Postgres en español (dev usa `en_US`); el patrón de errores en un paquete compartido; validar `error.code` del aviso de ai-service | Ninguna de las 17 formas lleva texto de usuario en esta app | `git log` (acc0a028) |
+| 17 formas raras de mensajes de Postgres sin cubrir; mensajes de Postgres en español (dev usa `en_US`); el patrón de errores en un paquete compartido; validar `error.code` del aviso de ai-service | Ninguna de las 17 formas lleva texto de usuario en esta app | `git log` de `main` |
 | Botón «Reintentar» para un borrador atascado en pendiente | Usabilidad; hoy solo hay reintento cuando el procesamiento falla | Handoff del coordinador del 2026-11-11 (fuera del repositorio) |
 | Tope total de conversaciones por usuario; verificación de correo; renombrar las llaves viejas de bucket | Ya hay tope por hora; solo la administración de plataforma cambia un correo | [Etapa 2](#etapa-2) |
 | Adjuntar documentos a la vez en la misma conversación (con `$push`/`$remove`); un formulario viejo del panel de admin | Concurrencia y deuda de interfaz, no fuga | Handoff del coordinador del 2026-11-11 (fuera del repositorio) |
@@ -232,7 +232,7 @@ Lo que la revisión del 2026-11-10 encontró y clasificó como funcionalidad nue
 
 | Aplazado a la Etapa 2 | Hallazgo | Fuente |
 |---|---|---|
-| Verificar un correo nuevo. Hoy solo la administración de plataforma cambia un correo | A-03 | commit ce46db7b |
+| Verificar un correo nuevo. Hoy solo la administración de plataforma cambia un correo | A-03 | `git log` de `main` |
 | Obligar a cambiar la contraseña temporal de `/miembros` en el primer acceso | A-04 | auditoría del 2026-11-10 |
 | Límite de inicio de sesión por correo desde varias IP | A-11 | `apps/backend/src/lib/loginRateLimit.ts` |
 | Límite de turnos de chat por persona | auditoría del 2026-10-28 | [Requisitos no funcionales](../02-requisitos/requisitos-no-funcionales.md) |
@@ -253,7 +253,7 @@ Decisiones del proyecto que siguen abiertas al 2026-11-11. Cada una afecta al pr
 - **Qué datos puede ver en crudo el detector hospedado:** direcciones, teléfonos, CURP y RFC.
 - **Cuánto tiempo se guarda una transcripción cruda.** No hay política para el texto extraído de un documento. Los cuerpos de los avisos entre servicios se vacían a los 30 días (decisión del 2026-11-10).
 - **Si un revisor puede aprobar una retención sobre su propia subida** o se exige otra persona (auditoría del 2026-10-28).
-- **Cómo se libera una retención:** el diseño del flujo no consta. Desde el 2026-11-10, una retención cuya verificación no terminó exige editar el texto antes de aprobar (commit 346b380d, desplegado).
+- **Cómo se libera una retención:** el diseño del flujo no consta. Desde el 2026-11-10, una retención cuya verificación no terminó exige editar el texto antes de aprobar (desplegado).
 - **Cómo se levanta una retención por consentimiento.** No hay camino en el código: es una decisión del responsable y un `UPDATE` escrito a mano (`apps/backend/src/lib/consentHold.ts`).
 - **Límite de tasa por ecosistema.** Hoy todos comparten un contador de 30 generaciones por minuto (auditoría del 2026-10-28).
 - **Si importa la latencia transatlántica** (caja en Alemania, usuarios en México): medir o mover la caja.

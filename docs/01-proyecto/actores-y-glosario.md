@@ -180,7 +180,7 @@ Cada término lleva una definición en lenguaje llano y, cuando aplica, su nombr
 | **Consentimiento versionado** | El consentimiento del estudiante para compartir sus testimonios: lleva fecha y versión y nombra a todos los lectores | Commit del 28 de octubre de 2026 |
 | **Estilo de respuesta** | El tono y la forma en que el chat de un ecosistema responde; lo elige el admin de plataforma | `apps/web/src/lib/answerStyle.ts` |
 | **Valoración** | Las estrellas de 1 a 5 y el comentario opcional que una persona deja sobre una respuesta | Historias B2.x |
-| **Micrófono en vivo** | El dictado que muestra el texto mientras se habla. El servidor nunca guarda el texto parcial. Desde el 2026-11-10 se ve al grabar y no pasa al cuadro del chat (commit aa73e01f, desplegado en dev) | `app/api/live/[sid]/route.ts`; auditoría del 2026-11-10, C-13 |
+| **Micrófono en vivo** | El dictado que muestra el texto mientras se habla. El servidor nunca guarda el texto parcial. Desde el 2026-11-10 se ve al grabar y no pasa al cuadro del chat (desplegado en dev) | `app/api/live/[sid]/route.ts`; auditoría del 2026-11-10, C-13 |
 | **Panorama del corpus** | Una pregunta sobre el acervo completo («dame un resumen del corpus») que se responde con los temas principales del grafo y la lista de documentos, sin buscar pasajes | `apps/web/src/lib/server/engine/overview.ts` |
 | **Figura pública** | Una persona cuyo nombre se conserva en un `documento` con gate si un admin de plataforma enciende `keepPublicFigures`. Nunca aplica a testimonios | `apps/backend/src/lib/features.ts` |
 
