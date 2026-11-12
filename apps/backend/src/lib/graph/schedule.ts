@@ -22,7 +22,7 @@
 
 import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/documentColumns'
-import { errSummary, isDatabaseError } from '@/lib/errorSummary'
+import { errSummary, safeErrMessage } from '@/lib/errorSummary'
 
 import { isConsentHeld } from './consentHold'
 
@@ -372,7 +372,7 @@ async function recordFailure(
   // 🔴 A DATABASE error's message is the failed query with its params (P-07):
   // a mention's label or snippet. Its summary goes to the log AND to
   // `graphError`, which the frontend shows.
-  const message = isDatabaseError(err) ? errSummary(err) : err instanceof Error ? err.message : String(err)
+  const message = safeErrMessage(err, 500)
   // 🔴 PRIVACY. A gated kind logs safe metadata only: a downstream error (a
   // Postgres unique violation, a client error) can quote a label or the reply.
   if (gated) {
