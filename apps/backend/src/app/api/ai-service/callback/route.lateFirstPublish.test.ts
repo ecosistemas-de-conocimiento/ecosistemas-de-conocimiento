@@ -44,8 +44,11 @@ const DRAFT = 'eco-8-draft-3'
 const updated: Array<Record<string, unknown>> = []
 let dedupeRows: Array<{ id: number }> = []
 let row: Record<string, unknown>
+/** `consent_held` in the TABLE (what `readConsentHeld` reads), apart from the snapshot's. */
+let heldInTable = false
 
 const fakePayload = {
+  db: { drizzle: { execute: async () => ({ rows: [{ free: !heldInTable }] }) } },
   create: async () => {
     const r = { id: 900 + dedupeRows.length + 1 }
     dedupeRows.push(r)
@@ -89,6 +92,8 @@ const statuses = () => updated.map((u) => (u.data as { publicationStatus?: strin
 beforeEach(() => {
   updated.length = 0
   dedupeRows = []
+  heldInTable = false
+  setDocumentValidity.mockImplementation(async () => ({ ok: true }))
   setDocumentValidity.mockClear()
   autoPublish.mockClear()
   release.mockClear()
@@ -230,6 +235,114 @@ describe('🔴 J still named by `publishIngestId` while the row is `unpublishing
     row = { ...row, publicationStatus: 'unpublishing', publishIngestId: 'unpub-K' }
     await post({ ingestId: 'unpub-K', corpus: DRAFT })
     expect(retiredCorpora()).toEqual([])
+    expect(statuses()).toEqual(['draft'])
+  })
+})
+
+const unavailable = () => Object.assign(new Error('ai-service 503'), { status: 503 })
+const sharedRetireFails = () =>
+  setDocumentValidity.mockImplementation(async (corpus: unknown) => {
+    if (corpus === SHARED) throw unavailable()
+    return { ok: true }
+  })
+
+describe('🔴 a shared copy that could not be retired answers 500 (ai-service sends it again)', () => {
+  const publishing = (over: Record<string, unknown> = {}) => ({ ...row, publicationStatus: 'publishing', publishIngestId: 'pub-J',
+    contentKind: 'documento', anonymise: false, anonymisationStatus: 'n/a', extractedText: 'x', ...over })
+
+  it('held while `publishing`, J completes: 500, the row left as read (the retry takes the same path)', async () => {
+    row = publishing({ consentHeld: true })
+    sharedRetireFails()
+    const res = await post({ ingestId: 'pub-J', corpus: SHARED })
+    expect(res.status).toBe(500)
+    expect(updated).toEqual([])
+    // The redelivery, with ai-service reachable again: retired, a draft.
+    setDocumentValidity.mockImplementation(async () => ({ ok: true }))
+    expect((await post({ ingestId: 'pub-J', corpus: SHARED })).status).toBe(200)
+    expect(statuses()).toEqual(['draft'])
+  })
+
+  it('held while `publishing`, J fails: 500', async () => {
+    row = publishing({ consentHeld: true })
+    sharedRetireFails()
+    expect((await post({ ingestId: 'pub-J', corpus: SHARED, ...FAILED })).status).toBe(500)
+    expect(updated).toEqual([])
+  })
+
+  it('no longer cleared by the gate while `publishing`: 500', async () => {
+    row = publishing({ contentKind: 'testimonio', anonymise: true, anonymisationStatus: 'rejected', redactedText: null })
+    sharedRetireFails()
+    expect((await post({ ingestId: 'pub-J', corpus: SHARED })).status).toBe(500)
+    expect(updated).toEqual([])
+  })
+
+  it('`unpublishing` with J still named: 500', async () => {
+    row = { ...row, publicationStatus: 'unpublishing', publishIngestId: 'pub-J' }
+    sharedRetireFails()
+    expect((await post({ ingestId: 'pub-J', corpus: SHARED })).status).toBe(500)
+    expect(updated).toEqual([])
+  })
+
+  it('a draft with J still named (held unpublish went first): 500', async () => {
+    row = { ...row, publishIngestId: 'pub-J', consentHeld: true }
+    sharedRetireFails()
+    expect((await post({ ingestId: 'pub-J', corpus: SHARED })).status).toBe(500)
+  })
+
+  it('control: the DRAFT copy cannot be retired on a normal publish: a row message, 200 (duplicate, not a leak)', async () => {
+    row = publishing()
+    setDocumentValidity.mockImplementation(async () => {
+      throw unavailable()
+    })
+    expect((await post({ ingestId: 'pub-J', corpus: SHARED })).status).toBe(200)
+    expect(updated.map((u) => Object.keys(u.data as object))).toEqual([['publicationError']])
+  })
+})
+
+describe('🔴 the move is over but J is still named (a draft)', () => {
+  it('J fails: retired, and no `publicationError` written on a draft', async () => {
+    row = { ...row, publishIngestId: 'pub-J', consentHeld: true }
+    await post({ ingestId: 'pub-J', corpus: SHARED, ...FAILED })
+    expect(retiredCorpora()).toEqual([SHARED])
+    // Only the lingering id is cleared; the draft carries no error.
+    expect(updated.map((u) => u.data)).toEqual([{ publicationStatus: 'draft', publicationError: null, publishIngestId: null }])
+  })
+
+  it('J completes with no `corpus`: retired, the id cleared, still a draft', async () => {
+    row = { ...row, publishIngestId: 'pub-J' }
+    await post({ ingestId: 'pub-J' })
+    expect(retiredCorpora()).toEqual([SHARED])
+    expect(statuses()).toEqual(['draft'])
+  })
+
+  it('control: `published` with an id left over, not held: nothing retired, nothing written', async () => {
+    row = { ...row, publicationStatus: 'published', publishIngestId: 'pub-J' }
+    await post({ ingestId: 'pub-J', corpus: SHARED })
+    expect(retiredCorpora()).toEqual([])
+    expect(updated).toEqual([])
+  })
+
+  it('control: J lands in the DRAFT corpus on a draft: nothing retired', async () => {
+    row = { ...row, publishIngestId: 'pub-J' }
+    await post({ ingestId: 'pub-J', corpus: DRAFT })
+    expect(retiredCorpora()).toEqual([])
+  })
+})
+
+describe('🔴 the hold read from the table, not only the snapshot', () => {
+  it('late landing: publishing, the snapshot not held, the table held: retired', async () => {
+    row = { ...row, publicationStatus: 'publishing', publishIngestId: 'pub-J2' }
+    heldInTable = true
+    await post({ ingestId: 'pub-J', corpus: SHARED })
+    expect(retiredCorpora()).toEqual([SHARED])
+  })
+
+  it('B: J matches, the snapshot not held, the table held: never `published`, the draft copy untouched', async () => {
+    row = { ...row, publicationStatus: 'publishing', publishIngestId: 'pub-J', contentKind: 'documento', anonymise: false,
+      anonymisationStatus: 'n/a', extractedText: 'x' }
+    heldInTable = true
+    await post({ ingestId: 'pub-J', corpus: SHARED })
+    expect(retiredCorpora()).toEqual([SHARED])
     expect(statuses()).toEqual(['draft'])
   })
 })

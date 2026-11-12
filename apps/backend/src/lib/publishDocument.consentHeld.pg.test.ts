@@ -22,7 +22,7 @@ vi.mock('@/lib/aiClient', () => {
 })
 
 import { CONSENT_HELD_MESSAGE } from './consentHold'
-import { confirmPublish } from './publishDocument'
+import { confirmPublish, isSharedCopyNotRetired, unpublish } from './publishDocument'
 import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, tryHoldElsewhere, type RealPostgres } from './testing/realPostgres'
 
 if (!dockerOk) console.warn('[publishDocument.consentHeld.pg.test] docker is not usable — these tests SKIP.')
@@ -135,4 +135,75 @@ describe.skipIf(!dockerOk)('🔴 confirmPublish vs a consent hold (real Postgres
     expect(retired).toEqual([DRAFT, SHARED])
     expect((await state()).p).toBe('unpublishing')
   })
+
+  it('🔴 held in the TABLE after the snapshot was read: caught before the draft copy is retired', async () => {
+    const doc = await readDoc()
+    await pg.db.execute(sql`UPDATE documents SET consent_held = true WHERE id = ${DOC}`)
+    const { retired, client } = clientWith()
+    await confirmPublish(doc, { payload, client })
+    expect(retired).toEqual([SHARED])
+    expect((await state()).p).toBe('draft')
+  })
+
+  it("🔴 a revision: its ORIGINAL is locked FOR SHARE too, and the original's hold waits until commit", async () => {
+    const ORIG = 50
+    await pg.db.execute(sql.raw(`
+      INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, content_kind, publication_status,
+                             anonymisation_status, consent_held, anonymise, extracted_text, ingest_status)
+      VALUES (${ORIG}, 1, 1, 'orig', 'pdf', 'documento', 'published', 'n/a', false, false, 'texto', 'ready');
+      UPDATE documents SET revision_of_id = ${ORIG} WHERE id = ${DOC};
+    `))
+    const drizzle = (payload.db as unknown as { drizzle: { transaction: (fn: (tx: unknown) => Promise<unknown>) => Promise<unknown> } }).drizzle
+    const real = drizzle.transaction.bind(drizzle)
+    let attempt: 'blocked' | 'written' | null = null
+    const spy = vi.spyOn(drizzle, 'transaction').mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
+      real(async (tx) => {
+        const t = tx as { execute(q: unknown): Promise<unknown> }
+        return fn({
+          execute: async (q: unknown) => {
+            const out = await t.execute(q)
+            if (attempt === null) attempt = await tryHoldElsewhere(pg.db, ORIG)
+            return out
+          },
+        })
+      })) as never)
+    try {
+      const { client } = clientWith()
+      await confirmPublish(await readDoc(), { payload, client })
+    } finally {
+      spy.mockRestore()
+    }
+    expect(attempt).toBe('blocked')
+  })
+
+  it('🔴 withdrawn meanwhile and the shared retire fails: it THROWS (the callback answers 500), not a row message', async () => {
+    const doc = await readDoc()
+    const client = {
+      ingest: { enqueue: async () => ({ ingestId: 'x' }) },
+      admin: {
+        setDocumentValidity: async (corpus: string) => {
+          if (corpus === DRAFT) {
+            await pg.db.execute(sql`UPDATE documents SET publication_status = 'unpublishing' WHERE id = ${DOC}`)
+            return {}
+          }
+          throw Object.assign(new Error('ai-service 503'), { status: 503 })
+        },
+      },
+    } as never
+    const err = await confirmPublish(doc, { payload, client }).then(() => null, (e: unknown) => e)
+    expect(isSharedCopyNotRetired(err)).toBe(true)
+  })
+
+  it('🔴 a held unpublish whose retire fails: the reason is on the row and it throws (nothing swallowed)', async () => {
+    await pg.db.execute(sql`UPDATE documents SET consent_held = true, publication_status = 'published', publish_ingest_id = NULL WHERE id = ${DOC}`)
+    const client = {
+      ingest: { enqueue: async () => ({ ingestId: 'x' }) },
+      admin: { setDocumentValidity: async () => { throw Object.assign(new Error('ai-service 503'), { status: 503 }) } },
+    } as never
+    await expect(unpublish(await readDoc(), { payload, client, retry: { maxAttempts: 1 } } as never)).rejects.toThrow()
+    const after = await state()
+    expect(after.p).toBe('published')
+    expect(typeof after.e === 'string' && (after.e as string).length > 0).toBe(true)
+  })
 })
+

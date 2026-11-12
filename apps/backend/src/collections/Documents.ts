@@ -13,6 +13,8 @@ import type {
   Where,
 } from 'payload'
 import { APIError, Forbidden, ValidationError } from 'payload'
+import { select as selectValidate, text as textValidate, textarea as textareaValidate } from 'payload/shared'
+import { writtenOnlyWhenSent } from './hooks/writtenOnlyWhenSent'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { constrainRelationQueries, sortParts, WHERE_OPERATORS } from '../access/relationFilters'
@@ -3276,6 +3278,8 @@ export const Documents: CollectionConfig = {
       // cannot fall out of step; the labels are the only hand-written part.
       options: PUBLICATION_STATES.map((value) => ({ value, label: PUBLICATION_LABELS[value] })),
       admin: { position: 'sidebar' },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('publicationStatus', selectValidate),
     },
     {
       /**
@@ -3647,6 +3651,8 @@ export const Documents: CollectionConfig = {
       maxLength: DOCUMENT_TEXT_MAX_LENGTH,
       // 🔴 See `gateWritesOnly`. `admin.readOnly` is a panel hint; this is the rule.
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
+      ...writtenOnlyWhenSent('redactedText', textareaValidate),
       admin: {
         readOnly: true,
         description:
@@ -3698,6 +3704,7 @@ export const Documents: CollectionConfig = {
       // 🔴 Read: uploader / platform admin only on gated content. Reviewers read
       // it through `lib/holdReview.ts` (overrideAccess). See `mayReadGatedOriginal`.
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      ...writtenOnlyWhenSent('heldText', textareaValidate),
       admin: {
         readOnly: true,
         description:
@@ -3716,6 +3723,7 @@ export const Documents: CollectionConfig = {
       name: 'heldTextHash',
       type: 'text',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      ...writtenOnlyWhenSent('heldTextHash', textValidate),
       admin: { readOnly: true, hidden: true },
     },
     {
@@ -3813,6 +3821,7 @@ export const Documents: CollectionConfig = {
       // 🔴 THE SINGLE MOST IMPORTANT LOCK IN THIS COLLECTION. A client that could
       // write `approved` here would skip the gate outright — see `gateWritesOnly`.
       access: { create: gateWritesOnly, update: gateWritesOnly },
+      ...writtenOnlyWhenSent('anonymisationStatus', selectValidate),
       admin: { position: 'sidebar' },
     },
     {

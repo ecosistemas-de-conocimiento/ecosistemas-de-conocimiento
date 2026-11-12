@@ -592,7 +592,10 @@ export async function beginPublish(
       data: { publicationStatus: 'publishing', publicationError: null },
       where: [
         { anonymisationStatus: { in: ['ready', 'approved'] } },
-        { redactedText: { exists: true } },
+        // 🔴 THE TEXT ABOUT TO BE SENT, not just "a redaction": `doc` may carry
+        // a redaction a reviewer has since rejected or a re-gate replaced.
+        // (The stored value, untrimmed: `corpusTextFor` trims what it sends.)
+        { redactedText: { equals: doc.redactedText } },
       ],
     })
     if (moved === 0) {
@@ -704,7 +707,7 @@ export async function confirmPublish(
    * retired and the row goes back to a draft. Never flipped to `published`.
    */
   if (rowMustPassGate(doc) && !corpusTextFor(doc).ok) {
-    await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+    await retireSharedCopy(deps.client, organizationId, doc.id, now, loggerOf(deps))
     await deps.payload.update({
       collection: 'documents',
       id: doc.id as never,
@@ -733,7 +736,41 @@ export async function confirmPublish(
   // document ends retrievable by nobody, as a held `unpublish` leaves it.
   if (flipped === 'consent-held') await withdrawHeldPublish(doc, deps)
   // Withdrawn meanwhile (`unpublishing`/`draft`): neither state has a shared copy.
-  if (flipped === 'moved') await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+  if (flipped === 'moved') await retireSharedCopy(deps.client, organizationId, doc.id, now, loggerOf(deps))
+}
+
+/**
+ * 🔴 THE SHARED COPY COULD NOT BE RETIRED (audit 2026-11-11, second pass).
+ * Thrown by {@link retireSharedCopy} so a caller that turns every other error
+ * into a row message (the callback's `failPublish`, which answers 200) lets
+ * this one through: the callback answers 500 and ai-service sends it again,
+ * up to its retry budget. Every path that throws it is idempotent on retry.
+ */
+export class SharedCopyNotRetiredError extends Error {
+  constructor(documentId: number | string, cause: unknown) {
+    super(`the shared copy of document ${String(documentId)} could not be retired: ${safeErrMessage(cause)}`)
+    this.name = 'SharedCopyNotRetiredError'
+    ;(this as { cause?: unknown }).cause = cause
+  }
+}
+
+export function isSharedCopyNotRetired(err: unknown): err is SharedCopyNotRetiredError {
+  return err instanceof SharedCopyNotRetiredError || (err as { name?: unknown } | null)?.name === 'SharedCopyNotRetiredError'
+}
+
+/** `retireFrom` on the ecosistema's shared corpus; a failure is a {@link SharedCopyNotRetiredError}. */
+export async function retireSharedCopy(
+  client: CorpusMover,
+  organizationId: number | string,
+  documentId: number | string,
+  now: Date,
+  log?: RetireLogger,
+): Promise<void> {
+  try {
+    await retireFrom(client, publishedCorpus(organizationId), documentId, now, log)
+  } catch (err) {
+    throw new SharedCopyNotRetiredError(documentId, err)
+  }
 }
 
 /**
@@ -748,7 +785,7 @@ export async function withdrawHeldPublish(
 ): Promise<void> {
   const { organizationId } = idsOf(doc)
   const now = (deps.now ?? (() => new Date()))()
-  await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+  await retireSharedCopy(deps.client, organizationId, doc.id, now, loggerOf(deps))
   await deps.payload.update({
     collection: 'documents',
     id: doc.id as never,
@@ -898,7 +935,15 @@ export async function unpublish(
    */
   if (isConsentHeld(doc as { consentHeld?: unknown }) || (await readConsentHeld(deps.payload, doc.id))) {
     const now = (deps.now ?? (() => new Date()))()
-    await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+    try {
+      await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+    } catch (err) {
+      // 🔴 Not swallowed, and not silent: the row keeps its status with the
+      // reason on it (the janitor's and the retry button's signal), and the
+      // endpoint answers 500. Nothing was written, so a retry starts over.
+      await recordTransitionFailure(doc, deps, err, 'unpublish')
+      throw err
+    }
     await deps.payload.update({
       collection: 'documents',
       id: doc.id as never,

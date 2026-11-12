@@ -1021,11 +1021,29 @@ async function dispatchPublishMove(
   doc: DocumentSnapshot,
   envelope: Extract<CallbackEnvelope, { event: 'ingest.completed' | 'ingest.failed' }>,
 ): Promise<void> {
-  const { confirmPublish, confirmUnpublish, failPublish, retireFrom, withdrawHeldPublish } = await import(
-    '@/lib/publishDocument'
-  )
+  const { confirmPublish, confirmUnpublish, failPublish, isSharedCopyNotRetired, retireSharedCopy, withdrawHeldPublish } =
+    await import('@/lib/publishDocument')
   const wasPublishing = doc.publicationStatus === 'publishing'
   const organizationId = relationId(doc.organization)
+  const { publishedCorpus } = await import('@/lib/corpus')
+  /** The landing may be the shared copy: the envelope says so, or says nothing. */
+  const maybeShared =
+    organizationId != null && (envelope.corpus === undefined || envelope.corpus === publishedCorpus(organizationId))
+
+  /**
+   * 🔴 THE MOVE IS OVER, BUT ITS ID LINGERED: a held `unpublish` sent the row
+   * straight to `draft` before `beginPublish` stored J's id. No move is
+   * waiting, so this landing is never a row message (no `publicationError` on
+   * a draft). A shared landing on a row that is not `published` is retired.
+   */
+  if (!wasPublishing && doc.publicationStatus !== 'unpublishing') {
+    if (doc.publicationStatus !== 'published' && maybeShared) {
+      const { getAdminAIClient } = await import('@/lib/aiClient')
+      await retireSharedCopy(getAdminAIClient(organizationId!) as never, organizationId!, doc.id, new Date())
+    }
+    if (doc.publicationStatus === 'draft') await confirmUnpublish(doc as never, { payload })
+    return
+  }
 
   // 🔴 HELD WHILE `publishing` (audit 2026-11-11, B): whatever landed is retired
   // and the row is a draft, on a failure too (a partial landing is a landing).
@@ -1112,16 +1130,17 @@ async function dispatchPublishMove(
       // Unpublish already retired the shared copy before this re-ingest was
       // enqueued. 🔴 Unless this landing IS the shared copy: J's id stored after
       // the unpublish wrote K's (the two writes interleave). Retired again.
-      if (organizationId != null) {
-        const { publishedCorpus } = await import('@/lib/corpus')
-        if (envelope.corpus === publishedCorpus(organizationId)) {
-          const { getAdminAIClient } = await import('@/lib/aiClient')
-          await retireFrom(getAdminAIClient(organizationId) as never, envelope.corpus, doc.id, new Date())
-        }
+      if (organizationId != null && envelope.corpus === publishedCorpus(organizationId)) {
+        const { getAdminAIClient } = await import('@/lib/aiClient')
+        await retireSharedCopy(getAdminAIClient(organizationId) as never, organizationId, doc.id, new Date())
       }
       await confirmUnpublish(doc as never, { payload })
     }
   } catch (err) {
+    // 🔴 A shared copy that could not be retired is NOT a row message: answered
+    // 500, so ai-service sends this again (`retireSharedCopy`). The row is as
+    // it was read, so the retry takes the same path.
+    if (isSharedCopyNotRetired(err)) throw err
     // A database error here quotes the row: `publicationError` reaches the browser.
     const reason = safeErrMessage(err)
     console.error('[callback] could not finish the publish move for doc', doc.id, safeErrMessage(err))
