@@ -152,7 +152,7 @@ Commits sin merges en `main`, por fecha de autor (medido con `git log --no-merge
 | 2026-11-12 | Scripts aplicados en dev, tras el despliegue de 6c0f65ad | `clear-legacy-held-text`: 2 filas; `clean-stored-errors`: 0 filas en las 7 columnas (medido por el agente de despliegue, citado de `edc-1.md`) | `infra/fleet/edc-1.md` §4zzzzzzzzzz |
 | 2026-11-12 | Despliegue de dev, terminado a las 19:42 UTC | f971d54c, deploy `x3o9j5ymeozbz8hrlvvcmrz1`: las escrituras viejas de fila entera (medido con `docker ps` por el agente de despliegue) | `infra/fleet/edc-1.md` §4 |
 | 2026-11-12 | Ramas de la Etapa 1 | `etapa-1` = 52a4a1a1: la Etapa 1 sin correcciones, todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después; `main` = la Etapa 1 con correcciones; `etapa-2` = trabajo nuevo, hoy igual a `main` | `git rev-parse` (52a4a1a1, medido el 2026-11-12) |
-| **2026-11-12** | **Línea de corte de la Etapa 1: f971d54c, etiqueta `etapa-1-con-correcciones`** | Lo que se encuentre después va a la Etapa 2 | `git log` (f971d54c) |
+| **2026-11-12** | **Línea de corte de la Etapa 1: f971d54c** | Lo que se encuentre después va a la Etapa 2. La etiqueta `etapa-1-con-correcciones`, `main` y `etapa-2` quedan en e491b5c9: mismo código, solo agrega documentación | `git log` (f971d54c, e491b5c9) |
 
 ## 5. Actividad por semana
 

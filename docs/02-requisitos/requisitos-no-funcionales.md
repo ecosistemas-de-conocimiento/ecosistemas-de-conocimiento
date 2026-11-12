@@ -47,10 +47,12 @@ Este documento es para el equipo del proyecto, para revisores institucionales y 
 | Accesibilidad | 5 | 3 | 1 | 1 |
 | Idioma e internacionalización | 3 | 2 | 1 | 0 |
 | Compatibilidad | 3 | 1 | 2 | 0 |
-| Mantenibilidad | 5 | 3 | 1 | 1 |
+| Mantenibilidad | 5 | 4 | 0 | 1 |
 | Observabilidad | 3 | 0 | 2 | 1 |
 | Costos de IA | 4 | 2 | 2 | 0 |
-| **Total** | **55** | **27** | **20** | **8** |
+| **Total** | **55** | **28** | **19** | **8** |
+
+Conteo medido el 2026-11-12 con `awk` sobre la columna de estado de cada fila RNF, por sección; «cumple (solo dev)» cuenta como cumple.
 
 ## 1. Rendimiento y latencia
 

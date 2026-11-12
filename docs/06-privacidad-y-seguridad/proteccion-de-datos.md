@@ -67,7 +67,7 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 | Consentimiento informado para quien aporta un testimonio | **Planeado** | Plantilla en borrador en [consentimientos](aviso-de-privacidad-y-consentimiento.md#d-consentimiento-informado-para-quien-aporta-un-testimonio); sin uso real |
 | Migración a inferencia albergada de forma independiente | **Planeado** | Sin contratos documentados |
 | Retención cero con DeepInfra (embeddings de respaldo en dev, reordenamiento en staging) | **Pendiente** | DeepInfra no recibe parámetro de retención (P-06); etapa 2 |
-| Comprobante ético con folio y archivo de consentimientos | **Pendiente** | Sin código ni procedimiento escrito |
+| Comprobante ético con folio y archivo de consentimientos | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) | Folio y PDF sin código ni procedimiento escrito |
 | Fecha y versión de `shareWithPeers` y `shareActivity` | **Pendiente** | `StudentProfiles.ts` solo guarda fecha y versión de testimonios |
 | Cancelación de cuenta | **Pendiente** | Sin ruta; la base rechaza borrar un usuario con conversación o membresía (`Ratings.deletePaths.pg.test.ts`) |
 | Canal para derechos de acceso, rectificación, cancelación y oposición (ARCO) | **Pendiente** | Sin correo ni procedimiento activo |
@@ -83,7 +83,7 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 
 Ninguna ocurre hoy. Su arreglo va a la [Etapa 2](#etapa-2).
 
-1. Si ai-service agota sus 7 reintentos (unas 2 h 42 min; quoted de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
+1. Si ai-service agota sus 7 intentos (unas 2 h 42 min; quoted de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
 2. El script de operador `backfillLengua.ts` re-ingesta en el corpus compartido sin `callbackUrl`. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada.
 
 **Sobre la inferencia.** Por ahora se usan proveedores hospedados. Toda llamada a OpenRouter pide retención cero (ZDR) y falla cerrada si no la consigue; DeepInfra no recibe ese parámetro y su retención depende de sus condiciones. Está planeado migrar a inferencia albergada de forma independiente.
@@ -267,7 +267,7 @@ Consecuencias de esta decisión:
 - El texto original solo lo leen quien lo subió y la administración de plataforma.
 - La grabación de un testimonio nunca se comparte con el ecosistema, aunque su texto anonimizado esté publicado (`Media.ts`).
 - El grafo nunca crea nodos de persona a partir de un testimonio (sección 6).
-- El consentimiento de quien da el testimonio se registraría fuera del sistema, con un folio no ligado al texto. La plantilla es **Planeado** y el comprobante con folio es **Pendiente** (ver [consentimientos](aviso-de-privacidad-y-consentimiento.md#d-consentimiento-informado-para-quien-aporta-un-testimonio)).
+- El consentimiento de quien da el testimonio se registraría fuera del sistema, con un folio no ligado al texto. La plantilla y el comprobante con folio son **Planeado** (folio y PDF sin código) (ver [consentimientos](aviso-de-privacidad-y-consentimiento.md#d-consentimiento-informado-para-quien-aporta-un-testimonio)).
 - La persona que dio el testimonio no puede localizarlo por su nombre, porque el sistema no lo sabe. Sin folio ni canal ARCO, ambos **Pendientes**, hoy no tiene forma de ejercer sus derechos (ver el [procedimiento ARCO](aviso-de-privacidad-y-consentimiento.md#f-procedimiento-arco-y-de-retiro-de-una-contribución)).
 
 ## 5. Conversaciones y acervo
@@ -470,7 +470,7 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente. 
 3. **Planeado.** Validar y publicar el aviso simplificado y el consentimiento de testimonio.
 4. **Planeado.** Migrar a inferencia albergada de forma independiente.
 5. **Pendiente.** Decidir qué tratamiento reciben los documentos reales que ya están en dev.
-6. **Pendiente.** Crear el comprobante ético con folio y el archivo de consentimientos.
+6. **Planeado.** Crear el comprobante ético con folio y el archivo de consentimientos.
 7. **Pendiente.** Abrir el canal ARCO y crear la cancelación de cuenta y la exportación de datos.
 8. **Pendiente.** Aprobar la política de retención, con destino final de los originales y plazo de trazas.
 9. **Pendiente.** Decidir si una persona revisora puede aprobar su propia subida, y aplicarlo en `decideOnHold`.
@@ -488,4 +488,4 @@ Diferido a la etapa 2 (rama `etapa-2`; `main` solo lleva correcciones). Ninguno 
 - **Retención cero con DeepInfra (P-06),** por contrato o sacándolo de la ruta.
 - **Borrado pendiente en el servicio de IA (P-08):** una tabla de borrados pendientes o un barrido de huérfanos, para que un borrado que falló se reintente.
 - **Trazas sin nombres (P-14):** no guardar la salida de `anonymise-detect` ni de los títulos de testimonio, y purgar las trazas existentes.
-- **Las dos [limitaciones conocidas](#limitaciones-conocidas):** un retiro que agota los 7 reintentos de ai-service y `backfillLengua.ts` sin `callbackUrl`.
+- **Las dos [limitaciones conocidas](#limitaciones-conocidas):** un retiro que agota los 7 intentos de ai-service y `backfillLengua.ts` sin `callbackUrl`.

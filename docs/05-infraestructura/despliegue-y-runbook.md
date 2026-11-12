@@ -44,7 +44,7 @@ sequenceDiagram
 
 Desde el 2026-11-10 hay dos líneas: `main` solo recibe correcciones, y la funcionalidad nueva va a la rama `etapa-2` (decisión del 2026-11-10). Dev despliega `main`.
 
-**Estado de dev al 2026-11-12.** Dev corre `f971d54c`, que es `main`, desplegado el 2026-11-12 a las 19:42 UTC (deploy `x3o9j5ymeozbz8hrlvvcmrz1`; measured con `docker ps` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzz). Ese día hubo tres despliegues, ninguno con migración (`payload_migrations` 25, último lote 17), cada uno con respaldo previo y prueba de humo:
+**Estado de dev al 2026-11-12.** Dev corre `f971d54c`, el código de `main` (`e491b5c9` solo agrega documentación), desplegado el 2026-11-12 a las 19:42 UTC (deploy `x3o9j5ymeozbz8hrlvvcmrz1`; measured con `docker ps` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzz). Ese día hubo tres despliegues, ninguno con migración (`payload_migrations` 25, último lote 17), cada uno con respaldo previo y prueba de humo:
 
 | Hora (UTC) | Versión | Scripts aplicados después | Fuente |
 |---|---|---|---|
@@ -199,7 +199,7 @@ Mejoras pendientes del stack de IA: una cerca contra inyección de instrucciones
 | 6.12 | Liberar disco | disco por debajo de lo necesario para un build | `edc-1.md` §4x, §8 |
 | 6.13 | Atender una migración fallida | contenedor que no arranca tras desplegar | `runbook.md` §3 |
 | 6.14 | Revertir (rollback) | despliegue defectuoso | `runbook.md` §4 |
-| 6.15 | Rotar llaves | exposición o rotación periódica | `edc-1.md` §4f; `runbook.md` §8.3 |
+| 6.15 | Rotar llaves | exposición o rotación periódica | `runbook.md` §8.3 |
 | 6.16 | Ver logs | diagnóstico | práctica en `edc-1.md` §4za |
 | 6.17 | Reiniciar el Spark | Spark reiniciado o servicios caídos | procedimiento de operación, no verificado en esta versión |
 | 6.18 | Revertir del Spark a servicios hospedados | Spark no disponible por tiempo largo | `edc-1.md` §4za |
@@ -385,7 +385,7 @@ Caso distinto, registrado en `edc-1.md` §4zn: la migración no corrió y el bac
 
 ### 6.15 Rotar llaves
 
-- **Llave de un proveedor** (por ejemplo `RERANK_API_KEY` u `OPENROUTER_API_KEY`): emitir la nueva en el proveedor, cambiarla en Coolify (copias normal y preview) y en el archivo local de secretos, aplicar con §1.4 o redesplegando, verificar por hash dentro del contenedor, y revocar la vieja. Así se cambió el rerank a una llave propia de EDC el 2026-10-17 (citado, `edc-1.md` §4f).
+- **Llave de un proveedor** (por ejemplo `RERANK_API_KEY` u `OPENROUTER_API_KEY`): emitir la nueva en el proveedor, cambiarla en Coolify (copias normal y preview) y en el archivo local de secretos, aplicar con §1.4 o redesplegando, verificar por hash dentro del contenedor, y revocar la vieja.
 - **Llaves de RustFS** (`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`): la llave raíz se puede rotar por variable de entorno sobre el mismo volumen; al reiniciar, la nueva funciona y la vieja deja de hacerlo (medido localmente, citado de `runbook.md` §8.3). El backend vuelve a aprovisionar bucket y usuario en cada arranque (`pnpm --filter @edc/backend provision:storage` lo hace a mano en local).
 - **Secretos internos** (`CALLBACK_SECRET`, `AI_SERVICE_API_KEY`, `SERVICE_TOKENS`, `PAYLOAD_SECRET`): generar con `openssl rand -hex 32`, por entorno, y redesplegar el stack completo para que todos los servicios queden de acuerdo. Cambiar `PAYLOAD_SECRET` cierra todas las sesiones (inferido del uso de ese secreto en Payload).
 - **Llaves de firma** (`AUTH_PRIVATE_KEY`, `AUTH_PUBLIC_KEY`, `AUTH_KEY_ID`): generar con `pnpm --filter @edc/backend keygen`, subir el `AUTH_KEY_ID` y redesplegar. Los tokens entre servicios duran 15 minutos como máximo; la cookie de sesión web, 7 días (citado, inventario de privacidad). No está documentado un procedimiento de rotación sin cortar sesiones (no verificado).

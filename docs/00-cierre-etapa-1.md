@@ -3,7 +3,7 @@
 - **Versión:** 1.0
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Código documentado:** `main` en `f971d54c` (2026-11-12), la Etapa 1 con correcciones
+- **Código documentado:** código en `f971d54c` (2026-11-12), la Etapa 1 con correcciones; `main`, `etapa-2` y la etiqueta `etapa-1-con-correcciones` en `e491b5c9` (mismo código, solo agrega documentación)
 - **Fuentes:** [Visión y alcance](01-proyecto/vision-y-alcance.md), [Roadmap](01-proyecto/roadmap.md), [Cronología e hitos](01-proyecto/cronologia-e-hitos.md), [Seguridad](06-privacidad-y-seguridad/seguridad.md), [Protección de datos](06-privacidad-y-seguridad/proteccion-de-datos.md), [Evaluaciones de IA](07-calidad/evaluaciones-de-ia.md), [Estrategia de pruebas](07-calidad/estrategia-de-pruebas.md); `git log` y el árbol de `apps/` en `f971d54c`, leídos el 2026-11-12
 
 Resumen para quien redacte el informe de la Etapa 1. Cada fila remite al documento o al código que la respalda.
@@ -87,9 +87,11 @@ Criterios de éxito: contribución de punta a punta **implementado** (sin compro
 
 Scripts aplicados en dev el 2026-11-12 (medido por el despliegue de ese día): `hold-for-consent` 184 filas del taller; `refresh-ai-titles` 52 documentos; `backfill-provenance-titles` 0 pendientes; `clear-legacy-held-text` 2 filas; `clean-stored-errors` 0 filas.
 
+Datos de dev el 2026-11-12 (citado de `infra/fleet/edc-1.md` §4zzzzzzzzzzzz y §4zzzzzzzzzzzzz, medido con `psql`): a las 20:29 UTC se borraron los borradores de prueba 823, 824 y 1425 de org 8 (`documents` de 1106 a 1103); a las 20:30-20:31 los documentos 375 y 377 de org 6 pasaron a `anonymise` y por la compuerta: 377 quedó listo y se volvió a publicar a las 20:44, y 375 quedó retenido y espera en Revisión (borrador).
+
 ## 5. Estado de privacidad
 
-Estados citados de [Protección de datos](06-privacidad-y-seguridad/proteccion-de-datos.md) y [Seguridad](06-privacidad-y-seguridad/seguridad.md) (v1.4, 2026-11-11). Lo que esos documentos marcan «pendiente de desplegar en dev» queda **Implementado** con `f971d54c` en dev.
+Estados citados de [Protección de datos](06-privacidad-y-seguridad/proteccion-de-datos.md) y [Seguridad](06-privacidad-y-seguridad/seguridad.md) (v1.5, 2026-11-12).
 
 | Control | Estado | Fuente |
 |---|---|---|
@@ -106,7 +108,7 @@ Estados citados de [Protección de datos](06-privacidad-y-seguridad/proteccion-d
 | Consentimiento informado para testimonios | **Planeado** | Ídem |
 | Respaldos cifrados con prueba de restauración | **Planeado** | Ídem; Seguridad |
 | Conserje de sesiones a 90 días | **Planeado** | Ídem |
-| Comprobante ético con folio | **Pendiente** | Protección de datos |
+| Comprobante ético con folio | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) | Protección de datos |
 | Cancelación de cuenta y canal ARCO | **Pendiente** | Ídem |
 | Política de retención aprobada; depuración de trazas de ai-service | **Pendiente** | Ídem |
 | Retención cero con DeepInfra | **Pendiente** | Ídem; Seguridad |
@@ -120,8 +122,10 @@ No hay entorno de producción ni testimonio real de personas externas (citado de
 | Referencia | Commit | Qué contiene |
 |---|---|---|
 | `etapa-1` | `52a4a1a1` | La Etapa 1 sin correcciones: todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después |
-| `main` | `f971d54c` (2026-11-12) | La Etapa 1 con correcciones; la etiqueta fija `etapa-1-con-correcciones` marca este commit |
-| `etapa-2` | `f971d54c` al 2026-11-12 | Trabajo nuevo; hoy es igual a `main` |
+| Código de la Etapa 1 con correcciones | `f971d54c` (2026-11-12) | La línea de corte del código |
+| `main` | `e491b5c9` (2026-11-12) | La Etapa 1 con correcciones: el código de `f971d54c` más commits que solo cambian `docs/` e `infra/fleet/` |
+| `etapa-1-con-correcciones` (etiqueta fija) | `e491b5c9` | Igual que `main` al 2026-11-12 |
+| `etapa-2` | `e491b5c9` al 2026-11-12 | Trabajo nuevo; hoy es igual a `main` |
 | Desplegado en dev | `f971d54c` (2026-11-12) | Antes: `6c0f65ad`, y antes `a6026876`, `c4f53632` y `367c2698`. Staging sigue en su imagen del 2026-10-17 |
 
 Lo encontrado después de `f971d54c` va a la Etapa 2.
@@ -130,7 +134,7 @@ Lo encontrado después de `f971d54c` va a la Etapa 2.
 
 Limitaciones conocidas de la Etapa 1 con correcciones. Ninguna ocurre hoy; su arreglo va a la Etapa 2:
 
-1. Si ai-service agota sus 7 reintentos (unas 2 h 42 min; citado de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
+1. Si ai-service agota sus 7 intentos (unas 2 h 42 min; citado de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
 2. El script de operador `backfillLengua.ts` re-ingesta en el corpus compartido sin `callbackUrl`. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada.
 
 Pendiente para la Etapa 2, además de los entregables marcados **Pendiente** en §2:

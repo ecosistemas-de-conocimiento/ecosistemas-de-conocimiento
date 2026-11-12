@@ -172,7 +172,7 @@ flowchart LR
 
 Ninguna ocurre hoy. Su arreglo va a la [Etapa 2](#etapa-2).
 
-1. Si ai-service agota sus 7 reintentos (unas 2 h 42 min; quoted de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
+1. Si ai-service agota sus 7 intentos (unas 2 h 42 min; quoted de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
 2. El script de operador `backfillLengua.ts` re-ingesta en el corpus compartido sin `callbackUrl`. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada.
 
 ## 3. Gestión de secretos
@@ -201,7 +201,7 @@ Nombres tomados de `infra/fleet/env-manifests.md` y de `infra/fleet/edc-1.md` §
 | `AI_SERVICE_API_KEY`, `AI_SERVICE_ADMIN_API_KEY` | Llaves de app y de administración de ai-service | Ante incidente |
 | `CALLBACK_SECRET` | Firma de avisos de servicio (mínimo 32 caracteres) | Ante incidente |
 | `OPENROUTER_API_KEY` | Proveedor de modelos | Ante incidente o cambio de cuenta |
-| `RERANK_API_KEY` | DeepInfra, llave propia de EDC desde el 2026-10-17 | Ante incidente |
+| `RERANK_API_KEY` | DeepInfra, llave propia de EDC | Ante incidente |
 | `EMBEDDINGS_API_KEY`, `ANONYMISE_DETECT_API_KEY`, `WHISPER_REMOTE_TOKEN` | Tokens del proxy del Spark | Al terminar el préstamo del Spark o ante incidente |
 | `AUDIO_SERVICE_API_KEY`, `AUDIO_SERVICE_ADMIN_API_KEY` | Llaves de audio-service. La de administración trae valor por defecto, `dev-audio-key-admin` (**Pendiente** de quitar) | Ante incidente |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Almacenamiento de objetos | Ante incidente |
@@ -455,5 +455,5 @@ Diferido a la etapa 2 (rama `etapa-2`; `main` solo lleva correcciones). Ninguno 
 - Cambio obligado de la contraseña temporal en el primer acceso, con pantalla de cambio de contraseña en la web (A-04).
 - Retención cero con DeepInfra, por contrato o sacándolo de la ruta (P-06).
 - Trazas de ai-service sin la salida del detector, y su purga (P-14).
-- Las dos [limitaciones conocidas](#21-limitaciones-conocidas): un retiro que agota los 7 reintentos de ai-service y `backfillLengua.ts` sin `callbackUrl`.
+- Las dos [limitaciones conocidas](#21-limitaciones-conocidas): un retiro que agota los 7 intentos de ai-service y `backfillLengua.ts` sin `callbackUrl`.
 - Las 17 formas raras de mensajes de Postgres sin cubrir y los mensajes de Postgres en español (dev usa `en_US`).

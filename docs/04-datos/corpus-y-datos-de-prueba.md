@@ -205,14 +205,13 @@ El presupuesto por defecto de cada ecosistema es `AI_ECOSYSTEM_BUDGET_USD`; es u
 | Documentos del manifiesto `semiosis-2026-10-held`, casados por título | 105 |
 | Ids 788, 796 y 799 | 3 |
 | **Total del taller** | **184** |
-| Borradores de org 8 que no son del taller (823, 824 y 1425) | 3 |
-| **Total de borradores en org 8** | **187** |
 
 - Las 184 filas son `documento` de org 8. De los 105 del manifiesto `held`, 68 tienen compuerta, 35 no y 2 están rechazados (891 y 990).
 - En ai-service, el corpus compartido `eco-8` tiene la validez cerrada en todas sus copias. Siguen abiertas en el corpus borrador de quien las subió, `eco-8-draft-1`, que solo esa cuenta consulta en sus propias sesiones (inferido del código en el informe).
 - El grafo solo lee documentos publicados, así que las entidades que solo salen de estas filas no aparecen.
 - Ninguna escritura sobre estas filas desde el 2026-11-07 a las 00:37 UTC.
-- Las tres filas que no son del taller: dos documentos de estudiante sin compuerta del 2026-10-27 y un testimonio de estudiante rechazado del 2026-10-29.
+- Borrados el 2026-11-12 a las 20:29 UTC: los tres borradores de prueba de org 8 que no eran del taller; desde entonces los borradores de org 8 son las 184 filas del taller, y `documents` pasó de 1106 a 1103 filas (citado de `infra/fleet/edc-1.md` §4zzzzzzzzzzzz, medido con `psql`).
+- El mismo día, en org 6, dos documentos de Prevención del dengue pasaron a `anonymise` y por la compuerta (20:30-20:31 UTC): uno quedó listo y se volvió a publicar a las 20:44 UTC; el otro (375) quedó retenido y espera en Revisión, como borrador (citado de `infra/fleet/edc-1.md` §4zzzzzzzzzzzz y §4zzzzzzzzzzzzz).
 
 **Retención por consentimiento (`consentHeld`).** Implementado y desplegado. La columna `documents.consent_held` llega con la migración `20261110_181621_consent_held_reviews_keep`, que dev tiene desde el despliegue de `c4f53632` (2026-11-10, 23:03 UTC; versión medida con `docker ps` en edc-1 el 2026-11-11, migración citada del reporte del despliegue). Una fila marcada no se vuelve a extraer, ingerir, pasar por la compuerta, graficar ni publicar (`apps/backend/src/lib/consentHold.ts`). La marca la pone solo el script `hold-for-consent.ts`, que lee los ids de `CONSENT_IDS_FILE` y omite las líneas `EXTRA-NO-TALLER`: con la lista del 2026-11-10 marca las 184 del taller y deja fuera las otras 3. Una revisión de una nota retenida queda retenida por su original, sin marca propia (commit b29c72ba). El script se aplicó en dev el 2026-11-12: `consent_held` en 184 filas, todas borradores del ecosistema 8, 0 rechazadas, y una segunda pasada en seco lee `alreadyHeld` 184 (measured por el agente de despliegue, `infra/fleet/edc-1.md` §4zzzzzzzzz). El procedimiento está en [Despliegue y runbook](../05-infraestructura/despliegue-y-runbook.md) §6.20. Antes del script, apagar `keepDocumentAuthor` o `keepCitedAuthors` en org 8 los volvía a pasar por la compuerta (citado, informe del 2026-11-10 §2; reproducido con Postgres real); desde 6a880e01 el re-gate tampoco reprocesa los borradores que no despublicó.
 

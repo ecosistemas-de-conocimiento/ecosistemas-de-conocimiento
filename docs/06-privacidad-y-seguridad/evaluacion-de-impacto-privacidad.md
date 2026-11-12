@@ -54,7 +54,7 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 | Migración a inferencia albergada de forma independiente | **Planeado** | Sin contratos documentados |
 | Contratos, acuerdos de tratamiento de datos y términos aceptados con cada encargado | **Pendiente** | Ninguno documentado. Que existan términos aceptados es inferido de que hay cuentas pagadas; no verificado |
 | Acuerdo de uso del Spark y autorización para alojar datos en un equipo ajeno | **Pendiente** | No existe. Ubicación física sin confirmar; no verificado que el equipo no conserve datos |
-| Comprobante ético con folio y archivo de consentimientos | **Pendiente** | Sin código ni procedimiento |
+| Comprobante ético con folio y archivo de consentimientos | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) | Folio y PDF sin código ni procedimiento |
 | Canal ARCO, exportación de datos y cancelación de cuenta | **Pendiente** | Sin correo, sin ruta; la base rechaza el borrado de un usuario con conversación o membresía |
 | Política de acceso al original y bitácora de lecturas | **Pendiente** | Sin plan técnico |
 | Conservar el registro de revisiones al borrar un documento | **Implementado** | Llave `set null` y `documentIdSnapshot` (`AnonymisationReviews.ts`); solo se van las filas de quien borra. Al borrar una conversación, las filas de otras personas sobre una subida retenida también se quedan (commit `17a3ee49`) |
@@ -68,7 +68,7 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 
 Ninguna ocurre hoy. Su arreglo va a la [Etapa 2](#etapa-2).
 
-1. Si ai-service agota sus 7 reintentos (unas 2 h 42 min; quoted de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
+1. Si ai-service agota sus 7 intentos (unas 2 h 42 min; quoted de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
 2. El script de operador `backfillLengua.ts` re-ingesta en el corpus compartido sin `callbackUrl`. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada.
 
 ## 1. Descripción del tratamiento
@@ -105,7 +105,7 @@ Dev sí tiene datos reales. Desde el 2026-10-27 contiene documentos reales del p
 
 ## 3. Base de licitud
 
-- **Consentimiento informado.** Es la base prevista para todos los titulares, con plantillas en borrador (**Planeado**). Para datos sensibles, el consentimiento debe ser expreso y por escrito, con firma autógrafa o electrónica. El comprobante ético con folio y el aviso en la interfaz no existen: **Pendiente** y **Planeado**. Hoy solo funcionan los tres consentimientos del estudiante, y solo el de testimonios guarda fecha y versión.
+- **Consentimiento informado.** Es la base prevista para todos los titulares, con plantillas en borrador (**Planeado**). Para datos sensibles, el consentimiento debe ser expreso y por escrito, con firma autógrafa o electrónica. El comprobante ético con folio y el aviso en la interfaz no existen en código: ambos **Planeado**. Hoy solo funcionan los tres consentimientos del estudiante, y solo el de testimonios guarda fecha y versión.
 - **Investigación humanística.** El tratamiento se hace dentro de un proyecto de investigación financiado por SECIHTI. Los Principios de Chapultepec (presentados por SECIHTI y la ATDT el 2026-01-29, con matriz de correspondencia en el registro del proyecto del 2026-10-21) son el marco ético adoptado.
 - **Marco legal.** El CIDE es un centro público de investigación y, como tal, probablemente es sujeto obligado de la Ley General de Protección de Datos Personales en Posesión de Sujetos Obligados (LGPDPPSO). La nota de marco legal está en [aviso de privacidad y consentimiento](aviso-de-privacidad-y-consentimiento.md#a-nota-de-marco-legal). Esa nota es conocimiento general y debe validarla el área jurídica.
 
@@ -127,7 +127,7 @@ El sistema recibe, por diseño, datos personales sensibles. La tabla indica dón
 | Titular | Relación con el sistema | Qué datos suyos hay | Cómo se le informa |
 |---|---|---|---|
 | **Personas usuarias** (participantes, facilitadoras, investigadoras, responsables de ecosistema) | Tienen cuenta | Cuenta, membresías, conversaciones, documentos, valoraciones | Hoy no se les informa en la interfaz. Aviso integral y simplificado: **Planeado** |
-| **Personas que dan un testimonio** | Pueden no tener cuenta; su relato lo sube una facilitadora | Su relato, su voz si es audio | Comprobante ético con folio: **Pendiente**. Plantilla de consentimiento: **Planeado** |
+| **Personas que dan un testimonio** | Pueden no tener cuenta; su relato lo sube una facilitadora | Su relato, su voz si es audio | Comprobante ético con folio: **Planeado** (folio y PDF sin código). Plantilla de consentimiento: **Planeado** |
 | **Terceros nombrados** en un testimonio o documento (familiares, personal de salud, vecinos) | No tienen relación con el sistema | Su nombre y detalles dentro del relato | No se les puede informar individualmente; su protección es la anonimización, que sustituye su nombre por un seudónimo. En documentos sin marca de anonimización esa protección no aplica. Con "Conservar autores citados" encendido, un nombre suyo escrito con forma de cita queda visible (R20) |
 | **Estudiantes** | Tienen cuenta con rol `estudiante` | Lo de una persona usuaria, más su reporte de actividad | Tres consentimientos específicos en su vista (**Implementado**). Aviso integral: **Planeado** |
 | **Personas que suben un documento marcado o un testimonio** | Tienen cuenta y membresía | El nombre completo de su membresía (`personName`), visible en ese texto y en el acervo, solo si "Conservar al autor del documento" está encendido | Lo dirá el aviso integral (**Planeado**). No conserva partes del nombre ni aplica a conversaciones. Quien subió puede apagar el interruptor en la pantalla de anonimización de su documento |
@@ -251,7 +251,7 @@ Sin fechas: ninguna está acordada. Deben cumplirse antes del primer testimonio 
 5. **Pendiente.** Documentar contratos y condiciones de retención de cada encargado. Atiende R4 y R5. Responsable técnico y área jurídica.
 6. **Planeado.** Migrar a inferencia albergada de forma independiente. Atiende R4. Coordinación de desarrollo.
 7. **Planeado.** Publicar el aviso simplificado en la interfaz, incluida la frase de que las conversaciones alimentan el acervo. Atiende R10. Coordinación de desarrollo.
-8. **Pendiente.** Crear el comprobante ético con folio para cada testimonio. Atiende R1 y R12. Coordinación de desarrollo y facilitación.
+8. **Planeado.** Crear el comprobante ético con folio para cada testimonio. Atiende R1 y R12. Coordinación de desarrollo y facilitación.
 9. **Pendiente.** Abrir el correo institucional de datos personales, publicar el procedimiento ARCO y crear exportación y cancelación de cuenta. Atiende R12. Unidad de transparencia y coordinación de desarrollo.
 10. **Planeado.** Activar el conserje de sesiones. Atiende R11. Coordinación de desarrollo.
 11. **Pendiente.** Aprobar la política de retención con destino final, y crear la depuración de trazas. Atiende R7 y R11. Responsable técnico y coordinación de desarrollo.
@@ -274,4 +274,4 @@ Diferido a la etapa 2 (rama `etapa-2`; `main` solo lleva correcciones). Ninguno 
 - Edición sustantiva que no acepte caracteres invisibles ni letras de otro alfabeto (R4-12). Atiende R3.
 - Límite de tasa en login por correo entre IPs y cambio obligado de la contraseña temporal (A-04). Atiende R13.
 - El día escrito en palabras en la generalización de fechas. Atiende R1.
-- Las dos [limitaciones conocidas](#limitaciones-conocidas): un retiro que agota los 7 reintentos de ai-service y `backfillLengua.ts` sin `callbackUrl`.
+- Las dos [limitaciones conocidas](#limitaciones-conocidas): un retiro que agota los 7 intentos de ai-service y `backfillLengua.ts` sin `callbackUrl`.

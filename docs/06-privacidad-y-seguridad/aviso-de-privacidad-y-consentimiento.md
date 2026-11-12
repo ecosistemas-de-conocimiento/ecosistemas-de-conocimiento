@@ -34,7 +34,7 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 | Retención cero (ZDR) en toda llamada a OpenRouter, que falla cerrada sin ella | **Implementado** | `services/ai-service/src/services/ai/router/adapters/openrouter.ts`; en dev desde el 2026-11-10. Staging no lo tiene (inferido de su imagen del 2026-10-17) |
 | Retención cero con DeepInfra | **Pendiente** | Sin parámetro de retención ni contrato documentado (P-06); etapa 2 |
 | Migración a inferencia albergada de forma independiente | **Planeado** | Sin contratos documentados |
-| Comprobante ético con folio, PDF y archivo de consentimientos | **Pendiente** | Sin código ni procedimiento; no hay biblioteca para generar PDF en `apps/*/package.json` |
+| Comprobante ético con folio, PDF y archivo de consentimientos | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) | Plantilla de consentimiento en borrador; folio y PDF sin código ni procedimiento; no hay biblioteca para generar PDF en `apps/*/package.json` |
 | Formatos accesibles del aviso y del consentimiento | **Pendiente** | No existen |
 | Correo institucional y canal ARCO | **Pendiente** | No existen |
 | Exportación de datos de una cuenta | **Pendiente** | No existe |
@@ -86,7 +86,7 @@ Versión 1 · Fecha de última actualización: `[fecha de publicación]`
 - De las personas usuarias con cuenta: correo electrónico, nombre que eliges mostrar, imagen de perfil si la subes, idioma de la interfaz, contraseña (guardada solo como hash, es decir, una huella que no permite recuperarla), los ecosistemas a los que perteneces, tu rol en cada uno y el nombre con el que figuras en cada uno, que define quien administra los miembros de ese ecosistema.
 - Lo que aportas: documentos, testimonios en texto o audio, notas, valoraciones de las respuestas con comentario opcional y tus conversaciones con el asistente.
 - De estudiantes, además: tus elecciones de privacidad, con fecha y versión del texto que aceptaste, y el reporte de tu actividad (documentos, temas, número de conversaciones).
-- De las personas que dan un testimonio sin cuenta: su relato o su voz. No recabamos su nombre en la plataforma. Su consentimiento queda en el comprobante ético con un folio que no está ligado al texto. *Antes de publicar: el comprobante es Pendiente.*
+- De las personas que dan un testimonio sin cuenta: su relato o su voz. No recabamos su nombre en la plataforma. Su consentimiento queda en el comprobante ético con un folio que no está ligado al texto. *Antes de publicar: el comprobante es Planeado (folio y PDF sin código).*
 
 **3. Datos personales sensibles.** Por la naturaleza de la investigación, los testimonios y conversaciones pueden contener datos sensibles: estado de salud, discapacidad, lengua u origen étnico, opiniones y creencias. La grabación de tu voz también puede identificarte. Tratamos estos datos solo con tu consentimiento expreso y por escrito.
 
@@ -170,7 +170,7 @@ Texto corto junto al cuadro de conversación (una línea):
 
 ## d. Consentimiento informado para quien aporta un testimonio
 
-> **Plantilla en borrador, sin validación jurídica y aún no publicada en la interfaz.** El comprobante con folio es **Pendiente**: no existe en código ni como procedimiento.
+> **Plantilla en borrador, sin validación jurídica y aún no publicada en la interfaz.** El comprobante con folio es **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código).
 
 Este texto formaría parte del **comprobante ético** que el brief del proyecto exige al cerrar cada contribución: aviso de privacidad, consentimiento informado y folio único, descargable en PDF (brief v1 del proyecto, documento externo al repo). La persona facilitadora lo leería en voz alta o lo entregaría en el formato que la persona prefiera. El comprobante llevaría:
 
@@ -326,7 +326,7 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 4. **Planeado.** Migrar a inferencia albergada de forma independiente.
 5. **Pendiente.** Llenar los corchetes: domicilio, correos, autoridad garante, plazos, país y organización del servidor de cómputo.
 6. **Pendiente.** Validar la ley aplicable y el responsable con el área jurídica.
-7. **Pendiente.** Crear el comprobante ético con folio, su versión en PDF y el archivo de consentimientos.
+7. **Planeado.** Crear el comprobante ético con folio, su versión en PDF y el archivo de consentimientos.
 8. **Pendiente.** Preparar los formatos accesibles.
 9. **Pendiente.** Abrir el correo institucional y el canal ARCO, con su bitácora.
 10. **Pendiente.** Crear la exportación de datos, la cancelación de cuenta y un mecanismo de oposición.

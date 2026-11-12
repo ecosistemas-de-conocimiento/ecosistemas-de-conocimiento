@@ -334,7 +334,7 @@ La lista es `MEDIA_MIME_TYPES` en `apps/backend/src/collections/Media.ts`.
 |---|---|---|
 | Documentos | `application/pdf`, DOCX, XLSX, `application/vnd.ms-excel` y `application/x-cfb` (.xls heredado), `text/csv`, `text/html`, `text/markdown`, `text/plain` | `textUploadsAreText` revisa que los de texto sean texto; `legacyExcelUploads` revisa los .xls |
 | Audio | mpeg y mp3; mp4, x-m4a, m4a y aac; wav, x-wav y wave; ogg; opus; webm; flac y x-flac | |
-| Video: se guarda y se transcribe su audio; la imagen no se procesa (Implementado) | `video/mp4`, `video/quicktime`, `video/webm` | `audioOnlyWebm` rechaza un WebM con pista de video real (el micrófono en vivo graba WebM de solo audio) |
+| Video: se guarda y se transcribe su audio; la imagen no se procesa (Implementado) | `video/mp4` (mp4) y `video/quicktime` (mov) | `video/webm` está en la lista solo para el WebM de audio del micrófono en vivo: `audioOnlyWebm` rechaza un WebM con pista de video o sin pista de audio y guarda el aceptado como `audio/webm` (`Media.ts:255-303`) |
 
 **Excluidos a propósito:** `application/octet-stream` (tipo genérico, no dice qué es), AMR, 3GPP, WMA, AIFF y MKV.
 

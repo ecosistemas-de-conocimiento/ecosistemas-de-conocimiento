@@ -1,8 +1,8 @@
 # Documentación de Ecosistemas de Conocimiento (EDC)
 
-**Versión** 1.4 · **Fecha** 2026-11-12 · **Estado** vigente · **Código documentado** `main` en `f971d54c` (2026-11-12) · **Desplegado en dev** `f971d54c` (2026-11-12)
+**Versión** 1.4 · **Fecha** 2026-11-12 · **Estado** vigente · **Código documentado** código en `f971d54c` (2026-11-12); `main`, `etapa-2` y la etiqueta `etapa-1-con-correcciones` en `e491b5c9` · **Desplegado en dev** `f971d54c` (2026-11-12)
 
-Esta carpeta documenta la plataforma entregada en la Etapa 1 (agosto a octubre de 2026) del proyecto SECIHTI IH-2025-I-445 del CIDE, cuyo componente de software es la plataforma **Ecosistemas de Conocimiento** y cuyo marco conceptual se llama **Repositorio de Voces y Resonancias**.
+Esta carpeta documenta la plataforma entregada en la Etapa 1 (del 2026-05-06 al 2026-10-28) del proyecto SECIHTI IH-2025-I-445 del CIDE, cuyo componente de software es la plataforma **Ecosistemas de Conocimiento** y cuyo marco conceptual se llama **Repositorio de Voces y Resonancias**.
 
 La documentación se derivó del código, de las migraciones, de las pruebas, de los documentos de planeación (`plan/`, `infra/fleet/`) y de la carpeta madre del proyecto (briefs, corpus de prueba y videos de evidencia). Cada documento indica sus fuentes y cada número lleva su procedencia: medido, inferido o citado.
 
@@ -78,8 +78,8 @@ La documentación se derivó del código, de las migraciones, de las pruebas, de
 - Estados visibles, sin comentarios ocultos, en toda la carpeta: **Implementado** (en el código y desplegado en dev), **Implementado (pendiente de desplegar en dev)** (en `main`, todavía no en lo desplegado en dev; al 2026-11-12 nada queda así, porque dev corre `f971d54c`), **Planeado** (sin código, con plan) y **Pendiente** (sin código ni plan).
 - Ramas:
   - `etapa-1` (`52a4a1a1`): la Etapa 1 sin correcciones, todo lo anterior al 2026-10-29.
-  - `main` (`f971d54c`, 2026-11-12): la Etapa 1 con correcciones, con la etiqueta fija `etapa-1-con-correcciones`. Desde el 2026-11-10 solo recibe correcciones; lo encontrado después de `f971d54c` va a la Etapa 2.
-  - `etapa-2`: la funcionalidad nueva; al 2026-11-12 es igual a `main`. Lo diferido a esa etapa va en una sección "Etapa 2" del documento que corresponda.
+  - `main` (`e491b5c9`, 2026-11-12): la Etapa 1 con correcciones, con la etiqueta fija `etapa-1-con-correcciones` (`e491b5c9`). Su código es el de `f971d54c`; los commits posteriores solo agregan documentación. Desde el 2026-11-10 solo recibe correcciones; lo encontrado después de `f971d54c` va a la Etapa 2.
+  - `etapa-2` (`e491b5c9` al 2026-11-12): la funcionalidad nueva; hoy es igual a `main`. Lo diferido a esa etapa va en una sección "Etapa 2" del documento que corresponda.
 - Nunca se escriben valores de secretos, direcciones IP, correos de usuarios ni contraseñas.
 
 ## Documentos de origen
