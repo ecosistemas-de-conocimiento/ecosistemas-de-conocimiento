@@ -120,7 +120,7 @@ describe.skipIf(!dockerOk)('clean-stored-errors: a row a writer changed between 
         if (key !== 'execute') return Reflect.get(target, key)
         return async (q: unknown) => {
           const out = await target.execute(q as never)
-          if (!raced && (out as { rows?: Array<{ id: unknown }> }).rows?.some((r) => Number(r.id) === 12)) {
+          if (!raced && (out as unknown as { rows?: Array<{ id: unknown }> }).rows?.some((r) => Number(r.id) === 12)) {
             raced = true
             await target.execute(sql`UPDATE documents SET ingest_error = 'no_audio_stream: nuevo' WHERE id = 12`)
           }
