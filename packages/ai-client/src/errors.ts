@@ -736,6 +736,10 @@ export const WIRE_ERRORS: Readonly<Record<string, WireErrorEntry>> = {
   // A 200 with no text, after ai-service's own bounded retries. 502 on /sync,
   // a terminal frame on /stream; both carry `traceId`.
   EmptyCompletion: { code: 'ERR_EMPTY_COMPLETION', reachable: 'unverified' },
+  // A 200 with no text that stopped at the token cap. Same wire shape as
+  // EmptyCompletion; ai-service does NOT retry it, and neither should a caller
+  // with the same request.
+  CompletionTruncated: { code: 'ERR_COMPLETION_TRUNCATED', reachable: 'unverified' },
 
   // ── flat envelope, message-only ────────────────────────────────────────
   RenderError: { code: 'ERR_RENDER', ctor: RenderError, reachable: 'typed' },

@@ -89,10 +89,7 @@ export function startJobReaper(deps: ReaperDeps = {}): ReaperHandle {
     try {
       return await reapOnce(deps);
     } catch (err) {
-      deps.logger?.warn(
-        { err: err instanceof Error ? err.message : String(err) },
-        'job reaper: sweep failed; will retry next interval',
-      );
+      deps.logger?.warn({ err }, 'job reaper: sweep failed; will retry next interval');
       return { generationJobs: [], ingestJobs: [] };
     }
   };

@@ -45,11 +45,13 @@ import { tokenEndpoint } from './endpoints/token'
 import { checkAIServiceCapabilities } from './lib/capabilityCheck'
 import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
+import { DB_POOL_CONNECTION_TIMEOUT_MS } from './lib/dbPool'
 import { startCallbackRetentionJanitor } from './lib/callbackRetention'
 import { startEmbeddingJanitor } from './lib/embeddingJanitor'
 import { safeErrMessage, safeErrSerializer } from './lib/errorSummary'
 import { startGraphOrphanJanitor } from './lib/graph/orphanJanitor'
 import { startIngestRecoveryJanitor } from './lib/ingestRecovery'
+import { announceJanitorsDisabled } from './lib/janitorScheduler'
 import { ensureEcosystemBudgets } from './lib/provisionEcosystem'
 import { registerPlatformSettings } from './lib/platformSettings'
 import { startPublishJanitor } from './lib/publishJanitor'
@@ -348,6 +350,10 @@ export default buildConfig({
       }
     }
 
+    // 4b. Every janitor below returns silently under EDC_JANITORS_DISABLED=1
+    //     (the test setup); one line here says so, once per boot.
+    announceJanitorsDisabled(payload)
+
     // 5. Session janitor: arm the recurring stale-session reaper. Disabled by
     //    default (SESSION_JANITOR_ENABLED); the first sweep is one interval
     //    away so a deploy never reaps data the instant it boots.
@@ -435,6 +441,11 @@ export default buildConfig({
     options: { serializers: { err: safeErrSerializer } },
     destination: defaultLoggerOptions,
   },
+  // A filter past the relation caps is the caller's, not a server fault: warn,
+  // and those errors carry no stack (`access/relationFilters.ts`). Payload's
+  // own defaults (`Forbidden: 'info'`…) are merged under this, unchanged. The
+  // type lists only Payload's own error names; the lookup is by `err.name`.
+  loggingLevels: { RelationFilterTooBroad: 'warn', RelationFilterBusy: 'warn' } as Record<string, 'warn'>,
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {
     outputFile: path.resolve(dirname, 'payload-types.ts'),
@@ -443,6 +454,8 @@ export default buildConfig({
   db: guardStaleUserRows(postgresAdapter({
     pool: {
       connectionString: process.env.DATABASE_URI || '',
+      // A starved pool answers an error instead of hanging: `lib/dbPool.ts`.
+      connectionTimeoutMillis: DB_POOL_CONNECTION_TIMEOUT_MS,
     },
     /**
      * ⚠ SCHEMA PUSH IS OFF UNLESS YOU ASK FOR IT. The gate is opt-IN, so the

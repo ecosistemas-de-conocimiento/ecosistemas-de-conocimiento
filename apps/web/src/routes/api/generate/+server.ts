@@ -1,3 +1,4 @@
+import { errSummary, safeErrMessage } from '$lib/errorSummary';
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import {
@@ -52,10 +53,13 @@ import { citedBrowserProvenance, toBrowserMessage } from '$lib/server/citationPr
 import { backendTitleFetcher, testimonioDocIds, withTestimonioTitles } from '$lib/server/testimonioTitles';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import {
+  ANSWER_TRUNCATED_CODE,
+  AnswerTruncatedError,
   assertAnswer,
   EMPTY_ANSWER_CODE,
   EmptyAnswerError,
   isEmptyAnswerCode,
+  isTruncatedAnswerCode,
   parseCitedOrdinals,
   prepareTurn,
   streamOutcome,
@@ -78,20 +82,45 @@ const SESSION_UNAVAILABLE_CODE = 'session_unavailable';
 const EMPTY_ANSWER_MESSAGE = 'ai-service returned an empty answer; nothing was saved.';
 
 /**
- * An ai-service failure that means an empty completion: the engine's
- * `EmptyAnswerError`, or an upstream code in any spelling (`isEmptyAnswerCode`)
- * — on the tag, the flat `code`, or the nested `{ error: { code } }`.
+ * The model spent the output cap before writing anything (ai-service's
+ * `CompletionTruncated`, or an empty `done` with `finishReason: 'length'`).
+ * Never saved, like an empty answer, but its own code: asking again hits the
+ * same cap, so the browser shows it without "Reintentar".
  */
-function isEmptyAnswerFailure(err: unknown): boolean {
-  if (err instanceof EmptyAnswerError) return true;
+const ANSWER_TRUNCATED_MESSAGE = 'ai-service hit the output limit before writing an answer; nothing was saved.';
+
+/** Every code an ai-service failure carries: the tag, the flat `code`, the nested `{ error: { code } }`. */
+function failureCodes(err: unknown): unknown[] {
   const e = err as { bodyError?: unknown; body?: unknown } | null;
   const body = (e?.body && typeof e.body === 'object' ? e.body : {}) as { code?: unknown; error?: unknown };
   const nested = body.error && typeof body.error === 'object' ? (body.error as { code?: unknown }).code : undefined;
-  return [e?.bodyError, body.code, body.error, nested].some(isEmptyAnswerCode);
+  return [e?.bodyError, body.code, body.error, nested];
 }
 
-function logEmptyAnswer(sessionId: string, transport: 'sync' | 'stream'): void {
-  console.error(`[generate] empty answer for session ${sessionId} (${transport}); not saved, the turn fails with ${EMPTY_ANSWER_CODE}.`);
+/**
+ * The code a failed turn with no answer goes out with, or `undefined` when it
+ * is some other failure: `ANSWER_TRUNCATED_CODE` for an empty answer at the
+ * output cap, `EMPTY_ANSWER_CODE` for any other empty answer. Read from the
+ * engine's typed errors or an upstream code in any spelling.
+ */
+function noAnswerCode(err: unknown): typeof EMPTY_ANSWER_CODE | typeof ANSWER_TRUNCATED_CODE | undefined {
+  if (err instanceof AnswerTruncatedError) return ANSWER_TRUNCATED_CODE;
+  if (err instanceof EmptyAnswerError) return EMPTY_ANSWER_CODE;
+  const codes = failureCodes(err);
+  if (codes.some(isTruncatedAnswerCode)) return ANSWER_TRUNCATED_CODE;
+  if (codes.some(isEmptyAnswerCode)) return EMPTY_ANSWER_CODE;
+  return undefined;
+}
+
+/** The terminal error a turn with no answer ends with, on either transport. */
+function noAnswerBody(code: typeof EMPTY_ANSWER_CODE | typeof ANSWER_TRUNCATED_CODE | string) {
+  return code === ANSWER_TRUNCATED_CODE
+    ? { code: ANSWER_TRUNCATED_CODE, message: ANSWER_TRUNCATED_MESSAGE }
+    : { code: EMPTY_ANSWER_CODE, message: EMPTY_ANSWER_MESSAGE };
+}
+
+function logEmptyAnswer(sessionId: string, transport: 'sync' | 'stream', code: string = EMPTY_ANSWER_CODE): void {
+  console.error(`[generate] empty answer for session ${sessionId} (${transport}); not saved, the turn fails with ${code}.`);
 }
 
 /** Max characters of each chunk's passage persisted on the provenance. */
@@ -405,8 +434,8 @@ function streamGenerate(
               }
               const outcome = streamOutcome(evt, streamed);
               if (!outcome.ok) {
-                logEmptyAnswer(sessionId, 'stream');
-                emit({ type: 'error', code: outcome.code, message: EMPTY_ANSWER_MESSAGE });
+                logEmptyAnswer(sessionId, 'stream', outcome.code);
+                emit({ type: 'error', ...noAnswerBody(outcome.code) });
                 continue;
               }
               evt.text = outcome.text;
@@ -444,11 +473,16 @@ function streamGenerate(
                 ...(warnings ? { warnings } : {}),
               });
             } else if (evt.type === 'error') {
-              if (isEmptyAnswerCode(evt.code)) {
-                // ai-service's own empty-completion frame, before or after
-                // partial text: the same failure as an empty `done`.
-                logEmptyAnswer(sessionId, 'stream');
-                emit({ type: 'error', code: EMPTY_ANSWER_CODE, message: EMPTY_ANSWER_MESSAGE });
+              const noAnswer = isTruncatedAnswerCode(evt.code)
+                ? ANSWER_TRUNCATED_CODE
+                : isEmptyAnswerCode(evt.code)
+                  ? EMPTY_ANSWER_CODE
+                  : undefined;
+              if (noAnswer) {
+                // ai-service's own empty-completion (or truncated) frame,
+                // before or after partial text: the same failure as an empty `done`.
+                logEmptyAnswer(sessionId, 'stream', noAnswer);
+                emit({ type: 'error', ...noAnswerBody(noAnswer) });
                 continue;
               }
               // Budget failures arrive HERE on the streaming transport, not as
@@ -462,7 +496,8 @@ function streamGenerate(
         }
       } catch (err) {
         if ((err as Error)?.name !== 'AbortError') {
-          emit({ type: 'error', code: 'STREAM_INTERRUPTED', message: (err as Error).message });
+          // Name and code only: the browser gets no text we did not write.
+          emit({ type: 'error', code: 'STREAM_INTERRUPTED', message: errSummary(err) });
         }
       } finally {
         controller.close();
@@ -974,7 +1009,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     } catch (err) {
       // A failure assembling context must not 500 the turn: fall back to a
       // bare user turn (no summary/retrieval) and still stream an answer.
-      console.warn('[generate] engine prepareTurn failed; bare turn:', (err as Error).message);
+      console.warn('[generate] engine prepareTurn failed; bare turn:', safeErrMessage(err));
       prepared = {
         messages: [
           { role: 'system' as const, content: turnConfig.systemPrompt },
@@ -1031,9 +1066,10 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
       // Reached only when the upstream fails BEFORE the SSE headers are out
       // (e.g. the enqueue 402). Once streaming has begun, budget failures come
       // back as an `error` frame instead — `sanitizeStreamErrorFrame`.
-      if (isEmptyAnswerFailure(err)) {
-        logEmptyAnswer(body.sessionId, 'stream');
-        throw error(502, { code: EMPTY_ANSWER_CODE, message: EMPTY_ANSWER_MESSAGE });
+      const noAnswer = noAnswerCode(err);
+      if (noAnswer) {
+        logEmptyAnswer(body.sessionId, 'stream', noAnswer);
+        throw error(502, noAnswerBody(noAnswer));
       }
       logBudgetFailure(err, 'generate:stream:open');
       const { status, message, code } = httpStatusFor(err, {
@@ -1109,9 +1145,10 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     if ((err as Error)?.name === 'AbortError' || request.signal.aborted) {
       return new Response(null, { status: 499 });
     }
-    if (isEmptyAnswerFailure(err)) {
-      logEmptyAnswer(body.sessionId, 'sync');
-      throw error(502, { code: EMPTY_ANSWER_CODE, message: EMPTY_ANSWER_MESSAGE });
+    const noAnswer = noAnswerCode(err);
+    if (noAnswer) {
+      logEmptyAnswer(body.sessionId, 'sync', noAnswer);
+      throw error(502, noAnswerBody(noAnswer));
     }
     logBudgetFailure(err, 'generate:sync');
     const { status, message, code } = httpStatusFor(err, {

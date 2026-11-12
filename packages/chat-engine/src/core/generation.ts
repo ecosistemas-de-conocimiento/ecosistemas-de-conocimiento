@@ -32,6 +32,14 @@ export function shouldRetryEmpty(finishReason: string | null | undefined): boole
  */
 export const EMPTY_ANSWER_CODE = 'empty_answer';
 
+/**
+ * The typed code for "the model spent the output cap before writing anything"
+ * (0.10.0): an empty answer with `finishReason: 'length'`, or ai-service's
+ * `CompletionTruncated`. Separate from `empty_answer` because asking again
+ * hits the same cap (see `shouldRetryEmpty`), so a UI must not offer a retry.
+ */
+export const ANSWER_TRUNCATED_CODE = 'answer_truncated';
+
 /** Thrown by `respond()` (and `assertAnswer`) for an empty final answer. */
 export class EmptyAnswerError extends Error {
   readonly code = EMPTY_ANSWER_CODE;
@@ -44,6 +52,20 @@ export class EmptyAnswerError extends Error {
   }
 }
 
+/** Thrown by `assertAnswer` for an empty answer that stopped at the output cap. */
+export class AnswerTruncatedError extends Error {
+  readonly code = ANSWER_TRUNCATED_CODE;
+  constructor() {
+    super('The model hit the output limit before writing an answer.');
+    this.name = 'AnswerTruncatedError';
+  }
+}
+
+/** Upstream codes folded to letters only, `ERR_` dropped: `ERR_EMPTY_COMPLETION` → `emptycompletion`. */
+function codeKey(code: string): string {
+  return code.replace(/^ERR_/i, '').replace(/[^a-z]/gi, '').toLowerCase();
+}
+
 /**
  * Whether an upstream error code means an empty completion. Matched by shape,
  * not one exact string: ai-service names a class in up to three spellings
@@ -52,13 +74,29 @@ export class EmptyAnswerError extends Error {
  */
 export function isEmptyAnswerCode(code: unknown): boolean {
   if (typeof code !== 'string') return false;
-  const key = code.replace(/^ERR_/i, '').replace(/[^a-z]/gi, '').toLowerCase();
+  const key = codeKey(code);
   return key === 'emptycompletion' || key === 'emptyanswer' || key === 'emptyresponse';
 }
 
-/** The generation unchanged, or `EmptyAnswerError` when it has no visible text. */
+/**
+ * Whether an upstream error code means an empty completion at the output cap:
+ * `CompletionTruncated` / `ERR_COMPLETION_TRUNCATED` / `answer_truncated`.
+ */
+export function isTruncatedAnswerCode(code: unknown): boolean {
+  if (typeof code !== 'string') return false;
+  const key = codeKey(code);
+  return key === 'completiontruncated' || key === 'answertruncated';
+}
+
+/**
+ * The generation unchanged, or an error when it has no visible text:
+ * `AnswerTruncatedError` when it stopped at the output cap, else `EmptyAnswerError`.
+ */
 export function assertAnswer<T extends { text?: string | null; finishReason?: string | null }>(generation: T): T {
-  if (isEmptyGeneration(generation.text)) throw new EmptyAnswerError(generation.finishReason);
+  if (isEmptyGeneration(generation.text)) {
+    if (!shouldRetryEmpty(generation.finishReason)) throw new AnswerTruncatedError();
+    throw new EmptyAnswerError(generation.finishReason);
+  }
   return generation;
 }
 
@@ -72,22 +110,25 @@ export type StreamOutcome =
  * typed failure. `streamed` is the text the `delta` frames carried.
  *
  *   · `done` with text → that text (authoritative, the same payload as sync).
- *   · `done` with none → the streamed text, if any; else `empty_answer`.
+ *   · `done` with none → the streamed text, if any; else `answer_truncated`
+ *     when it stopped at the output cap, `empty_answer` otherwise.
  *   · `error` meaning an empty completion → `empty_answer`, before or after
- *     partial text.
+ *     partial text; the truncated one → `answer_truncated`.
  *   · any other `error` → its own code, or `stream_failed` when it has none.
  *     An unknown code is kept, never guessed at.
  */
 export function streamOutcome(
-  frame: { type?: unknown; text?: unknown; code?: unknown; message?: unknown },
+  frame: { type?: unknown; text?: unknown; code?: unknown; message?: unknown; finishReason?: unknown },
   streamed = '',
 ): StreamOutcome {
   if (frame.type === 'done') {
     const text = typeof frame.text === 'string' ? frame.text : '';
     if (!isEmptyGeneration(text)) return { ok: true, text };
     if (!isEmptyGeneration(streamed)) return { ok: true, text: streamed };
+    if (frame.finishReason === 'length') return truncatedOutcome();
     return { ok: false, code: EMPTY_ANSWER_CODE, message: 'The model returned an empty answer.' };
   }
+  if (isTruncatedAnswerCode(frame.code)) return truncatedOutcome();
   if (isEmptyAnswerCode(frame.code)) {
     return { ok: false, code: EMPTY_ANSWER_CODE, message: 'The model returned an empty answer.' };
   }
@@ -96,4 +137,8 @@ export function streamOutcome(
     code: typeof frame.code === 'string' && frame.code ? frame.code : 'stream_failed',
     message: typeof frame.message === 'string' ? frame.message : 'Streaming generation failed.',
   };
+}
+
+function truncatedOutcome(): StreamOutcome {
+  return { ok: false, code: ANSWER_TRUNCATED_CODE, message: 'The model hit the output limit before writing an answer.' };
 }

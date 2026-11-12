@@ -18,6 +18,7 @@
  * is NOT mocked.
  */
 
+import { DrizzleQueryError } from '@payloadcms/db-postgres/drizzle'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CALLBACK_BASE_URL_VAR, CALLBACK_SECRET_VAR } from '@/lib/callbackConfig'
@@ -215,6 +216,28 @@ describe('failures are visible and carry a reason', () => {
     await run()
     expect(written()).toMatchObject({ ingestStatus: 'failed' })
     expect(String(written().ingestError)).toContain('media_unreadable')
+  })
+
+  it('🔴 a database error reading the media is written as its summary, never its params', async () => {
+    const ROW_TEXT = 'Me llamo Lucía Hernández y vivo con mi hermano Tomás Ruiz'
+    openMedia.mockRejectedValueOnce(
+      new DrizzleQueryError('select * from "media" where "alt" = $1', [ROW_TEXT], new Error('timeout')),
+    )
+    await run()
+    expect(written()).toMatchObject({ ingestError: 'media_unreadable: DrizzleQueryError' })
+  })
+
+  it('🔴 audio-service’s message is withheld when it is a failed query', async () => {
+    const ROW_TEXT = 'Me llamo Lucía Hernández y vivo con mi hermano Tomás Ruiz'
+    submitTranscription.mockResolvedValueOnce({
+      ok: false,
+      permanent: true,
+      code: 'worker_crashed',
+      message: `Failed query: insert into "jobs" ("title") values ($1)\nparams: ${ROW_TEXT}`,
+    } as never)
+    await run()
+    expect(String(written().ingestError)).toMatch(/^worker_crashed: /)
+    expect(String(written().ingestError)).not.toContain(ROW_TEXT)
   })
 
   it('fails the row when the document has no audio file at all', async () => {

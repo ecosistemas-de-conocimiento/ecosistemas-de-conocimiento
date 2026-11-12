@@ -134,6 +134,8 @@ export interface RouteResult {
     outputTokens: number;
     costUsd: number;
     purpose: 'generate' | 'critique' | 'refine' | 'sample';
+    /** An attempt the provider answered empty: billed by the provider, retried by us. */
+    empty?: true;
   }>;
   /** Soft-cap signal from `BudgetEnforcer.reserve` (0007_budget_reset) — true
    *  when the org's remaining budget dipped below the configured threshold

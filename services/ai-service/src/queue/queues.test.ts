@@ -359,22 +359,31 @@ describe('attachWorkerLifecycleLogging', () => {
     }
   });
 
-  it('logs an error carrying the message when a worker error event fires', async () => {
+  it('🔴 logs a worker error through the err serializer, never as raw text', async () => {
     const { attachWorkerLifecycleLogging } = await import('./queues.js');
+    const { capturedLog } = await import('../testing/captured-log.js');
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
+      const { log, lines } = capturedLog();
       const f = fakeWorker();
       attachWorkerLifecycleLogging(
         f.worker as Parameters<typeof attachWorkerLifecycleLogging>[0],
         'ingest worker',
+        log,
       );
 
-      f.emit('error', new Error('redis connection lost'));
+      // A database error: its message quotes the row.
+      const dbErr = Object.assign(new Error('Failed query: insert … params: Juana Pérez'), {
+        code: '23505',
+      });
+      f.emit('error', dbErr);
 
-      expect(error).toHaveBeenCalledTimes(1);
-      const line = String(error.mock.calls[0]![0]);
-      expect(line).toContain('ingest worker');
-      expect(line).toContain('redis connection lost');
+      expect(error).not.toHaveBeenCalled();
+      expect(lines).toHaveLength(1);
+      const line = JSON.parse(lines[0]!) as { msg: string; err: Record<string, unknown> };
+      expect(line.msg).toBe('ingest worker: worker error');
+      expect(line.err).toMatchObject({ type: 'Error', code: '23505' });
+      expect(lines[0]).not.toContain('Juana');
     } finally {
       error.mockRestore();
     }

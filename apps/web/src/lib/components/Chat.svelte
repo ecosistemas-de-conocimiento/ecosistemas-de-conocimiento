@@ -4,7 +4,7 @@
   import Message from './Message.svelte';
   import Composer from './Composer.svelte';
   import { app } from '$lib/stores/app.svelte';
-  import { runTurn, userFacingError } from '$lib/api';
+  import { canRetryTurn, runTurn, userFacingError } from '$lib/api';
   import { answerNotice } from '$lib/aiMessages';
   import type { ContextRef, ContextScope } from '$lib/types';
   import {
@@ -205,12 +205,15 @@
           pending: false,
           error: userFacingError(err),
         });
-        retries[placeholderId] = () => {
-          if (busy) return;
-          delete retries[placeholderId];
-          app.updateMessage(sessionId, placeholderId, { content: '', pending: true, error: undefined });
-          void answer(sessionId, placeholderId, payload);
-        };
+        // No "Reintentar" where asking again cannot help (`canRetryTurn`).
+        if (canRetryTurn(err)) {
+          retries[placeholderId] = () => {
+            if (busy) return;
+            delete retries[placeholderId];
+            app.updateMessage(sessionId, placeholderId, { content: '', pending: true, error: undefined });
+            void answer(sessionId, placeholderId, payload);
+          };
+        }
       }
     } finally {
       busy = false;

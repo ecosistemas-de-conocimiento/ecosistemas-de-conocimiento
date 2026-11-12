@@ -114,16 +114,15 @@ describe('POST /api/documents/[id]/retry', () => {
 
   // Nothing changed upstream, so the caller should keep rendering the document
   // exactly as it was — including its `failed` badge and its retry button.
-  it('502s when the backend is unreachable', async () => {
+  it('502s when the backend is unreachable, with the error\'s name and code only', async () => {
     mockedBackendFetch.mockImplementation(async () => {
-      throw new Error('ECONNREFUSED');
+      throw Object.assign(new Error('Failed query: select * from users\nparams: ana@ejemplo.mx'), {
+        code: 'ECONNREFUSED',
+      });
     });
     const res = await POST(makeEvent({}));
     expect(res.status).toBe(502);
-    expect(await res.json()).toMatchObject({
-      error: 'upstream_unreachable',
-      detail: expect.stringContaining('ECONNREFUSED'),
-    });
+    expect(await res.json()).toEqual({ error: 'upstream_unreachable', detail: 'Error(ECONNREFUSED)' });
   });
 
   // 🔴 A retry starts a job that can take hours. Answering anything that reads

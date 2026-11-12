@@ -96,10 +96,14 @@ async function main(): Promise<void> {
       held: report.held,
       refused: report.refused,
       notDraft: report.notDraft,
+      revisions: report.revisions,
     })}`,
   )
   if (!apply) console.log('[hold-for-consent] dry run — nothing written. Re-run with CONSENT_APPLY=1 (or --apply) to hold them.')
   if (report.notDraft.length > 0) console.log('[hold-for-consent] ⚠ notDraft rows are still shared: unpublish them.')
+  if (report.revisions.length > 0) {
+    console.log('[hold-for-consent] revisions are held through their original: not written, nothing to lift on them.')
+  }
   if (report.refused.length > 0) process.exitCode = 1
 }
 

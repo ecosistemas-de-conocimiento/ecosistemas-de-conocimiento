@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { refsToRelationships, relationshipsToRefs } from '$lib/server/contextRefs';
 import type { ContextRef } from '$lib/types';
+import { backendJson } from '$lib/server/backendResponse';
 
 // PATCH /api/sessions/[id] → update title, panelState, lastUsedAt, contextScope.
 // `kind` (Generales/Resonancias) is fixed at create and dropped here.
@@ -40,7 +41,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   if (doc && 'contextScope' in doc) {
     doc.contextScope = { refs: relationshipsToRefs(doc.contextScope) };
   }
-  return json(out, { status: res.status });
+  return backendJson(out, res);
 };
 
 // DELETE /api/sessions/[id] → the backend's `Sessions.beforeDelete` cascade:
@@ -52,5 +53,5 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
     method: 'DELETE',
   });
   const out = await res.json().catch(() => ({}));
-  return json(out, { status: res.status });
+  return backendJson(out, res);
 };

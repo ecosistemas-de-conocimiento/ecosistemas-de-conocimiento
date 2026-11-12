@@ -11,6 +11,7 @@
  * extractor, so the throw comes from exactly the write that threw on dev.
  */
 
+import { DrizzleQueryError } from '@payloadcms/db-postgres/drizzle'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ValidationError } from 'payload'
 
@@ -153,5 +154,16 @@ describe('the extractor worker dies', () => {
     await vi.waitFor(() => expect(row.ingestStatus).toBe('failed'), { timeout: 5000, interval: 10 })
     expect(row.ingestError).toBe(`extraction_failed: ${message}`)
     expect(enqueue).not.toHaveBeenCalled()
+  }, 20_000)
+
+  it('🔴 a database error is written as its summary, never its params', async () => {
+    extractInWorker.mockRejectedValue(
+      new DrizzleQueryError('update "documents" set "extracted_text" = $1', [SECRET], new Error('timeout')),
+    )
+    throwOnTextWrite = () => new Error('the text must never be written')
+    row = base()
+    await fakePayload.update({ data: { name: 'Informe final.pdf' } })
+    await vi.waitFor(() => expect(row.ingestStatus).toBe('failed'), { timeout: 5000, interval: 10 })
+    expect(row.ingestError).toBe('extraction_failed: DrizzleQueryError')
   }, 20_000)
 })

@@ -6,6 +6,7 @@ import { refsToRelationships, relationshipsToRefs } from '$lib/server/contextRef
 import { toBrowserMessage } from '$lib/server/citationProvenance';
 import { backendTitleFetcher, messagesWithTestimonioTitles } from '$lib/server/testimonioTitles';
 import type { ContextRef } from '$lib/types';
+import { backendJson } from '$lib/server/backendResponse';
 
 // GET /api/sessions/[id]/messages → ordered messages for this session.
 // Fragile read: degrade a 403/transient backend failure to an empty list.
@@ -72,5 +73,5 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (out.doc && typeof out.doc === 'object') {
     out.doc = toBrowserMessage(out.doc as Record<string, unknown>);
   }
-  return json(out, { status: res.status });
+  return backendJson(out, res);
 };

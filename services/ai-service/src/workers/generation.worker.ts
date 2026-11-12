@@ -43,6 +43,7 @@ import {
 } from '../queue/queues.js';
 import { BudgetEnforcer } from '../services/budget/enforcer.js';
 import { env } from '../config/env.js';
+import { rootLogger } from '../logger.js';
 import { enqueueCallback } from '../services/callbacks/emit.js';
 import { getEventBus, type EventBus } from '../services/events/bus.js';
 import { createOpenRouter } from '../services/ai/router/openrouter.js';
@@ -184,6 +185,9 @@ interface ParentCountersResult {
   /** True when this UPDATE took the parent from non-terminal to terminal. */
   terminalNow: boolean;
 }
+
+/** Structured logger for this worker; `component` makes it filterable. */
+const genLog = rootLogger.child({ component: 'generation-worker' });
 
 /**
  * Log suffix carrying the inbound HTTP correlation id, when the enqueuer sent
@@ -409,9 +413,9 @@ export async function heldOrEstimatedReserveUsd(
     if (held !== null) return held > 0 ? Math.max(held, lostReserveUsd(row)) : 0;
   } catch (err) {
     // A ledger read must never block a stranded consumer's refund.
-    console.warn(
-      `generation worker: reading the held reserve for job ${jobId} failed ` +
-        `(${err instanceof Error ? err.message : String(err)}); falling back to the estimate.`,
+    genLog.warn(
+      { jobId, err },
+      'generation worker: reading the held reserve failed; falling back to the estimate',
     );
   }
   return lostReserveUsd(row);
@@ -524,10 +528,7 @@ export async function reapLostGenerationJob(
     // `jobId` closes this job's ledger rows out as `refunded`, so a second
     // sweep sees no live hold and cannot refund the same money twice.
     await budget.refund({ org: before.org, amountUsd: refundUsd, jobId }).catch((err: unknown) => {
-      console.warn(
-        `generation worker: refunding the lost reserve for job ${jobId} failed: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
+      genLog.warn({ jobId, err }, 'generation worker: refunding the lost reserve failed');
     });
   }
   console.warn(
@@ -848,10 +849,7 @@ async function runGenerationJob(
       bus,
       windowMs: deps.lostWindowMs ?? lostWindowMs(),
     }).catch((err: unknown) => {
-      console.warn(
-        `generation worker: reaping job ${row.id} failed: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
+      genLog.warn({ jobId: row.id, err }, 'generation worker: reaping job failed');
       return false;
     });
     if (!reaped) {
@@ -996,9 +994,7 @@ async function runGenerationJob(
         return;
       }
       // Retry-time router exception — keep the original result; log and move on.
-      console.warn(
-        `generation worker: validator retry threw for job ${row.id}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      genLog.warn({ jobId: row.id, err }, 'generation worker: validator retry threw');
     }
   }
 
@@ -1144,9 +1140,7 @@ async function runGenerationJob(
         },
         { db },
       ).catch((err) => {
-        console.warn(
-          `generation worker: enqueueCallback (unit.completed) failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        genLog.warn({ err }, 'generation worker: enqueueCallback (unit.completed) failed');
       });
     } else {
       const errorMessage = result.flags
@@ -1173,9 +1167,7 @@ async function runGenerationJob(
         },
         { db },
       ).catch((err) => {
-        console.warn(
-          `generation worker: enqueueCallback (unit.failed) failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        genLog.warn({ err }, 'generation worker: enqueueCallback (unit.failed) failed');
       });
     }
   }
@@ -1230,9 +1222,7 @@ async function runGenerationJob(
         },
         { db },
       ).catch((err) => {
-        console.warn(
-          `generation worker: enqueueCallback (request terminal) failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        genLog.warn({ err }, 'generation worker: enqueueCallback (request terminal) failed');
       });
     }
   }
@@ -1400,9 +1390,9 @@ async function markJobFailed(args: {
   if (!settled) {
     // Already terminal — another writer owns the rollup. Same reasoning as the
     // success path: the counters/events/callbacks below must fire once per job.
-    console.warn(
-      `generation worker: job ${row.id} was already terminal when marking it ` +
-        `failed ('${error}'); skipping rollup, events and callbacks.`,
+    genLog.warn(
+      { jobId: row.id, err: error },
+      'generation worker: job was already terminal when marking it failed; skipping rollup, events and callbacks',
     );
     void parent;
     return;
@@ -1455,9 +1445,7 @@ async function markJobFailed(args: {
       },
       { db },
     ).catch((err) => {
-      console.warn(
-        `generation worker: enqueueCallback (unit.failed) failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      genLog.warn({ err }, 'generation worker: enqueueCallback (unit.failed) failed');
     });
   }
 
@@ -1506,9 +1494,7 @@ async function markJobFailed(args: {
         },
         { db },
       ).catch((err) => {
-        console.warn(
-          `generation worker: enqueueCallback (request terminal) failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        genLog.warn({ err }, 'generation worker: enqueueCallback (request terminal) failed');
       });
     }
   }
@@ -1713,9 +1699,9 @@ export async function startGenerationWorker(
   );
 
   worker.on('failed', (job, err) => {
-    console.error(
-      `generation worker: BullMQ-level failure for job ${job?.id}: ` +
-        `${err.message}${correlationSuffix(job?.data ?? {})}`,
+    genLog.error(
+      { bullJobId: job?.id, err },
+      `generation worker: BullMQ-level failure${correlationSuffix(job?.data ?? {})}`,
     );
   });
   attachWorkerLifecycleLogging(worker, 'generation worker');

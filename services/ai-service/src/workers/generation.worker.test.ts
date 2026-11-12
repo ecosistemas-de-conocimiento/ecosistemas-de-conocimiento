@@ -75,6 +75,21 @@ import { NO_PREDICATE, WhereRecorder, type RecordedWhere } from '../test/where-r
 // Mock resolveSpec at the module boundary so the worker's call doesn't hit
 // the real DB code path. The test injects a `vi.fn()` per case via the
 // mocked module's named export.
+// Every `rootLogger` line this file's code writes, through the shared `err`
+// serializer (`errors/log-safe.ts`), so a test can read what reached the log.
+const logged = vi.hoisted(() => ({ lines: [] as string[] }));
+vi.mock('../logger.js', async () => {
+  const { capturedLog } = await import('../testing/captured-log.js');
+  const { log, lines } = capturedLog();
+  logged.lines = lines;
+  return { rootLogger: log };
+});
+
+/** A Postgres error whose message quotes the row, as a unique violation's does. */
+const ROW_TEXT = 'Juana Pérez declaró en la audiencia';
+const rowError = () =>
+  Object.assign(new Error(`duplicate key value violates unique constraint: ${ROW_TEXT}`), { code: '23505' });
+
 vi.mock('../services/registry/resolve.js', async () => {
   const actual = await vi.importActual<
     typeof import('../services/registry/resolve.js')
@@ -1953,14 +1968,16 @@ describe('heldOrEstimatedReserveUsd', () => {
     expect(refund).toBeCloseTo(0.00574, 9);
   });
 
-  it('falls back to the estimate when the ledger read THROWS', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('🔴 falls back to the estimate when the ledger read THROWS, and logs no row text', async () => {
+    logged.lines.length = 0;
     const budget = fakeBudget(() => {
-      throw new Error('db is down');
+      throw rowError();
     });
     expect(await heldOrEstimatedReserveUsd(budget, 'job-1', DEEP_ROW)).toBeCloseTo(0.00574, 9);
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
+    const line = logged.lines.find((l) => l.includes('reading the held reserve failed'));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!)).toMatchObject({ jobId: 'job-1', err: { code: '23505' } });
+    expect(logged.lines.join('')).not.toContain('Juana');
   });
 });
 

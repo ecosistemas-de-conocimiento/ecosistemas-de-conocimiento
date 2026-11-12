@@ -458,7 +458,7 @@ export function kickDelivery(
       // sweeper re-claims it after its grace period. ERROR, not warn: this is
       // a delivery that did not happen when it should have.
       log.error(
-        { deliveryId, err: err instanceof Error ? err.message : String(err) },
+        { deliveryId, err },
         'callback emit: initial attempt threw; the sweeper will retry it',
       );
     });
@@ -722,7 +722,7 @@ export async function attemptDelivery(
           {
             deliveryId,
             attempt: nextAttempt + 1,
-            err: err instanceof Error ? err.message : String(err),
+            err,
           },
           'callback emit: scheduled attempt threw; the sweeper will retry it',
         );

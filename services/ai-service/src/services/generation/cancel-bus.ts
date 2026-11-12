@@ -17,6 +17,8 @@
 
 import { Redis } from 'ioredis';
 
+import { rootLogger, type ComponentLogger } from '../../logger.js';
+
 export const CANCEL_CHANNEL = 'gen:cancel';
 
 export type CancelHandler = (requestId: string) => void;
@@ -55,7 +57,10 @@ export class RedisCancelBus implements CancelBus {
   private started = false;
   private stopped = false;
 
-  constructor(private readonly redisUrl: string) {}
+  constructor(
+    private readonly redisUrl: string,
+    private readonly logger: ComponentLogger = rootLogger,
+  ) {}
 
   async start(): Promise<void> {
     if (this.started) return;
@@ -72,8 +77,9 @@ export class RedisCancelBus implements CancelBus {
 
     // Loud logging so a flaky subscriber is visible — the post-call re-read
     // hides the symptom, so we'd never notice the fast-path is degraded.
+    // Errors go through the logger's `err` serializer (`errors/log-safe.ts`).
     this.sub.on('error', (err) => {
-      console.warn(`[cancel-bus] subscriber error: ${err.message}`);
+      this.logger.warn({ err }, '[cancel-bus] subscriber error');
     });
     this.sub.on('reconnecting', () => {
       console.warn('[cancel-bus] subscriber reconnecting');
@@ -91,9 +97,7 @@ export class RedisCancelBus implements CancelBus {
         try {
           h(message);
         } catch (err) {
-          console.error(
-            `[cancel-bus] handler threw for requestId=${message}: ${(err as Error).message}`,
-          );
+          this.logger.error({ err, requestId: message }, '[cancel-bus] handler threw');
         }
       }
     });
@@ -108,9 +112,7 @@ export class RedisCancelBus implements CancelBus {
     } catch (err) {
       // The DB write already happened; pub/sub is just the wake-up hint.
       // Post-LLM-call re-read is the correctness safety net.
-      console.warn(
-        `[cancel-bus] publish failed for requestId=${requestId}: ${(err as Error).message}`,
-      );
+      this.logger.warn({ err, requestId }, '[cancel-bus] publish failed');
     }
   }
 

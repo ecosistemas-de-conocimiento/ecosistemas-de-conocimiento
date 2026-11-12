@@ -9,14 +9,22 @@
  * on a failed `UPDATE documents SET extracted_text = $1` writes a whole
  * testimony, names included, into the container log.
  *
- * What is safe: the error's class name and the Postgres SQLSTATE (`57P01`,
- * `40P01`, `57014`…), which say what went wrong without saying about whom.
+ * What is safe: the error's class name, the Postgres SQLSTATE (`57P01`,
+ * `40P01`, `57014`…) and a Node system error's `code`, `errno` and `syscall`
+ * (`ECONNREFUSED`, -111, `connect`), which say what went wrong without saying
+ * about whom.
  * `err.name` alone is not enough for drizzle: `DrizzleQueryError` never sets
  * `name`, so it reads `Error`; the constructor name is used instead.
  */
 
 /** A Postgres SQLSTATE: five characters, digits and capitals. */
 const SQLSTATE = /^[0-9A-Z]{5}$/
+
+/** A Node system error code (`ECONNREFUSED`, `ETIMEDOUT`…); kept since 2026-11-10. */
+const NODE_CODE = /^E[A-Z0-9_]+$/
+
+/** A Node `syscall` (`connect`, `getaddrinfo`): one lowercase word. */
+const SYSCALL = /^[a-z_]{1,32}$/
 
 function className(err: object): string {
   const ctor = (err as { constructor?: { name?: unknown } }).constructor
@@ -30,22 +38,31 @@ function className(err: object): string {
   return typeof name === 'string' && name ? name : ctorName || 'Error'
 }
 
-/** The SQLSTATE of this error or of anything in its `cause` chain. */
-function pgCode(err: unknown): string | undefined {
+/**
+ * The SQLSTATE or Node system error code of this error or of the first error
+ * in its `cause` chain that has one, with that error's `errno` and `syscall`.
+ */
+function errCode(err: unknown): { code: string; errno?: number; syscall?: string } | undefined {
   let cur: unknown = err
   for (let depth = 0; depth < 5 && cur && typeof cur === 'object'; depth++) {
-    const code = (cur as { code?: unknown }).code
-    if (typeof code === 'string' && SQLSTATE.test(code)) return code
+    const { code, errno, syscall } = cur as { code?: unknown; errno?: unknown; syscall?: unknown }
+    if (typeof code === 'string' && (SQLSTATE.test(code) || NODE_CODE.test(code))) {
+      return {
+        code,
+        ...(Number.isInteger(errno) ? { errno: errno as number } : {}),
+        ...(typeof syscall === 'string' && SYSCALL.test(syscall) ? { syscall } : {}),
+      }
+    }
     cur = (cur as { cause?: unknown }).cause
   }
   return undefined
 }
 
-/** Para logs: nombre del error + código de Postgres si lo hay. NUNCA message, params ni query (DrizzleQueryError mete los params en message). */
+/** Para logs: nombre del error + código (Postgres o de Node) si lo hay. NUNCA message, params ni query (DrizzleQueryError mete los params en message). */
 export function errSummary(err: unknown): string {
   if (err === null || err === undefined) return String(err)
   if (typeof err !== 'object') return typeof err
-  const code = pgCode(err)
+  const code = errCode(err)?.code
   const name = className(err)
   return code ? `${name}(${code})` : name
 }
@@ -88,7 +105,7 @@ const REDACTED = '[database error text withheld]'
  * `logger: { options: { serializers: { err: safeErrSerializer } }, destination: defaultLoggerOptions }`.
  *
  * A DATABASE error (see {@link isDatabaseError}) keeps only its type, its
- * SQLSTATE and its stack frames: no `message`, `query`, `params`, `detail`,
+ * code (SQLSTATE or Node), `errno`, `syscall` and its stack frames: no `message`, `query`, `params`, `detail`,
  * `cause` or any other own property. Any other error keeps its message too
  * (truncated), since a Payload validation error is useless without it.
  * A string already chosen by the caller passes, unless it is drizzle's text.
@@ -97,11 +114,14 @@ export function safeErrSerializer(err: unknown): unknown {
   if (err === null || err === undefined) return err
   if (typeof err === 'string') return QUERY_TEXT.test(err) ? REDACTED : err
   if (typeof err !== 'object') return { type: typeof err }
-  const out: { type: string; code?: string; message?: string; stack?: string } = {
-    type: className(err),
-  }
-  const code = pgCode(err)
-  if (code) out.code = code
+  const out: {
+    type: string
+    code?: string
+    errno?: number
+    syscall?: string
+    message?: string
+    stack?: string
+  } = { type: className(err), ...errCode(err) }
   if (!isDatabaseError(err)) {
     const message = (err as { message?: unknown }).message
     if (typeof message === 'string') out.message = message.slice(0, 500)
@@ -114,9 +134,14 @@ export function safeErrSerializer(err: unknown): unknown {
 /**
  * For a log line that used to print `err.message`: the same message for an
  * ordinary error (truncated), {@link errSummary} for a database one.
+ *
+ * Also what a row's reason column (`ingestError`, `publicationError`…) gets:
+ * the web hands those to the browser. A string is another service's error
+ * text (an ai-service callback), withheld when it is drizzle's.
  */
 export function safeErrMessage(err: unknown, max = 300): string {
   if (isDatabaseError(err)) return errSummary(err)
+  if (typeof err === 'string' && QUERY_TEXT.test(err)) return REDACTED
   const message = err instanceof Error ? err.message : typeof err === 'string' ? err : errSummary(err)
   return message.slice(0, max)
 }

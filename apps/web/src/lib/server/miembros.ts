@@ -4,6 +4,7 @@
  * `apps/backend/src/endpoints/miembros.ts`). This file decides nothing.
  */
 
+import { safeErrMessage } from '$lib/errorSummary';
 import { backendFetch } from '$lib/server/auth';
 import { parseMembers, type Member } from '$lib/miembros';
 
@@ -39,7 +40,7 @@ export async function listMembers(token: string | undefined, organizationId: str
       members: parseMembers(body?.members),
     };
   } catch (err) {
-    console.warn('[miembros] could not list members', err);
+    console.warn('[miembros] could not list members', safeErrMessage(err));
     return { state: 'unavailable' };
   }
 }
@@ -56,7 +57,7 @@ async function write<T>(
     const body = ((await res.json().catch(() => null)) ?? {}) as Record<string, unknown>;
     return { ok: true, value: pick(body) };
   } catch (err) {
-    console.warn('[miembros] write failed', err);
+    console.warn('[miembros] write failed', safeErrMessage(err));
     return { ok: false, status: 503, message: GENERIC };
   }
 }

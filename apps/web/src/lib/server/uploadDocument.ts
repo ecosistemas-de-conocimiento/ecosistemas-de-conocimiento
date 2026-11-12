@@ -1,3 +1,4 @@
+import { errSummary, safeErrMessage } from '$lib/errorSummary';
 import { backendFetch, backendUrl } from '$lib/server/auth';
 import { mapUpstreamMediaError } from '$lib/server/documents';
 import { isAudioUpload, MAX_AUDIO_UPLOAD_BYTES, MAX_UPLOAD_BYTES } from '$lib/config';
@@ -196,7 +197,7 @@ export async function uploadDocument(
       status: 502,
       body: {
         error: 'upstream_unreachable',
-        detail: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+        detail: errSummary(err),
       },
     };
   }
@@ -256,7 +257,7 @@ async function discardUpload(token: string | undefined, mediaId: number | string
     });
     if (!res.ok) console.warn('[upload] could not delete an orphaned upload', { mediaId, status: res.status });
   } catch (err) {
-    console.warn('[upload] could not delete an orphaned upload', { mediaId, err: String(err) });
+    console.warn('[upload] could not delete an orphaned upload', { mediaId, err: safeErrMessage(err) });
   }
 }
 

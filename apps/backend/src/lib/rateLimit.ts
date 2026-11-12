@@ -38,7 +38,7 @@
 
 import { safeErrMessage } from './errorSummary'
 
-/** Every limit in this app uses a one-minute window, except failed logins (below). */
+/** Every limit in this app uses a one-minute window, except failed logins, new conversations and added members (below). */
 export const RATE_LIMIT_WINDOW_MS = 60_000
 
 /**
@@ -56,6 +56,9 @@ export const LOGIN_FAIL_WINDOW_MS = 60 * 60_000
  */
 export const SESSION_CREATE_WINDOW_MS = 60 * 60_000
 
+/** People one manager adds through `/api/miembros` are counted over an hour (`rateLimits.memberAddPerUser`). */
+export const MEMBER_ADD_WINDOW_MS = 60 * 60_000
+
 /** Answer for one bucket. `resetAt` is epoch ms. */
 export interface RateLimitDecision {
   allowed: boolean
@@ -66,6 +69,8 @@ export interface RateLimitDecision {
   resetAt: number
   /** What to put in `Retry-After`. Always ≥1 when denied, 0 when allowed. */
   retryAfterSeconds: number
+  /** The hit this answer counted, when allowed: what `release` takes back. */
+  hit?: number
 }
 
 /**
@@ -78,13 +83,14 @@ export interface RateLimitDecision {
 export interface RateLimitStore {
   hit(key: string, limit: number, windowMs: number): RateLimitDecision | Promise<RateLimitDecision>
   /**
-   * Give back the most recent counted hit on this key. For a bucket that counts
+   * Give back the hit `hit` counted (its `RateLimitDecision.hit`; without one,
+   * the most recent hit on this key). For a bucket that counts
    * only some outcomes (failed logins): `hit` reserves the slot BEFORE the
    * outcome is known, so concurrent requests cannot all pass a check that has
    * not counted any of them yet, and `release` returns it once the outcome turns
    * out not to count. See {@link reserveRateLimits}.
    */
-  release(key: string): void | Promise<void>
+  release(key: string, hit?: number): void | Promise<void>
   /** Drop all counters. Tests, and nothing else. */
   reset(): void
 }
@@ -130,8 +136,8 @@ const EVICTION_TARGET_KEYS = Math.floor(MAX_TRACKED_KEYS * 0.9)
 
 /** One key's state. `lastSeen` is separate from `hits` on purpose — see `hit()`. */
 type Bucket = {
-  /** Timestamps of ALLOWED requests inside the window. Denied ones are not here. */
-  hits: number[]
+  /** ALLOWED requests inside the window, oldest first. Denied ones are not here. */
+  hits: Array<{ at: number; id: number }>
   /** Last time this key was touched AT ALL, allowed or denied. Eviction order. */
   lastSeen: number
   /** The window this key is counted over; it is never evicted sooner. */
@@ -149,6 +155,7 @@ type Bucket = {
 class InProcessSlidingWindowStore implements RateLimitStore {
   private buckets = new Map<string, Bucket>()
   private lastSweepAt = 0
+  private nextHit = 1
 
   hit(key: string, limit: number, windowMs: number): RateLimitDecision {
     const now = Date.now()
@@ -156,7 +163,7 @@ class InProcessSlidingWindowStore implements RateLimitStore {
 
     const cutoff = now - windowMs
     const previous = this.buckets.get(key)
-    const recent = previous === undefined ? [] : previous.hits.filter((at) => at > cutoff)
+    const recent = previous === undefined ? [] : previous.hits.filter((h) => h.at > cutoff)
 
     if (recent.length >= limit) {
       // Denied. Two separate decisions here, and they pull in opposite
@@ -174,23 +181,28 @@ class InProcessSlidingWindowStore implements RateLimitStore {
       return denied(recent, limit, windowMs, now)
     }
 
-    recent.push(now)
+    const id = this.nextHit++
+    recent.push({ at: now, id })
     this.buckets.set(key, { hits: recent, lastSeen: now, windowMs })
     return {
       allowed: true,
       limit,
       remaining: limit - recent.length,
-      resetAt: (recent[0] ?? now) + windowMs,
+      resetAt: (recent[0]?.at ?? now) + windowMs,
       retryAfterSeconds: 0,
+      hit: id,
     }
   }
 
-  release(key: string): void {
-    // `hits` is in time order, so the newest is last. It is the slot just
-    // reserved, or one taken a moment later; either way the count drops by one.
+  release(key: string, hit?: number): void {
+    // The reservation's own hit, not the newest: a later request's would
+    // leave the refunded one counting, and the window ending too early
+    // (audit 2026-11-10). One already out of the window is gone already.
     const bucket = this.buckets.get(key)
     if (!bucket) return
-    bucket.hits.pop()
+    const at = hit === undefined ? bucket.hits.length - 1 : bucket.hits.findIndex((h) => h.id === hit)
+    if (at < 0) return
+    bucket.hits.splice(at, 1)
     // An empty bucket holds no budget, so it goes: a refunded attempt leaves
     // no key behind, and a stream of refunds cannot fill the map to its cap.
     if (bucket.hits.length === 0) this.buckets.delete(key)
@@ -230,8 +242,8 @@ class InProcessSlidingWindowStore implements RateLimitStore {
   }
 }
 
-function denied(recent: number[], limit: number, windowMs: number, now: number): RateLimitDecision {
-  const resetAt = (recent[0] ?? now) + windowMs
+function denied(recent: Bucket['hits'], limit: number, windowMs: number, now: number): RateLimitDecision {
+  const resetAt = (recent[0]?.at ?? now) + windowMs
   return {
     allowed: false,
     limit,
@@ -456,6 +468,41 @@ export const rateLimits = {
    * (`overrideAccess`) and are not counted. At 60, 20 000 takes two weeks.
    */
   sessionCreatePerUser: (): number => envInt('SESSION_RATELIMIT_CREATE_USER_MAX', 60),
+
+  // --- people added by a manager ----------------------------------------------
+
+  /**
+   * People one manager adds through `POST /api/miembros` per HOUR
+   * ({@link MEMBER_ADD_WINDOW_MS}; audit 2026-11-10, D2 leftover). Every new
+   * account brings its own `relationReadPerUser`, relation-filter slots and
+   * `sessionCreatePerUser`, so unbounded adds multiplied one person's budget.
+   *
+   * 50: a responsable adding a class of ~30 in one sitting stays under it with
+   * 20 to spare for a mistyped email removed and added again (inferred from the
+   * screen, which adds one person per form send, `apps/web/src/routes/miembros`;
+   * no measured class size). An add that fails (400, 409, a refused role) is
+   * given back. Platform admins are not counted. At 50, one manager adds at
+   * most 1200 accounts a day.
+   */
+  memberAddPerUser: (): number => envInt('MIEMBROS_RATELIMIT_ADD_USER_MAX', 50),
+
+  // --- filters through a relationship ----------------------------------------
+
+  /**
+   * Requests one person sends with a filter through a relationship
+   * (`session.title`, `uploadedBy.email`…), per minute (audit 2026-11-10, D2;
+   * `takeRelationSlot` in `access/relationFilters.ts`, which also caps how many
+   * run at once). Each reads the target before the query runs: one at the
+   * per-request caps answered in 319-745 ms (measured on torre 2026-11-10,
+   * `relationFilters.bounds.pg.test.ts`).
+   *
+   * 30, one every two seconds. The web sends none (grep of `apps/web/src`,
+   * 2026-11-10: every filter it sends is on a column or a relation's id), and
+   * the admin panel is platform admins only, who are not counted; so a person
+   * never meets it. At 30 a minute, at the caps, one person keeps the process
+   * busy for at most ~10-22 s a minute (inferred from those timings).
+   */
+  relationReadPerUser: (): number => envInt('QUERY_RELATION_RATELIMIT_USER_MAX', 30),
 }
 
 // --- checking ----------------------------------------------------------------
@@ -502,26 +549,26 @@ const NOTHING_HELD = async (): Promise<void> => {}
  * the slot stays counted.
  */
 export async function reserveRateLimits(rules: RateLimitRule[]): Promise<RateLimitReservation> {
-  const held: RateLimitRule[] = []
+  const held: Array<{ rule: RateLimitRule; hit?: number }> = []
   let done = false
   const release = async (): Promise<void> => {
     if (done) return
     done = true
-    for (const rule of held) {
+    for (const { rule, hit } of held) {
       try {
-        await currentStore().release(rule.key)
+        await currentStore().release(rule.key, hit)
       } catch (err) {
         console.error(`[identity/rateLimit] release failed on scope "${rule.scope}" — the slot stays counted:`, safeErrMessage(err))
       }
     }
   }
   for (const rule of rules) {
-    const verdict = await checkRateLimits([rule])
-    if (!verdict.allowed) {
+    const decision = await hitOne(rule)
+    if (!decision.allowed) {
       await release()
-      return { ...verdict, release: NOTHING_HELD }
+      return { allowed: false, rule, decision, release: NOTHING_HELD }
     }
-    held.push(rule)
+    held.push({ rule, hit: decision.hit })
   }
   return { ...ALLOWED, release }
 }
@@ -537,29 +584,28 @@ export async function reserveRateLimits(rules: RateLimitRule[]): Promise<RateLim
  */
 export async function checkRateLimits(rules: RateLimitRule[]): Promise<RateLimitVerdict> {
   for (const rule of rules) {
-    const windowMs = rule.windowMs ?? RATE_LIMIT_WINDOW_MS
-    let decision: RateLimitDecision
-    try {
-      decision = await currentStore().hit(rule.key, rule.limit, windowMs)
-    } catch (err) {
-      console.error(
-        `[identity/rateLimit] store failed on scope "${rule.scope}" — DENYING the request (fail closed):`,
-        safeErrMessage(err),
-      )
-      const resetAt = Date.now() + windowMs
-      return {
-        allowed: false,
-        rule,
-        decision: {
-          allowed: false,
-          limit: rule.limit,
-          remaining: 0,
-          resetAt,
-          retryAfterSeconds: Math.ceil(windowMs / 1000),
-        },
-      }
-    }
+    const decision = await hitOne(rule)
     if (!decision.allowed) return { allowed: false, rule, decision }
   }
   return ALLOWED
+}
+
+/** Count one rule. A store that throws is a denial (fail closed). */
+async function hitOne(rule: RateLimitRule): Promise<RateLimitDecision> {
+  const windowMs = rule.windowMs ?? RATE_LIMIT_WINDOW_MS
+  try {
+    return await currentStore().hit(rule.key, rule.limit, windowMs)
+  } catch (err) {
+    console.error(
+      `[identity/rateLimit] store failed on scope "${rule.scope}" — DENYING the request (fail closed):`,
+      safeErrMessage(err),
+    )
+    return {
+      allowed: false,
+      limit: rule.limit,
+      remaining: 0,
+      resetAt: Date.now() + windowMs,
+      retryAfterSeconds: Math.ceil(windowMs / 1000),
+    }
+  }
 }

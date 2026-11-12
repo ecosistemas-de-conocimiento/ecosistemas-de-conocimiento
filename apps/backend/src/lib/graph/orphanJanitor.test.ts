@@ -2,7 +2,10 @@
  * C-05 (audit 2026-11-10): the orphan sweep runs on its own, daily, one
  * ecosistema at a time.
  */
+import { allowJanitors } from '@/lib/testing/janitors'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { JANITOR_FIRST_SWEEP_DEFAULT_MIN } from '@/lib/janitorScheduler'
 
 import {
   GRAPH_ORPHAN_JANITOR_DEFAULT_MIN,
@@ -10,6 +13,9 @@ import {
   stopGraphOrphanJanitor,
   sweepGraphOrphans,
 } from './orphanJanitor'
+
+// Its own janitor arms here (`vitest.setup.ts` turns them all off).
+allowJanitors()
 
 const OLD = new Date(Date.now() - 86_400_000).toISOString()
 
@@ -66,15 +72,15 @@ describe('sweepGraphOrphans', () => {
 })
 
 describe('startGraphOrphanJanitor', () => {
-  it('🔴 is on by default, daily, and sweeps when the interval elapses (not at boot)', async () => {
+  it('🔴 is on by default, daily: first sweep soon after boot (janitorScheduler), then every interval', async () => {
     expect(GRAPH_ORPHAN_JANITOR_DEFAULT_MIN).toBe(1440)
     vi.useFakeTimers()
     const { payload, deleted } = fake()
     expect(startGraphOrphanJanitor(payload as never)).toBe(true)
     expect(payload.logger.info).toHaveBeenCalledWith({ intervalMinutes: 1440 }, '[graph-orphan-janitor] armed')
-    await vi.advanceTimersByTimeAsync(1439 * 60_000)
+    await vi.advanceTimersByTimeAsync(JANITOR_FIRST_SWEEP_DEFAULT_MIN * 60_000 - 1)
     expect(deleted).toEqual([])
-    await vi.advanceTimersByTimeAsync(60_000)
+    await vi.advanceTimersByTimeAsync(1)
     expect(deleted).toEqual([1])
   })
 

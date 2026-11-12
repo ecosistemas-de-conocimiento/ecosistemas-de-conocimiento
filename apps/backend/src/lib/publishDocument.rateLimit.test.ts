@@ -18,6 +18,7 @@
  * ⚠ Fake clients on purpose, and `sleep` is injected — see `aiRetry.test.ts`.
  */
 
+import { DrizzleQueryError } from '@payloadcms/db-postgres/drizzle'
 import { describe, expect, it, vi } from 'vitest'
 import type { Payload } from 'payload'
 
@@ -144,6 +145,18 @@ describe('beginPublish — 🔴 a rate-limited enqueue is retried, then written 
     expect(enqueue).toHaveBeenCalledTimes(1) // not retried — a 500 may have half-happened
     expect(String(finalRow().publicationError)).toContain('upstream exploded')
     expect(String(finalRow().publicationError)).toContain('No se pudo publicar')
+  })
+
+  it('🔴 a database error is written as its summary: `publicationError` reaches the browser', async () => {
+    const ROW_TEXT = 'Me llamo Lucía Hernández y vivo con mi hermano Tomás Ruiz'
+    const { payload, finalRow } = fakePayload()
+    const enqueue = vi.fn(async () => {
+      throw new DrizzleQueryError('update "documents" set "redacted_text" = $1', [ROW_TEXT], new Error('deadlock'))
+    })
+    await expect(beginPublish(DOC, { payload, client: mover(enqueue) })).rejects.toThrow()
+    expect(String(finalRow().publicationError)).toContain('No se pudo publicar')
+    expect(String(finalRow().publicationError)).toContain('DrizzleQueryError')
+    expect(String(finalRow().publicationError)).not.toContain(ROW_TEXT)
   })
 
   it('the ORIGINAL error still reaches the caller, never a write error', async () => {

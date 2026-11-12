@@ -58,11 +58,11 @@ Ese mismo día se agregó el grafo combinado "Todos mis ecosistemas": quien pert
 
 ## Estado al 2026-11-10
 
-Sin cambio en los tres filtros. En `main`, pendiente de desplegar en dev:
+Sin cambio en los tres filtros. Desplegado en dev:
 
 - El backfill del grafo solo extrae documentos publicados y no retenidos por consentimiento (commit feae7e18). La extracción en vivo de un borrador sigue como en la decisión original. La re-extracción de todo lo publicado está preparada en `apps/backend/scripts/reextract-published-graph.ts` y no se ha corrido.
 - El grafo, también el combinado y el de la vista de estudiante, muestra el título con compuerta de un `documento` ([ADR-0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md); commit 2dda9a8b).
-- Una fila retenida por consentimiento no se grafica ([ADR-0022](ADR-0022-retencion-por-consentimiento.md)).
+- Una fila retenida por consentimiento no se grafica ([ADR-0022](ADR-0022-retencion-por-consentimiento.md)). Que el trabajo del grafo se detenga si la fila quedó retenida en curso está en `main` (commits 17a5d985 y c12a0ab5), pendiente de desplegar en dev.
 
 ## Fuentes
 

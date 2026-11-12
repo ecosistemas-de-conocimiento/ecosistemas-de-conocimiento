@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { coerceRelationId, relationIds } from '$lib/documents';
+import { backendJson } from '$lib/server/backendResponse';
 
 /**
  * Attach / detach ONE existing document to / from ONE conversation.
@@ -155,7 +156,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     // Already here but not pinned, and the caller asked for the pin.
     const res = await writeSessions(locals.token, docId, doc.sessionIds, { isPinned: true });
     const body = await res.json().catch(() => ({}));
-    return json(body, { status: res.status });
+    return backendJson(body, res);
   }
 
   // Append. The existing ids are kept exactly as they were — this is the one
@@ -171,7 +172,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (res.status === 400 && isNoSuchConversation(body)) {
     return json({ error: 'session_not_found' }, { status: 404 });
   }
-  return json(body, { status: res.status });
+  return backendJson(body, res);
 };
 
 /**
@@ -212,5 +213,5 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
   const remaining = doc.sessionIds.filter((id) => id !== sessionId);
   const res = await writeSessions(locals.token, docId, remaining);
   const body = await res.json().catch(() => ({}));
-  return json(body, { status: res.status });
+  return backendJson(body, res);
 };

@@ -73,6 +73,8 @@ interface World {
   streamText: string;
   /** The chat answer's own frames on `/v1/generate/stream`, in place of the delta + done above. */
   streamFrames?: Array<Record<string, unknown>>;
+  /** The `/v1/generate/stream` body breaks with this error after one delta. */
+  streamBreaks?: Error;
   /** The chat answer on `/v1/generate/sync` (or, before its headers, `/stream`) fails: this status and JSON body. */
   syncError?: { status: number; body: unknown };
   /** What the published-titles read (`$lib/server/titleMatch`) answers. */
@@ -307,6 +309,16 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
         traceId: 't2',
         systemPromptApplied: true,
       };
+      if (world.streamBreaks) {
+        const breaks = world.streamBreaks;
+        const body = new ReadableStream<Uint8Array>({
+          pull(c) {
+            c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'delta', text: 'Medio ' })}\n\n`));
+            c.error(breaks);
+          },
+        });
+        return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      }
       const sse = world.streamFrames
         ? world.streamFrames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join('')
         : `data: ${JSON.stringify({ type: 'delta', text: 'Respuesta ' })}\n\n` +
@@ -607,6 +619,52 @@ describe('🔴 POST /api/generate — an empty answer is a failed turn, never sa
     const err = await failure(POST(event(turn(), true)));
     expect(err?.status).toBe(502);
     expect(err?.body?.code).toBe('empty_answer');
+    expect(saves()).toHaveLength(0);
+  });
+
+  // Empty at the output cap (ai-service `CompletionTruncated`): its own code,
+  // because asking again hits the same cap. Never saved either.
+  const TRUNCATED = { error: 'CompletionTruncated', code: 'ERR_COMPLETION_TRUNCATED', message: 'cap' };
+
+  it('sync: ai-service\'s CompletionTruncated fails with answer_truncated, not empty_answer', async () => {
+    world.syncError = { status: 502, body: TRUNCATED };
+    const err = await failure(POST(event(turn())));
+    expect(err?.status).toBe(502);
+    expect(err?.body?.code).toBe('answer_truncated');
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('stream: CompletionTruncated before the headers fails with answer_truncated', async () => {
+    world.syncError = { status: 502, body: TRUNCATED };
+    const err = await failure(POST(event(turn(), true)));
+    expect(err?.status).toBe(502);
+    expect(err?.body?.code).toBe('answer_truncated');
+    expect(saves()).toHaveLength(0);
+  });
+
+  it.each([
+    ['before', []],
+    ['after', [{ type: 'delta', text: 'Medio ' }]],
+  ])('stream: a CompletionTruncated frame %s partial content becomes answer_truncated', async (_when, deltas) => {
+    world.streamFrames = [...deltas, { type: 'error', code: 'CompletionTruncated', errorCode: 'ERR_COMPLETION_TRUNCATED', message: 'cap' }];
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.at(-1)).toMatchObject({ type: 'error', code: 'answer_truncated' });
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('stream: `done` with no content and finishReason length emits answer_truncated and saves nothing', async () => {
+    world.streamFrames = [{ ...EMPTY_DONE, finishReason: 'length' }];
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.at(-1)).toMatchObject({ type: 'error', code: 'answer_truncated' });
+    expect(saves()).toHaveLength(0);
+  });
+
+  it("🔴 stream: a broken upstream body sends the browser the error's name and code, never its text", async () => {
+    world.streamBreaks = Object.assign(new Error('Failed query: select * from users\nparams: ana@ejemplo.mx'), {
+      code: 'ECONNRESET',
+    });
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.at(-1)).toEqual({ type: 'error', code: 'STREAM_INTERRUPTED', message: 'Error(ECONNRESET)' });
     expect(saves()).toHaveLength(0);
   });
 

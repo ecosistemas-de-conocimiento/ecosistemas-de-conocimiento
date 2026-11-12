@@ -6,6 +6,7 @@ import { relationshipsToRefs } from '$lib/server/contextRefs';
 import { toBackendId } from '$lib/ecosystems';
 import { resolveEcosystem } from '$lib/server/ecosystem';
 import { parseSessionKind } from '$lib/sessionKind';
+import { backendJson } from '$lib/server/backendResponse';
 
 // GET /api/sessions → the current user's sessions IN THE SELECTED ECOSISTEMA,
 // most-recent first.
@@ -110,6 +111,6 @@ export const POST: RequestHandler = async ({ locals, cookies, request }) => {
     body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) return json(body, { status: res.status });
+  if (!res.ok) return backendJson(body, res);
   return json(body, { status: 201 });
 };

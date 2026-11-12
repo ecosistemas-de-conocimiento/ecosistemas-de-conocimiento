@@ -1,6 +1,6 @@
 # Funciones por ecosistema
 
-**Versión:** 1.3 · **Fecha:** 2026-11-10 · **Estado:** vigente
+**Versión:** 1.4 · **Fecha:** 2026-11-11 · **Estado:** vigente
 
 **Fuentes:**
 - `apps/backend/src/lib/features.ts` (defaults, dónde se aplica cada función, interruptores bloqueados, lectura con caché)
@@ -14,7 +14,7 @@
 
 ## Para quién es y qué responde
 
-Este documento es para responsables e investigadores que configuran un ecosistema, para el administrador de la plataforma y para quien desarrolle. Responde: qué funciones se pueden encender o apagar en cada ecosistema de Ecosistemas de Conocimiento (EDC), qué hace cada una, cuál es su valor inicial, quién puede cambiarla, cuáles dependen de otra y qué pasa si el sistema no puede leerlas. Al final describe los ajustes que no son funciones por ecosistema: estilos de respuesta, respaldo del detector y variables de entorno. Todo se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10. Lo que está en `main` pero aún no en dev (desplegado: 367c2698, citado de `infra/fleet/edc-1.md`) se marca **pendiente de desplegar en dev**.
+Este documento es para responsables e investigadores que configuran un ecosistema, para el administrador de la plataforma y para quien desarrolle. Responde: qué funciones se pueden encender o apagar en cada ecosistema de Ecosistemas de Conocimiento (EDC), qué hace cada una, cuál es su valor inicial, quién puede cambiarla, cuáles dependen de otra y qué pasa si el sistema no puede leerlas. Al final describe los ajustes que no son funciones por ecosistema: estilos de respuesta, respaldo del detector y variables de entorno. Todo se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10. Lo que está en `main` pero aún no en dev (desplegado: c4f53632, 2026-11-10 a las 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11) se marca **pendiente de desplegar en dev**.
 
 ## Qué es una función por ecosistema
 
@@ -72,7 +72,7 @@ Cinco funciones arrancan apagadas, cada una por una razón registrada:
 
 | Funciones | Quién las cambia | Quién las ve solo de lectura |
 |---|---|---|
-| `audioUpload`, `liveMic`, `interviewerMode`, `chatOrientation`, `graph`, `graph3d`, `combinedGraph`, `autoPublishMembers`, `testimonioTitles`, `studentView`, `keepDocumentAuthor`, `keepCitedAuthors` | Quien tiene `organization:manage` en ese ecosistema (el responsable) y el administrador de plataforma. Hasta el 2026-11-10 también el investigador; el cambio (commit 50bde2ae) está pendiente de desplegar en dev | nadie más entra a Ajustes |
+| `audioUpload`, `liveMic`, `interviewerMode`, `chatOrientation`, `graph`, `graph3d`, `combinedGraph`, `autoPublishMembers`, `testimonioTitles`, `studentView`, `keepDocumentAuthor`, `keepCitedAuthors` | Quien tiene `organization:manage` en ese ecosistema (el responsable) y el administrador de plataforma. Hasta el 2026-11-10 también el investigador; el cambio (commit 50bde2ae) está desplegado | nadie más entra a Ajustes |
 | `keepPublicFigures`, `studentTestimonios` | Solo el administrador de plataforma (`PLATFORM_ADMIN_ONLY_FEATURES`) | El responsable las ve bloqueadas |
 
 El bloqueo de las dos funciones de plataforma se aplica en tres lugares:
@@ -134,7 +134,7 @@ El detector es el modelo que, dentro de la compuerta de anonimización, busca no
 | Si falla la lectura | Devuelve `none`: falla cerrada, sin caché, para no deshacer un `none` guardado a propósito |
 | Caché | 30 s (`TTL_MS` en `apps/backend/src/lib/platformSettings.ts`) |
 | Valor de entorno inválido | Si no hay valor guardado y la variable es inválida, la llamada lanza error y el documento queda retenido |
-| Riesgo | Con `hosted`, el texto sin anonimizar de un testimonio puede salir a un proveedor externo. Por OpenRouter va con ZDR (sin retención en el proveedor). DeepInfra, que ai-service usa para el reordenamiento (`rerank-client.ts`), no lleva ZDR. El plan es poner `none` antes del primer testimonio real. Ver [protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md). |
+| Riesgo | Con `hosted`, el texto sin anonimizar de un testimonio puede salir a un proveedor externo. Por OpenRouter va con ZDR (sin retención en el proveedor). DeepInfra, que ai-service usa para el reordenamiento (`rerank-client.ts`), no lleva ZDR. Dev usa `hosted` por decisión del 2026-11-09, confirmada el 2026-11-10. Ver [protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md). |
 | Historia | F3.2 |
 
 ### Variables de entorno que actúan como funciones

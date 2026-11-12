@@ -24,7 +24,7 @@ import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate } from '@/
 import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/documentColumns'
 import { errSummary, safeErrMessage } from '@/lib/errorSummary'
 
-import { isConsentHeld } from './consentHold'
+import { isConsentHeldNow } from '@/lib/consentHold'
 
 import { extractGraph, type GraphGenerateClient } from './extract'
 import { GRAPH_PROMPT_VERSION } from './prompt'
@@ -439,7 +439,9 @@ async function readGraphableRow(
   if (!row) return { ok: false, reason: 'document not found' }
   // ⚠ `find` with no `select`: the row carries `consentHeld` (pinned on a real
   // Postgres, `schedule.consentHeld.pg.test.ts`).
-  if (isConsentHeld(row)) return { ok: false, reason: 'consent held', consentHeld: true }
+  // A revision answers for its note too: read now, as the note may have been
+  // held while the revision was in flight (`isConsentHeldNow`, ola 11).
+  if (await isConsentHeldNow(payload, row)) return { ok: false, reason: 'consent held', consentHeld: true }
   const corpus = corpusTextFor(row)
   if (!corpus.ok) return corpus
   return {
@@ -496,6 +498,7 @@ async function abortIfStale(
       console.error('[graph] could not clear rows for aborted doc', docId, errSummary(err))
     })
     // Safe metadata only: the reasons are fixed strings, never row text.
+    // eslint-disable-next-line edc/no-raw-error-log -- `reason` is a staleness reason, not an error
     console.warn('[graph] doc', docId, 'changed since its job was queued — run aborted:', reason)
     await setGraphStatus(payload, docId, {
       graphStatus: 'failed',

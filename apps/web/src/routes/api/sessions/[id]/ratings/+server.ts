@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
 import { idOf, isValidStars } from '$lib/ratings';
+import { backendErrorDetail, backendJson } from '$lib/server/backendResponse';
 
 /**
  * BFF proxy for the backend `ratings` collection — the 1–5 star rating a user
@@ -135,7 +136,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       if (doc[rel] && typeof doc[rel] === 'object') doc[rel] = idOf(doc[rel]);
     }
   }
-  return json(out, { status: res.status });
+  return backendJson(out, res);
 };
 
 /**
@@ -189,8 +190,8 @@ export const DELETE: RequestHandler = async ({ locals, params, request }) => {
     { method: 'DELETE' },
   );
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    return json({ error: 'delete_failed', detail: detail.slice(0, 300) }, { status: res.status });
+    const detail = backendErrorDetail(res.status, await res.text().catch(() => ''));
+    return backendJson({ error: 'delete_failed', detail }, res);
   }
   return json({ ok: true, removed: true });
 };

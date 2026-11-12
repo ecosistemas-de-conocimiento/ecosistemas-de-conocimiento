@@ -4,6 +4,7 @@
  * `DrizzleQueryError` with the text in its params; no log argument may
  * contain it.
  */
+import { allowJanitors } from '@/lib/testing/janitors'
 import { DrizzleQueryError } from '@payloadcms/db-postgres/drizzle'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,6 +26,9 @@ vi.mock('@/collections/Documents', () => ({
   enqueueIngestForDoc: async () => throwing.current(),
   scheduleGraphExtractionForDoc: async () => undefined,
 }))
+
+// Its own janitor arms here (`vitest.setup.ts` turns them all off).
+allowJanitors()
 
 /** Everything every console/logger spy was called with, as one string. */
 function logged(...spies: { mock: { calls: unknown[][] } }[]): string {

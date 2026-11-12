@@ -8,15 +8,21 @@
  * `where[or][i][session.title][like]=b` ten times: 5.3 s, the event loop
  * blocked up to 2.5 s, another person's `/api/users/me` delayed 4.8 s, and a
  * 500 at the end; forty terms took 25 s (quoted from the audit). The first
- * three tests below failed on a3c9df9f; the last two are controls.
+ * three tests below failed on a3c9df9f; the three marked D2 or on the log
+ * (concurrency and rate per person, the log level) failed on dc1a4188; the
+ * slot held through the main query (D2 leftover) failed on 77f335fc, and the
+ * slot coming back after a failure there failed without `afterError`. The
+ * web's filters and the platform admin are controls.
  *
  * The bounds (`relationFilterLimits` in `relationFilters.ts`): at most
  * `QUERY_RELATION_MAX_TERMS` crossings per request, at most
  * `QUERY_RELATION_MAX_IDS` ids read in all; past either, 400.
  *
- * `EDC_MEASURE_RELATION_BOUNDS=1` also runs the timing probe at the end, which
- * prints each request's time, a concurrent `/api/users/me` and the event
- * loop's longest stall. It asserts nothing.
+ * `EDC_MEASURE_RELATION_BOUNDS=1` also runs the timing probes at the end,
+ * which print each request's time (one at a time, twenty at once from one
+ * member, and one member resending every 429), a concurrent `/api/users/me`
+ * and the event loop's longest stall.
+ * They assert nothing.
  *
  * Harness: `lib/testing/realPostgres`; driven through `handleEndpoints`, real JWT.
  */
@@ -35,6 +41,8 @@ vi.mock('@/lib/aiClient', () => {
   return { getAdminAIClient: () => anything, getAppAIClient: () => anything }
 })
 
+import { relationSlotsHeld } from '@/access/relationFilters'
+import { resetRateLimits } from '@/lib/rateLimit'
 import { bootPayload, dockerOk, shutdown, startRealPostgres, type RealPostgres } from '@/lib/testing/realPostgres'
 
 const PASSWORD = 'relation-bounds-pw'
@@ -132,6 +140,10 @@ describe.skipIf(!dockerOk)('a filter through a relation has a bounded cost (real
   afterEach(() => {
     delete process.env.QUERY_RELATION_MAX_TERMS
     delete process.env.QUERY_RELATION_MAX_IDS
+    delete process.env.QUERY_RELATION_MAX_CONCURRENT_PER_USER
+    delete process.env.QUERY_RELATION_RATELIMIT_USER_MAX
+    vi.restoreAllMocks()
+    resetRateLimits()
   })
 
   it('🔴 10 and 40 crossing terms answer 400 at once, naming the limit', async () => {
@@ -180,6 +192,92 @@ describe.skipIf(!dockerOk)('a filter through a relation has a bounded cost (real
     expect(((await deep.json()) as { totalDocs: number }).totalDocs).toBe(1)
   }, 60_000)
 
+  it('🔴 one member\'s requests at once past the cap: 429 with Retry-After, never a 500 (D2)', async () => {
+    process.env.QUERY_RELATION_MAX_CONCURRENT_PER_USER = '1'
+    const edge = Array.from({ length: 5 }, (_, i) => `where[or][${i}][session.title][like]=b0${i + 1}`).join('&')
+    const res = await Promise.all(Array.from({ length: 6 }, () => rest('GET', `/api/ratings?depth=0&${edge}`, tokens.ben)))
+    const statuses = res.map((r) => r.status)
+    expect(statuses.every((s) => s === 200 || s === 429), String(statuses)).toBe(true)
+    expect(statuses.filter((s) => s === 200).length).toBeGreaterThanOrEqual(1)
+    const refused = res.find((r) => r.status === 429)
+    expect(refused, String(statuses)).toBeDefined()
+    expect(refused!.headers.get('retry-after')).toBe('1')
+    // Another member is not held by them, and the slot came back.
+    expect((await rest('GET', `/api/ratings?depth=0&${orTerms(1, 'b00001')}`, tokens.ana)).status).toBe(200)
+    expect((await rest('GET', `/api/ratings?depth=0&${orTerms(1, 'b00001')}`, tokens.ben)).status).toBe(200)
+    // A deeper hop runs its own lookup under the request's one slot.
+    const deep = await rest('GET', '/api/ratings?depth=0&where[message.session.title][equals]=b00002', tokens.ben)
+    expect(((await deep.json()) as { totalDocs: number }).totalDocs).toBe(1)
+  }, 60_000)
+
+  it('🔴 the slot is held through the main query, not only the lookups (D2 leftover)', async () => {
+    // Hold the `ratings` query itself (the one with the resolved `in` lists); the lookups on `sessions` run.
+    const db = payload.db as unknown as { find: (args: { collection: string }) => Promise<unknown> }
+    const original = db.find.bind(db)
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    let waiting = 0
+    vi.spyOn(db, 'find').mockImplementation(async (args) => {
+      if (args.collection === 'ratings') {
+        waiting++
+        await gate
+      }
+      return original(args)
+    })
+    const path = `/api/ratings?depth=0&${orTerms(1, 'b00001')}`
+    const held = [rest('GET', path, tokens.ben), rest('GET', path, tokens.ben)]
+    while (waiting < 2) await new Promise((r) => setTimeout(r, 10))
+    expect(relationSlotsHeld(BEN)).toBe(2)
+    const third = await rest('GET', path, tokens.ben)
+    expect(third.status).toBe(429)
+    open()
+    expect((await Promise.all(held)).map((r) => r.status)).toEqual([200, 200])
+    expect(relationSlotsHeld(BEN)).toBe(0)
+  }, 60_000)
+
+  it('🔴 the slot comes back when the operation fails after its lookups: a 400, a throw (D2 leftover)', async () => {
+    // A path Payload refuses after the hook ran: 400 from its own validation.
+    const bad = await rest('GET', `/api/ratings?depth=0&${orTerms(1, 'b00001')}&where[nope][equals]=1`, tokens.ben)
+    expect(bad.status).toBe(400)
+    expect(relationSlotsHeld(BEN)).toBe(0)
+    // The main query throws (a timeout, the database going away).
+    const db = payload.db as unknown as { find: (args: { collection: string }) => Promise<unknown> }
+    const original = db.find.bind(db)
+    vi.spyOn(db, 'find').mockImplementation(async (args) => {
+      if (args.collection === 'ratings') throw new Error('canceling statement due to statement timeout')
+      return original(args)
+    })
+    const res = await Promise.all([0, 1, 2].map(() => rest('GET', `/api/ratings?depth=0&${orTerms(1, 'b00001')}`, tokens.ben)))
+    expect(res.map((r) => r.status)).toContain(500)
+    expect(relationSlotsHeld(BEN)).toBe(0)
+    vi.restoreAllMocks()
+    // And the person is not locked out.
+    expect((await rest('GET', `/api/ratings?depth=0&${orTerms(1, 'b00001')}`, tokens.ben)).status).toBe(200)
+  }, 60_000)
+
+  it('🔴 past the per-minute budget: 429 with Retry-After (D2)', async () => {
+    process.env.QUERY_RELATION_RATELIMIT_USER_MAX = '2'
+    const path = `/api/ratings?depth=0&${orTerms(1, 'b00001')}`
+    expect((await rest('GET', path, tokens.ben)).status).toBe(200)
+    expect((await rest('GET', path, tokens.ben)).status).toBe(200)
+    const third = await rest('GET', path, tokens.ben)
+    expect(third.status).toBe(429)
+    expect(Number(third.headers.get('retry-after'))).toBeGreaterThanOrEqual(1)
+  }, 60_000)
+
+  it('a 400 past a cap is logged at warn, without a stack; other errors keep their level', async () => {
+    const warn = vi.spyOn(payload.logger, 'warn')
+    const error = vi.spyOn(payload.logger, 'error')
+    expect((await rest('GET', `/api/ratings?depth=0&${orTerms(1)}`, tokens.ben)).status).toBe(400)
+    expect((await rest('GET', `/api/ratings?depth=0&${orTerms(10)}`, tokens.ben)).status).toBe(400)
+    expect(error).not.toHaveBeenCalled()
+    const logged = warn.mock.calls.map((c) => (c[0] as { err?: Error }).err).filter((e) => e?.name === 'RelationFilterTooBroad')
+    expect(logged).toHaveLength(2)
+    for (const err of logged) expect(err!.stack).not.toMatch(/\n\s+at /)
+    expect(config.loggingLevels).toMatchObject({ Forbidden: 'info', NotFound: 'info', ValidationError: 'info' })
+    expect(config.loggingLevels.QueryError).toBeUndefined()
+  }, 60_000)
+
   it('a platform admin is not bounded: the hook does not run for them', async () => {
     const res = await rest('GET', `/api/ratings?depth=0&${orTerms(10)}`, tokens.platform)
     expect(res.status).toBe(200)
@@ -208,5 +306,72 @@ describe.skipIf(!dockerOk)('a filter through a relation has a bounded cost (real
     process.env.QUERY_RELATION_MAX_IDS = '10000'
     await probe('1 term, 9999 ids, cap raised, member', '/api/ratings?depth=0&where[session.title][like]=b0', 'ben')
     process.stdout.write(`\n[relation bounds] ${lines.join('\n[relation bounds] ')}\n`)
+  }, 300_000)
+
+  it.runIf(process.env.EDC_MEASURE_RELATION_BOUNDS === '1')('measure: 20 requests at once from one member (D2)', async () => {
+    const lines: string[] = []
+    const edge = Array.from({ length: 5 }, (_, i) => `where[or][${i}][session.title][like]=b0${i + 1}`).join('&')
+    const burst = async (label: string, path: string) => {
+      resetRateLimits()
+      const h = monitorEventLoopDelay({ resolution: 10 })
+      h.enable()
+      const all = Promise.all(Array.from({ length: 20 }, () => timed(path, 'ben')))
+      await new Promise((r) => setTimeout(r, 100))
+      const me = timed('/api/users/me', 'ana')
+      const [rs, m] = await Promise.all([all, me])
+      h.disable()
+      const statuses: Record<number, number> = {}
+      for (const r of rs) statuses[r.status] = (statuses[r.status] ?? 0) + 1
+      const slowest = Math.max(...rs.map((r) => r.ms))
+      lines.push(`${label}: ${JSON.stringify(statuses)}, slowest ${slowest.toFixed(0)} ms; /me ${m.ms.toFixed(0)} ms; loop max ${(h.max / 1e6).toFixed(0)} ms`)
+    }
+    await burst('20 at the caps (5 terms x 1000 ids)', `/api/ratings?depth=0&${edge}`)
+    await burst('20 over the id cap (1 term, 20000 ids)', `/api/ratings?depth=0&${orTerms(1)}`)
+    await burst('20 /count at the caps', `/api/ratings/count?${edge}`)
+    for (let i = 0; i < 3; i++) {
+      resetRateLimits()
+      const one = await timed(`/api/ratings?depth=0&${orTerms(1)}`, 'ben')
+      lines.push(`1 over the id cap, alone: HTTP${one.status} ${one.ms.toFixed(0)} ms`)
+    }
+    process.stdout.write(`\n[relation burst] ${lines.join('\n[relation burst] ')}\n`)
+  }, 300_000)
+
+  it.runIf(process.env.EDC_MEASURE_RELATION_BOUNDS === '1')('measure: one member retrying every 429 at once (D2 leftover)', async () => {
+    // Twenty loops that resend on a 429 with no pause: whatever the slot does not
+    // cover runs alongside the next request's lookups. 30 requests in all (the
+    // per-minute budget); `/me` from another member is sent every 50 ms.
+    const lines: string[] = []
+    const edge = Array.from({ length: 5 }, (_, i) => `where[or][${i}][session.title][like]=b0${i + 1}`).join('&')
+    for (const [label, path] of [
+      ['at the caps (5 terms x 1000 ids)', `/api/ratings?depth=0&${edge}`],
+      ['/count at the caps', `/api/ratings/count?${edge}`],
+    ] as const) {
+      resetRateLimits()
+      let left = 30
+      let refused = 0
+      const h = monitorEventLoopDelay({ resolution: 10 })
+      h.enable()
+      const started = performance.now()
+      const loop = async () => {
+        while (left > 0) {
+          const r = await timed(path, 'ben')
+          if (r.status === 429) refused++
+          else left--
+        }
+      }
+      const loops = Promise.all(Array.from({ length: 20 }, loop))
+      const me: number[] = []
+      let done = false
+      void loops.then(() => (done = true))
+      while (!done) {
+        me.push((await timed('/api/users/me', 'ana')).ms)
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      await loops
+      h.disable()
+      me.sort((a, b) => a - b)
+      lines.push(`${label}: 30 answered in ${(performance.now() - started).toFixed(0)} ms, ${refused} refused on the way; /me n=${me.length} median ${me[Math.floor(me.length / 2)]!.toFixed(0)} ms, max ${me[me.length - 1]!.toFixed(0)} ms; loop max ${(h.max / 1e6).toFixed(0)} ms`)
+    }
+    process.stdout.write(`\n[relation retry] ${lines.join('\n[relation retry] ')}\n`)
   }, 300_000)
 })

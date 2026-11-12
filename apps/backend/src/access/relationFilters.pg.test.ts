@@ -23,7 +23,7 @@
 
 import { sql } from '@payloadcms/db-postgres'
 import type { Payload, SanitizedConfig } from 'payload'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/aiClient', () => {
   const anything: unknown = new Proxy(() => {}, {
@@ -33,6 +33,7 @@ vi.mock('@/lib/aiClient', () => {
   return { getAdminAIClient: () => anything, getAppAIClient: () => anything }
 })
 
+import { resetRateLimits } from '@/lib/rateLimit'
 import { bootPayload, dockerOk, shutdown, startRealPostgres, type RealPostgres } from '@/lib/testing/realPostgres'
 
 const PASSWORD = 'relation-filters-pw'
@@ -189,6 +190,10 @@ describe.skipIf(!dockerOk)('every collection: a filter reads only what the calle
   afterAll(async () => {
     await shutdown(pg, payload)
   })
+
+  // Each test sends many filters through a relation as one member: more than
+  // `rateLimits.relationReadPerUser` a minute. That bucket has its own tests.
+  beforeEach(() => resetRateLimits())
 
   // ── the oracle: the real substring and 'Zzzz' answer the same ─────────────
 

@@ -33,4 +33,12 @@ describe('POST /api/live/:sid', () => {
     await call('?offset=0');
     expect(String(backendFetch.mock.calls[0]![1])).toBe('/api/live/sid-1?organization=8&offset=0');
   });
+
+  it('a backend 429 keeps its Retry-After', async () => {
+    backendFetch.mockResolvedValueOnce(new Response('{}', { status: 429, headers: { 'Retry-After': '7' } }));
+    const res = await call('?offset=0');
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('7');
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+  });
 });

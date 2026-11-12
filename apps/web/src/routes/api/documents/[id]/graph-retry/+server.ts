@@ -1,6 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
+import { errSummary } from '$lib/errorSummary';
+import { backendJson } from '$lib/server/backendResponse';
 
 /**
  * BFF proxy for rebuilding ONE document's contribution to the corpus graph
@@ -28,7 +30,7 @@ export const POST: RequestHandler = async ({ locals, params }) => {
     return json(
       {
         error: 'upstream_unreachable',
-        detail: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+        detail: errSummary(err),
       },
       { status: 502 },
     );
@@ -38,9 +40,9 @@ export const POST: RequestHandler = async ({ locals, params }) => {
   if (!res.ok) {
     // 403 "not the uploader", 409 "in flight / no text", 404 "not visible":
     // passed through so the UI can say which.
-    return json(body, { status: res.status });
+    return backendJson(body, res);
   }
 
   // The run is armed (backend answers 202). Report only that — never `ready`.
-  return json({ ok: true, graphStatus: 'pending' }, { status: res.status });
+  return backendJson({ ok: true, graphStatus: 'pending' }, res);
 };

@@ -44,17 +44,25 @@ vi.mock('../../../config/env.js', () => ({
 
 const { Router } = await import('./router.js');
 const { createProviderResilience, DEFAULT_MAX_RETRY_ATTEMPTS } = await import('./resilience.js');
-const { EmptyCompletion } = await import('./empty-completion.js');
+const { CompletionTruncated, EmptyCompletion } = await import('./empty-completion.js');
 
 const baseMessages: ChatMessage[] = [{ role: 'user', content: 'hola' }];
 
-function completion(text: string) {
+function completion(
+  text: string,
+  over: { costUsd?: number; finishReason?: string; promptTokens?: number; completionTokens?: number } = {},
+) {
   return {
     contentText: text,
-    finishReason: 'stop',
+    finishReason: over.finishReason ?? 'stop',
     model: text.trim() === '' ? 'unknown' : 'mock/model',
     rawId: 'gen-1',
-    usage: { promptTokens: 0, completionTokens: 0, costUsd: 0, costSource: 'openrouter' as const },
+    usage: {
+      promptTokens: over.promptTokens ?? 0,
+      completionTokens: over.completionTokens ?? 0,
+      costUsd: over.costUsd ?? 0,
+      costSource: 'openrouter' as const,
+    },
   };
 }
 
@@ -192,5 +200,107 @@ describe('Router — an empty answer is a provider error', () => {
     );
 
     expect(out.content).toBe('borrador');
+  });
+});
+
+// The provider can bill an empty answer (`providerCostUsd` exists for that).
+// Costs below are synthetic test values, chosen to be exact in binary-ish sums.
+describe('Router — every attempt of the ladder is paid for', () => {
+  it('two billed empty attempts then a success: trace, usage and budget carry all three', async () => {
+    const deps = makeDeps();
+    adapterMock
+      .mockResolvedValueOnce(completion('', { costUsd: 0.001, promptTokens: 10, completionTokens: 5 }))
+      .mockResolvedValueOnce(completion('', { costUsd: 0.002, promptTokens: 10, completionTokens: 7 }))
+      .mockResolvedValueOnce(completion('respuesta', { costUsd: 0.004, promptTokens: 10, completionTokens: 9 }));
+
+    const out = await makeRouter(deps).route(makeReq({ traceId: 'trace-c' }));
+
+    expect(out.content).toBe('respuesta');
+    expect(adapterMock).toHaveBeenCalledTimes(3);
+    const total = 0.001 + 0.002 + 0.004;
+    expect(out.usage.estimatedCostUsd).toBeCloseTo(total, 12);
+
+    const trace = deps.traceWriter.writeTrace.mock.calls.at(-1)?.[0];
+    expect(trace.status).toBe('completed');
+    expect(trace.actualCostUsd).toBeCloseTo(total, 12);
+    expect(trace.costBreakdown).toHaveLength(3);
+    expect(trace.costBreakdown.filter((b: { empty?: true }) => b.empty)).toHaveLength(2);
+    expect(
+      trace.costBreakdown.reduce((n: number, b: { outputTokens: number }) => n + b.outputTokens, 0),
+    ).toBe(5 + 7 + 9);
+    const usage = deps.traceWriter.writeUsage.mock.calls.at(-1)?.[0];
+    expect(usage.actualCostUsd).toBeCloseTo(total, 12);
+    // ONE reserve (0.01), and the true-up charges the real spend against it.
+    expect(deps.budget.reserve).toHaveBeenCalledTimes(1);
+    expect(deps.budget.adjust).toHaveBeenCalledTimes(1);
+    expect(deps.budget.adjust.mock.calls[0]?.[0].deltaUsd).toBeCloseTo(0.01 - total, 12);
+  });
+
+  it('every attempt empty: unbilled, and providerCostUsd is the sum of all of them', async () => {
+    const deps = makeDeps();
+    adapterMock.mockResolvedValue(completion('', { costUsd: 0.001 }));
+
+    await expect(makeRouter(deps).route(makeReq())).rejects.toBeInstanceOf(EmptyCompletion);
+
+    const trace = deps.traceWriter.writeTrace.mock.calls.at(-1)?.[0];
+    expect(trace.actualCostUsd).toBe(0);
+    expect(trace.metadata.providerCostUsd).toBeCloseTo(0.001 * (1 + DEFAULT_MAX_RETRY_ATTEMPTS), 12);
+    expect(trace.costBreakdown).toHaveLength(1 + DEFAULT_MAX_RETRY_ATTEMPTS);
+  });
+});
+
+describe('Router — empty at the token cap is CompletionTruncated, not retried', () => {
+  it('length + empty: exactly one provider call, ERR_COMPLETION_TRUNCATED with the trace id', async () => {
+    const deps = makeDeps();
+    adapterMock.mockResolvedValue(completion('', { finishReason: 'length', costUsd: 0.003 }));
+
+    const err = await makeRouter(deps).route(makeReq({ traceId: 'trace-t' })).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(CompletionTruncated);
+    expect((err as InstanceType<typeof CompletionTruncated>).code).toBe('ERR_COMPLETION_TRUNCATED');
+    expect((err as InstanceType<typeof CompletionTruncated>).traceId).toBe('trace-t');
+    expect(adapterMock).toHaveBeenCalledTimes(1);
+
+    const trace = deps.traceWriter.writeTrace.mock.calls.at(-1)?.[0];
+    expect(trace.status).toBe('failed');
+    expect(trace.actualCostUsd).toBe(0);
+    expect(trace.metadata.errorCode).toBe('CompletionTruncated');
+    expect(trace.metadata.providerCostUsd).toBeCloseTo(0.003, 12);
+  });
+
+  it('a provider spelling of the cap (`max_tokens`) counts too, on the stream path', async () => {
+    const deps = makeDeps();
+    adapterMock.mockResolvedValue(completion('', { finishReason: 'max_tokens' }));
+
+    const err = await makeRouter(deps)
+      .route(makeReq({ onDelta: () => undefined }))
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(CompletionTruncated);
+    expect(adapterMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('length WITH content is still a success, finishReason length, one call', async () => {
+    const deps = makeDeps();
+    adapterMock.mockResolvedValue(completion('texto cortado', { finishReason: 'length' }));
+
+    const out = await makeRouter(deps).route(makeReq());
+
+    expect(out.content).toBe('texto cortado');
+    expect(out.finishReason).toBe('length');
+    expect(adapterMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a plain empty answer (finish stop) is still retried', async () => {
+    const deps = makeDeps();
+    adapterMock
+      .mockResolvedValueOnce(completion('', { finishReason: 'stop' }))
+      .mockResolvedValueOnce(completion('', { finishReason: 'stop' }))
+      .mockResolvedValueOnce(completion('al fin'));
+
+    const out = await makeRouter(deps).route(makeReq());
+
+    expect(out.content).toBe('al fin');
+    expect(adapterMock).toHaveBeenCalledTimes(3);
   });
 });

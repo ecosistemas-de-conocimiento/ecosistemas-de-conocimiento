@@ -326,4 +326,29 @@ describe('DELETE /api/sessions/[id]/ratings', () => {
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe('delete_failed');
   });
+
+  it('🔴 an upstream 5xx body never reaches the browser', async () => {
+    const ROW_TEXT = 'Me llamo Lucía Hernández y vivo con mi hermano Tomás Ruiz';
+    mockedBackendFetch.mockImplementation(async (_t: unknown, path: string) =>
+      String(path).startsWith('/api/ratings?')
+        ? jsonResponse({ docs: [{ id: 99 }] })
+        : new Response(`Failed query: delete from "ratings"\nparams: ${ROW_TEXT}`, { status: 500 }),
+    );
+    const res = await DELETE(makeEvent({ request: postRequest({ messageId: '7' }) }));
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(await res.json())).not.toContain('Lucía');
+  });
+
+  it('a Payload refusal keeps its message', async () => {
+    mockedBackendFetch.mockImplementation(async (_t: unknown, path: string) =>
+      String(path).startsWith('/api/ratings?')
+        ? jsonResponse({ docs: [{ id: 99 }] })
+        : jsonResponse({ errors: [{ message: 'You are not allowed to perform this action.' }] }, 403),
+    );
+    const res = await DELETE(makeEvent({ request: postRequest({ messageId: '7' }) }));
+    expect(await res.json()).toEqual({
+      error: 'delete_failed',
+      detail: 'You are not allowed to perform this action.',
+    });
+  });
 });

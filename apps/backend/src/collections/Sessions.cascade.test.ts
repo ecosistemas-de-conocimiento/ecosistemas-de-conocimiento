@@ -33,7 +33,8 @@
  * to another conversation, published, uploaded before the conversation
  * existed or in another conversation (`uploadedInSession`), uploaded by
  * someone else, cited by another conversation, with an anonymisation-review
- * record (unless it is HELD: then the review rows go too), or a conversación.
+ * record (unless it is HELD: then it goes, with the deleting user's own review
+ * rows; everyone else's stay), or a conversación.
  * Testimonio drafts go since Rodrigo's 2026-10-17 ruling. The "uploads" block
  * pins each case.
  *
@@ -219,7 +220,8 @@ function fakePayload(
       }
       if (args.collection === 'ratings') return { docs: ratings, errors: [] }
       if (args.collection === 'anonymisation-reviews') {
-        const doc = (args.where as { document?: { equals?: number } })?.document?.equals
+        const and = (args.where as { and?: Array<{ document?: { equals?: number } }> })?.and ?? []
+        const doc = and.find((c) => c.document)?.document?.equals
         const docs = (opts.reviewed ?? []).filter((d) => d === doc).map((d) => ({ id: d + 1000 }))
         return { docs, errors: [] }
       }
@@ -702,19 +704,23 @@ describe('uploads that belong ONLY to this conversation go with it', () => {
     expect(plan?.mediaIds).toEqual([70])
   })
 
-  it('🔴 deletes a HELD testimonio draft AND its review rows, before the document row', async () => {
+  it('🔴 deletes a HELD testimonio draft AND the deleting user’s own review rows, before the document row', async () => {
     const { payload, calls } = fakePayload([], [], {
       documents: [ownUpload({ contentKind: 'testimonio', anonymisationStatus: 'held' })],
       // An earlier decision, before it was held again.
       reviewed: [50],
     })
 
-    const plan = await deleteConversationChildren(SESSION, { payload })
+    const plan = await deleteConversationChildren(SESSION, { payload, req: { user: { id: OWNER } } as never })
 
     const deletes = calls.filter((c) => c.op === 'delete').map((c) => c.collection)
     expect(deletes).toEqual(['ratings', 'messages', 'anonymisation-reviews', 'documents'])
     const reviewDelete = calls.find((c) => c.op === 'delete' && c.collection === 'anonymisation-reviews')!
-    expect(reviewDelete.args).toMatchObject({ where: { document: { equals: 50 } }, overrideAccess: true })
+    // 🔴 Only the caller's: another reviewer's row outlives the document (FK set null + snapshot).
+    expect(reviewDelete.args).toMatchObject({
+      where: { and: [{ document: { equals: 50 } }, { reviewer: { equals: OWNER } }] },
+      overrideAccess: true,
+    })
     // A held row's review record does not keep it.
     expect(calls.some((c) => c.op === 'count' && c.collection === 'anonymisation-reviews')).toBe(false)
     expect(plan?.reviewIds).toEqual([1050])
@@ -734,6 +740,17 @@ describe('uploads that belong ONLY to this conversation go with it', () => {
     },
   )
 
+  it('🔴 a delete with no user (the janitor) deletes no review row of a HELD draft', async () => {
+    const { payload, calls } = fakePayload([], [], {
+      documents: [ownUpload({ contentKind: 'testimonio', anonymisationStatus: 'held' })],
+      reviewed: [50],
+    })
+
+    await deleteConversationChildren(SESSION, { payload })
+
+    expect(calls.filter((c) => c.op === 'delete').map((c) => c.collection)).toEqual(['ratings', 'messages', 'documents'])
+  })
+
   it('aborts when a held document’s review rows cannot be deleted', async () => {
     const { payload } = fakePayload([], [], {
       documents: [ownUpload({ contentKind: 'testimonio', anonymisationStatus: 'held' })],
@@ -741,7 +758,9 @@ describe('uploads that belong ONLY to this conversation go with it', () => {
     })
     const onPlan = vi.fn()
 
-    await expect(deleteConversationChildren(SESSION, { payload, onUploadPlan: onPlan })).rejects.toThrow(
+    await expect(
+      deleteConversationChildren(SESSION, { payload, req: { user: { id: OWNER } } as never, onUploadPlan: onPlan }),
+    ).rejects.toThrow(
       /anonymisation-review/,
     )
     expect(onPlan).toHaveBeenCalledTimes(1)

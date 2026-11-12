@@ -130,7 +130,7 @@ import {
   OpenRouterHttpError,
   OpenRouterNoZdrEndpointError,
 } from './adapters/openrouter.js';
-import { EmptyCompletion } from './empty-completion.js';
+import { CompletionTruncated, EmptyCompletion } from './empty-completion.js';
 
 /** Total attempts = 1 + this. Matches the task spec (`maxAttempts: 2`). */
 export const DEFAULT_MAX_RETRY_ATTEMPTS = 2;
@@ -245,6 +245,9 @@ export function isTransientProviderError(
   // A 200 with no text (`empty-completion.ts`). Measured on dev 2026-11-10: 3
   // of 6 chat answers; the same prompt asked again is the realistic recovery.
   if (err instanceof EmptyCompletion) return true;
+  // Empty AND stopped at the token cap: the same request hits the same cap,
+  // so another attempt only adds its cost.
+  if (err instanceof CompletionTruncated) return false;
 
   if (err instanceof OpenRouterHttpError) {
     const after = retryAfterMsFromError(err);

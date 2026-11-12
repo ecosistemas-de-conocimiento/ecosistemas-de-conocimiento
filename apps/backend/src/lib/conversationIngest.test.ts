@@ -716,6 +716,43 @@ describe('🔴 the metadata every turn carries', () => {
 
     expect(result.ingested).toBe(0)
     expect(db.messages[0]!.corpusStatus).toBe('failed')
+    expect(db.messages[0]!.corpusError).toBe('ingest_enqueue_failed: ai-service down')
+  })
+
+  it('🔴 an enqueue error that quotes the text is written as its summary, never its text', async () => {
+    const db = seed([{ id: 1, role: 'user', content: 'Me llamo Lucía Hernández' }])
+    const client: ConversationIngester = {
+      ingest: {
+        enqueue: async () => {
+          throw new Error('Failed query: insert into "jobs" ("text") values ($1)\nparams: Me llamo Lucía Hernández')
+        },
+      },
+    }
+
+    await run(db, client, countingDetector())
+
+    expect(db.messages[0]!.corpusStatus).toBe('failed')
+    expect(String(db.messages[0]!.corpusError)).toMatch(/^ingest_enqueue_failed: /)
+    expect(String(db.messages[0]!.corpusError)).not.toContain('Lucía')
+  })
+
+  it('🔴 a gate crash that quotes the text is written as its summary, never its text', async () => {
+    const db = seed([{ id: 1, role: 'user', content: 'Me llamo Lucía Hernández' }])
+    const crashing = {
+      get name(): string {
+        throw new Error('Failed query: select $1\nparams: Me llamo Lucía Hernández')
+      },
+      async detect() {
+        return []
+      },
+    } as unknown as PersonDetector
+    const { client } = fakeClient()
+
+    await run(db, client, crashing)
+
+    expect(db.messages[0]!.corpusStatus).toBe('held-gate')
+    expect(String(db.messages[0]!.corpusError)).toMatch(/^gate_crashed: /)
+    expect(String(db.messages[0]!.corpusError)).not.toContain('Lucía')
   })
 })
 

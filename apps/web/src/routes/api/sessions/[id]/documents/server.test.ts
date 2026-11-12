@@ -93,7 +93,7 @@ describe('mapUpstreamMediaError', () => {
     [413, 413, 'file_too_large'],
     [415, 415, 'unsupported_media_type'],
   ])('maps upstream %i → %i %s', (upstream, expectedStatus, expectedError) => {
-    const mapped = mapUpstreamMediaError(upstream, 'detail text');
+    const mapped = mapUpstreamMediaError(upstream, JSON.stringify({ errors: [{ message: 'detail text' }] }));
     expect(mapped.status).toBe(expectedStatus);
     expect(mapped.body.error).toBe(expectedError);
     expect(mapped.body.detail).toBe('detail text');
@@ -107,9 +107,32 @@ describe('mapUpstreamMediaError', () => {
   });
 
   it('truncates detail to 500 chars', () => {
-    const big = 'x'.repeat(5000);
+    const big = JSON.stringify({ errors: [{ message: 'x'.repeat(5000) }] });
     const mapped = mapUpstreamMediaError(413, big);
     expect((mapped.body.detail as string).length).toBe(500);
+  });
+
+  // 🔴 The body is the backend's: a 5xx, a non-Payload body or a field's
+  // `data` can quote what was uploaded.
+  const ROW_TEXT = 'Me llamo Lucía Hernández y vivo con mi hermano Tomás Ruiz';
+
+  it('🔴 a 5xx body never reaches the browser', () => {
+    const mapped = mapUpstreamMediaError(500, `Failed query: insert into "media"\nparams: ${ROW_TEXT}`);
+    expect(JSON.stringify(mapped.body)).not.toContain('Lucía');
+  });
+
+  it('🔴 a 4xx body that is not Payload’s JSON never reaches the browser', () => {
+    const mapped = mapUpstreamMediaError(400, `<html>${ROW_TEXT}</html>`);
+    expect(JSON.stringify(mapped.body)).not.toContain('Lucía');
+  });
+
+  it('🔴 Payload’s `data` stays behind; its message comes through', () => {
+    const body = JSON.stringify({
+      errors: [{ name: 'ValidationError', message: 'The following field is invalid: alt', data: { value: ROW_TEXT } }],
+    });
+    const mapped = mapUpstreamMediaError(400, body);
+    expect(mapped.body.detail).toBe('The following field is invalid: alt');
+    expect(JSON.stringify(mapped.body)).not.toContain('Lucía');
   });
 });
 
@@ -156,7 +179,7 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
   }
 
   it('413 → 413 file_too_large', async () => {
-    withUpstream(413, 'too big');
+    withUpstream(413, JSON.stringify({ errors: [{ message: 'too big' }] }));
     const file = new File(['%PDF-1.7'], 'big.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(413);
@@ -206,15 +229,14 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
     });
   });
 
-  it('network failure → 502 upstream_unreachable', async () => {
-    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('ECONNREFUSED'));
+  it('network failure → 502 upstream_unreachable, with the error\'s name and code only', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      Object.assign(new Error('connect ECONNREFUSED 10.0.0.9:3002'), { code: 'ECONNREFUSED' }),
+    );
     const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(502);
-    expect(await res.json()).toMatchObject({
-      error: 'upstream_unreachable',
-      detail: expect.stringContaining('ECONNREFUSED'),
-    });
+    expect(await res.json()).toEqual({ error: 'upstream_unreachable', detail: 'Error(ECONNREFUSED)' });
   });
 
   it('upstream 200 but missing doc.id → 502 media_id_missing', async () => {

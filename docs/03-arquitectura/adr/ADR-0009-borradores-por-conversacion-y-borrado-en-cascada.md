@@ -1,7 +1,7 @@
 # ADR-0009. Los borradores pertenecen a su conversación; borrar una conversación borra sus mensajes y valoraciones
 
 - **Versión:** 1.2
-- **Fecha del documento:** 2026-11-10
+- **Fecha del documento:** 2026-11-11
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada e implementada
 - **Fecha de la decisión:** 2026-08-28; ampliada el 2026-10-17 y el 2026-10-20
@@ -50,11 +50,12 @@ Al revisar qué debía hacer el limpiador de sesiones apareció un segundo defec
 
 ## Estado al 2026-11-10
 
-Decisiones del 2026-11-10 sobre borrar documentos, en `main` y pendientes de desplegar en dev (commit 512dcc1f):
+Decisiones del 2026-11-10 sobre borrar documentos, desplegadas en dev (commit 512dcc1f):
 
 - Quien subió un documento borra siempre su borrador. Algo publicado o en movimiento solo lo borra con un asiento `documents:write` en su ecosistema (`uploaderMayDelete` en `apps/backend/src/collections/Documents.ts`). La administración de plataforma pasa.
 - La decisión de quien revisó sobrevive al borrado: `anonymisation_reviews.document_id` pasa a `ON DELETE set null` y `documentIdSnapshot` guarda qué documento era (migración `20261110_181621_consent_held_reviews_keep`). Solo se van con el documento las filas de revisión de quien lo borra (`deleteOwnReviewRows`). Sigue la excepción del 2026-10-17: borrar una conversación que se lleva un documento retenido borra también sus filas.
 - Un documento retenido por consentimiento no se vuelve a anonimizar, purgar ni borrar desde los controles de anonimización ni desde el grafo (commit ccce6281; [ADR-0022](ADR-0022-retencion-por-consentimiento.md)).
+- 2026-11-11, en `main`, pendiente de desplegar en dev (commit 17a3ee49): termina la excepción del 2026-10-17 para las filas de revisión. Borrar una conversación que se lleva un documento retenido borra solo las filas de quien borra; las demás quedan con `document` vacío y `documentIdSnapshot`. Un borrado sin usuario las conserva todas.
 
 ## Fuentes
 

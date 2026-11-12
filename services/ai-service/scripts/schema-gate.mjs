@@ -154,6 +154,21 @@ loadDotenv();
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * `src/errors/log-safe.ts`'s `safeErrMessage`, cut down, for the same reason
+ * as the duplicates below: no TypeScript in the image. A Postgres error (a
+ * SQLSTATE, or a `query` postgres.js attached) gives its class and code only,
+ * since its message can quote a row; anything else keeps its message too.
+ */
+function safeErrMessage(err) {
+  if (!err || typeof err !== 'object') return typeof err;
+  const name = err.constructor?.name && err.constructor.name !== 'Object' ? err.constructor.name : 'Error';
+  const code = typeof err.code === 'string' && /^(?:[0-9A-Z]{5}|E[A-Z0-9_]+)$/.test(err.code) ? err.code : '';
+  const summary = code ? `${name}(${code})` : name;
+  const fromDb = 'query' in err || /^[0-9A-Z]{5}$/.test(code) || /Failed query:|\nparams:/.test(String(err.message));
+  return fromDb || typeof err.message !== 'string' ? summary : `${summary}: ${err.message.slice(0, 300)}`;
+}
+
 /** `<repo|/app>/drizzle` — present in the runtime image (`COPY --from=build /app/drizzle`). */
 const MIGRATIONS_DIR = path.resolve(dirname, '..', 'drizzle');
 
@@ -877,7 +892,7 @@ const precheck = async () => {
     // the migrate step that runs next reports connection failures properly.
     console.error(
       `${LABEL} could not check the schema stamp, so it is NOT refusing the boot: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
+        safeErrMessage(err),
     );
     return 0;
   } finally {
@@ -1310,7 +1325,7 @@ const adoptAppend = async () => {
     // operator command run by hand; "could not check, continuing" would leave
     // the operator believing a conversion happened.
     console.error(
-      `${LABEL} 🔴 adopt-append FAILED: ${err instanceof Error ? err.message : String(err)}`,
+      `${LABEL} 🔴 adopt-append FAILED: ${safeErrMessage(err)}`,
     );
     return 1;
   } finally {

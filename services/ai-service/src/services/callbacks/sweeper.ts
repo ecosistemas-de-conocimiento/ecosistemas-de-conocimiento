@@ -380,7 +380,7 @@ export async function sweepOnce(deps: SweepDeps = {}): Promise<SweepResult> {
       // a later sweep, so this is not fatal — it IS a delivery that did not
       // happen, which is the one thing this subsystem exists to prevent.
       log.error(
-        { deliveryId: id, err: err instanceof Error ? err.message : String(err) },
+        { deliveryId: id, err },
         'callback sweeper: delivery threw',
       );
       continue;
@@ -510,8 +510,8 @@ export function startCallbackSweeper(deps: SweepDeps = {}): SweeperHandle {
       // a permanently broken sweeper look identical to a healthy idle one.
       log.error(
         {
-          err: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
+          // The serializer keeps the stack's frames, not its message line.
+          err,
           intervalMs: cfg.intervalMs,
         },
         'callback sweeper: sweep failed; will retry next interval',

@@ -2,6 +2,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 
 import { validateProductionReadiness } from '../config/env.js';
+import { rootLogger } from '../logger.js';
 import { MIGRATIONS_CONFIG, MIGRATIONS_SCHEMA, MIGRATIONS_TABLE } from './migrations-config.js';
 
 // Run with: pnpm --filter @edc/ai-service db:migrate
@@ -37,6 +38,8 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Migration failed:', err);
+  // A failed migration is a database error: its message can quote a row. The
+  // logger's `err` serializer (`errors/log-safe.ts`) keeps its class and code.
+  rootLogger.fatal({ err }, 'Migration failed');
   process.exit(1);
 });
