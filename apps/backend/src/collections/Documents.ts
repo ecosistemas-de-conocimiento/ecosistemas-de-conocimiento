@@ -13,15 +13,8 @@ import type {
   Where,
 } from 'payload'
 import { APIError, Forbidden, ValidationError } from 'payload'
-import {
-  checkbox as checkboxValidate,
-  json as jsonValidate,
-  select as selectValidate,
-  text as textValidate,
-  textarea as textareaValidate,
-} from 'payload/shared'
 import { sql } from '@payloadcms/db-postgres'
-import { writtenOnlyWhenSent } from './hooks/writtenOnlyWhenSent'
+import { everyFieldWrittenOnlyWhenSent } from './hooks/writtenOnlyWhenSent'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { constrainRelationQueries, sortParts, WHERE_OPERATORS } from '../access/relationFilters'
@@ -3286,7 +3279,21 @@ export const Documents: CollectionConfig = {
     delete: hideRevisions(uploaderMayDelete),
     create: ({ req: { user } }) => isActiveUser(user),
   },
-  fields: [
+  /**
+   * 🔴 NO FIELD IS WRITTEN BACK FROM A STALE READ (`hooks/writtenOnlyWhenSent.ts`):
+   * a value not sent and equal to the one read is left out of the UPDATE, so a
+   * concurrent write stands. Every field but:
+   *   consentHeld   never in a Payload update at all (its own hook);
+   *   organization, uploadedBy  NOT NULL with no column default, and a write
+   *     that sends `session` (`hasMany`) goes out as `INSERT … ON CONFLICT DO
+   *     UPDATE`, whose proposed row fails without them. Both are immutable
+   *     (pinned in `bindDocumentToEcosystem`), so no concurrent write moves them.
+   * `ingestStatus` and `ingestId` take
+   * `ingestMovesWithTextEdit` as update access, and a user's value it lets
+   * through (the transcript editor) counts as sent. `id`, `createdAt` and
+   * `updatedAt` are not in this list.
+   */
+  fields: everyFieldWrittenOnlyWhenSent([
     {
       /**
        * ⚠ THE ECOSISTEMA. Half of every corpus name this document touches, and
@@ -3347,8 +3354,6 @@ export const Documents: CollectionConfig = {
       // cannot fall out of step; the labels are the only hand-written part.
       options: PUBLICATION_STATES.map((value) => ({ value, label: PUBLICATION_LABELS[value] })),
       admin: { position: 'sidebar' },
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('publicationStatus', selectValidate),
     },
     {
       /**
@@ -3409,8 +3414,6 @@ export const Documents: CollectionConfig = {
       type: 'text',
       index: true,
       access: serverMovesAfterCreate,
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('publishIngestId', textValidate),
       admin: { readOnly: true, description: 'ai-service ingestId of the in-flight publish move.' },
     },
     {
@@ -3548,8 +3551,6 @@ export const Documents: CollectionConfig = {
       // Derived from CONTENT_KINDS so the column and the domain type cannot fall
       // out of step; the labels are the only hand-written part.
       options: CONTENT_KINDS.map((value) => ({ value, label: CONTENT_KIND_LABELS[value] })),
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('contentKind', selectValidate),
     },
     {
       /**
@@ -3571,8 +3572,6 @@ export const Documents: CollectionConfig = {
       type: 'checkbox',
       defaultValue: false,
       access: { update: gateWritesOnly },
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('anonymise', checkboxValidate),
       admin: { position: 'sidebar' },
     },
     {
@@ -3592,8 +3591,6 @@ export const Documents: CollectionConfig = {
       name: 'keepPublicFigures',
       type: 'checkbox',
       access: { create: gateWritesOnly, update: gateWritesOnly },
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('keepPublicFigures', checkboxValidate),
       admin: {
         position: 'sidebar',
         readOnly: true,
@@ -3617,8 +3614,6 @@ export const Documents: CollectionConfig = {
       name: 'keepDocumentAuthor',
       type: 'checkbox',
       access: { create: gateWritesOnly, update: gateWritesOnly },
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('keepDocumentAuthor', checkboxValidate),
       admin: { position: 'sidebar', readOnly: true },
     },
     {
@@ -3626,8 +3621,6 @@ export const Documents: CollectionConfig = {
       name: 'keepCitedAuthors',
       type: 'checkbox',
       access: { create: gateWritesOnly, update: gateWritesOnly },
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('keepCitedAuthors', checkboxValidate),
       admin: { position: 'sidebar', readOnly: true },
     },
     {
@@ -3733,8 +3726,6 @@ export const Documents: CollectionConfig = {
       maxLength: DOCUMENT_TEXT_MAX_LENGTH,
       // 🔴 See `gateWritesOnly`. `admin.readOnly` is a panel hint; this is the rule.
       access: { create: gateWritesOnly, update: gateWritesOnly },
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('redactedText', textareaValidate),
       admin: {
         readOnly: true,
         description:
@@ -3757,8 +3748,6 @@ export const Documents: CollectionConfig = {
       name: 'testimonioTitle',
       type: 'text',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: testimonioTitleReadable },
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('testimonioTitle', textValidate),
       admin: {
         readOnly: true,
         description:
@@ -3788,7 +3777,6 @@ export const Documents: CollectionConfig = {
       // 🔴 Read: uploader / platform admin only on gated content. Reviewers read
       // it through `lib/holdReview.ts` (overrideAccess). See `mayReadGatedOriginal`.
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
-      ...writtenOnlyWhenSent('heldText', textareaValidate),
       admin: {
         readOnly: true,
         description:
@@ -3807,7 +3795,6 @@ export const Documents: CollectionConfig = {
       name: 'heldTextHash',
       type: 'text',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
-      ...writtenOnlyWhenSent('heldTextHash', textValidate),
       admin: { readOnly: true, hidden: true },
     },
     {
@@ -3826,8 +3813,6 @@ export const Documents: CollectionConfig = {
       name: 'anonymisationSurvivors',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('anonymisationSurvivors', jsonValidate),
       admin: {
         readOnly: true,
         description: 'Posiciones (no texto) de lo que la verificación encontró todavía presente.',
@@ -3846,8 +3831,6 @@ export const Documents: CollectionConfig = {
       name: 'publicFiguresKept',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
-      // 🔴 Never written back from a stale read (K3): `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('publicFiguresKept', jsonValidate),
       admin: {
         readOnly: true,
         description: 'Nombres conservados como figuras públicas: nombre, motivo, modelo y fecha.',
@@ -3864,8 +3847,6 @@ export const Documents: CollectionConfig = {
       name: 'authorsKept',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
-      // 🔴 Never written back from a stale read (K3): `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('authorsKept', jsonValidate),
       admin: {
         readOnly: true,
         description: 'Autoría conservada (quien subió el documento): nombre, modelo y fecha.',
@@ -3881,8 +3862,6 @@ export const Documents: CollectionConfig = {
       name: 'citedAuthorsKept',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
-      // 🔴 Never written back from a stale read (K3): `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('citedAuthorsKept', jsonValidate),
       admin: {
         readOnly: true,
         description: 'Autores citados conservados: nombre, modelo y fecha.',
@@ -3913,7 +3892,6 @@ export const Documents: CollectionConfig = {
       // 🔴 THE SINGLE MOST IMPORTANT LOCK IN THIS COLLECTION. A client that could
       // write `approved` here would skip the gate outright — see `gateWritesOnly`.
       access: { create: gateWritesOnly, update: gateWritesOnly },
-      ...writtenOnlyWhenSent('anonymisationStatus', selectValidate),
       admin: { position: 'sidebar' },
     },
     {
@@ -3938,8 +3916,6 @@ export const Documents: CollectionConfig = {
       name: 'anonymisationReport',
       type: 'json',
       access: { create: gateWritesOnly, update: gateWritesOnly },
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      ...writtenOnlyWhenSent('anonymisationReport', jsonValidate),
       admin: {
         readOnly: true,
         description:
@@ -4067,10 +4043,6 @@ export const Documents: CollectionConfig = {
       type: 'select',
       required: true,
       defaultValue: 'n/a',
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      // Its `access.update` is `ingestMovesWithTextEdit`, and a user's value it
-      // lets through (the transcript editor) counts as sent.
-      ...writtenOnlyWhenSent('ingestStatus', selectValidate, ingestMovesWithTextEdit),
       options: [
         { label: 'N/A (markdown)', value: 'n/a' },
         { label: 'Pending (queued)', value: 'pending' },
@@ -4103,9 +4075,6 @@ export const Documents: CollectionConfig = {
     {
       name: 'ingestId',
       type: 'text',
-      // 🔴 Never written back from a stale read: `hooks/writtenOnlyWhenSent.ts`.
-      // Its `access.update` is `ingestMovesWithTextEdit`, as for `ingestStatus`.
-      ...writtenOnlyWhenSent('ingestId', textValidate, ingestMovesWithTextEdit),
       admin: {
         description: 'ai-service ingestId join-back key.',
       },
@@ -4279,7 +4248,10 @@ export const Documents: CollectionConfig = {
           'The document text: extracted for pdf/docx, TRANSCRIBED for audio. Cached so retries do not redo the work — which for audio is CPU-hours, not milliseconds.',
       },
     },
-  ],
+  ], {
+    except: ['consentHeld', 'organization', 'uploadedBy'],
+    userAccess: { ingestStatus: ingestMovesWithTextEdit, ingestId: ingestMovesWithTextEdit },
+  }),
   /**
    * 🔴 No `beforeOperation` for queries here: `relationFilterHook`, added to
    * every collection in `payload.config.ts`, runs `constrainGatedQueries` on

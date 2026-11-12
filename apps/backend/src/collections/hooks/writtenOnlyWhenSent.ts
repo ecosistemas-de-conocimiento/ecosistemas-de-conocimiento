@@ -38,6 +38,19 @@
  * the switch off only refreshed the report (`regatePlan`) and the author's
  * name stayed in `redactedText` for the next publish. Same test file.
  *
+ * Since 2026-11-12 on EVERY stored field of `documents`
+ * ({@link everyFieldWrittenOnlyWhenSent}, audit 2026-11-12 sweep): a rename
+ * that read gate run A's claim put A's token back in `anonymisationError` after
+ * run B claimed, so A's final write landed and B's missed, and the next publish
+ * sent A's verdict on the text from before an edit; a rename racing a text edit
+ * put the old `extractedText` back, and the next publish sent it. The same for
+ * `name`, the `session` attachments and every other column. Dropping a value
+ * equal to the one read is a no-op without a concurrent write, so the rule is
+ * safe on any column, but one: ⚠ a write that sends a `hasMany` field goes out
+ * as `INSERT … ON CONFLICT DO UPDATE` (`@payloadcms/drizzle` `upsertRow`), and
+ * its proposed row fails on a dropped NOT NULL column with no default. Those
+ * are excluded. `Documents.everyColumnStaleWrite.pg.test.ts`.
+ *
  * ⚠ Compared DEEPLY (`isDeepStrictEqual` over a JSON round trip): a `json`
  * column's fallback is a parsed object, never `===` to what was read.
  *
@@ -49,7 +62,8 @@
 
 import { isDeepStrictEqual } from 'node:util'
 
-import type { FieldAccess, FieldHook, Validate } from 'payload'
+import type { Field, FieldAccess, FieldHook, Validate } from 'payload'
+import { validations } from 'payload/shared'
 
 const SENT = '__gateColumnsSent'
 
@@ -117,4 +131,71 @@ export function writtenOnlyWhenSent<V extends (value: any, options: any) => Retu
     return allowed
   }
   return { hooks, validate: wrapped, access: { update } }
+}
+
+type FlatField = {
+  name: string
+  type: string
+  virtual?: unknown
+  validate?: Validate
+  access?: Record<string, FieldAccess | undefined>
+  hooks?: Record<string, FieldHook[] | undefined>
+}
+
+/** Field types with a column (or `_rels` rows) of their own and no subfields. */
+const FLAT_TYPES: ReadonlySet<string> = new Set([
+  'checkbox',
+  'code',
+  'date',
+  'email',
+  'json',
+  'number',
+  'point',
+  'radio',
+  'relationship',
+  'select',
+  'text',
+  'textarea',
+  'upload',
+])
+
+/**
+ * {@link writtenOnlyWhenSent} on every field of a collection but `except`,
+ * composed with the field's own hooks, access and validator. `userAccess`
+ * names the fields whose update access a user's value may pass (see above).
+ *
+ * ⚠ Throws on a field it cannot judge (a group, array, tabs, row…): a nested
+ * field needs its own decision, not a silent skip. A virtual field writes no
+ * column and is left as it is.
+ */
+export function everyFieldWrittenOnlyWhenSent(
+  fields: Field[],
+  options: { except: readonly string[]; userAccess?: Readonly<Record<string, FieldAccess>> },
+): Field[] {
+  const names = new Set(fields.map((f) => ('name' in f ? f.name : undefined)))
+  for (const name of [...options.except, ...Object.keys(options.userAccess ?? {})])
+    if (!names.has(name)) throw new Error(`everyFieldWrittenOnlyWhenSent: no field named ${name}`)
+  return fields.map((field) => {
+    if (!('name' in field) || options.except.includes(field.name)) return field
+    const flat = field as unknown as FlatField
+    if (flat.virtual) return field
+    if (!FLAT_TYPES.has(flat.type))
+      throw new Error(`everyFieldWrittenOnlyWhenSent: ${flat.name} is a ${flat.type}; decide it explicitly`)
+    const own = flat.validate ?? (validations as unknown as Record<string, Validate>)[flat.type]
+    const userAccess = options.userAccess?.[flat.name]
+    if (userAccess && flat.access?.update)
+      throw new Error(`everyFieldWrittenOnlyWhenSent: ${flat.name} already has access.update`)
+    const rule = writtenOnlyWhenSent(flat.name, own, userAccess)
+    return {
+      ...flat,
+      validate: rule.validate,
+      ...(rule.access ? { access: { ...flat.access, ...rule.access } } : {}),
+      hooks: {
+        ...flat.hooks,
+        // Record what was sent before the field's own hooks change it; drop last.
+        beforeValidate: [...rule.hooks.beforeValidate, ...(flat.hooks?.beforeValidate ?? [])],
+        beforeChange: [...(flat.hooks?.beforeChange ?? []), ...rule.hooks.beforeChange],
+      },
+    } as unknown as Field
+  })
 }
