@@ -35,16 +35,16 @@ quadrantChart
     quadrant-2 Prevenir
     quadrant-3 Vigilar
     quadrant-4 Contener
-    R-01 Respaldo hospedado: [0.62, 0.92]
-    R-04 Gate imperfecto: [0.80, 0.90]
-    R-06 Aviso sin validar: [0.90, 0.80]
-    R-29 Equipo de una persona: [0.92, 0.85]
-    R-03 Spark sin supervisión: [0.75, 0.55]
-    R-16 Caja única: [0.45, 0.70]
-    R-18 Respaldos manuales: [0.40, 0.88]
-    R-17 Disco lleno: [0.85, 0.45]
-    R-05 Reidentificación: [0.50, 0.85]
-    R-30 Cierre presupuestal: [0.70, 0.65]
+    "R-01 Respaldo hospedado": [0.62, 0.92]
+    "R-04 Gate imperfecto": [0.80, 0.90]
+    "R-06 Aviso sin validar": [0.90, 0.80]
+    "R-29 Equipo de una persona": [0.92, 0.85]
+    "R-03 Spark sin supervisión": [0.75, 0.55]
+    "R-16 Caja única": [0.45, 0.70]
+    "R-18 Respaldos manuales": [0.40, 0.88]
+    "R-17 Disco lleno": [0.85, 0.45]
+    "R-05 Reidentificación": [0.50, 0.85]
+    "R-30 Cierre presupuestal": [0.70, 0.65]
 ```
 
 ## 3. Registro

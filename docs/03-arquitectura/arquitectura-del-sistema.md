@@ -64,8 +64,8 @@ flowchart LR
   P2 -->|HTTPS| EDC
   P3 -->|HTTPS| EDC
   EDC -->|texto para generar, embeber| OR
-  EDC -->|pregunta y pasajes (staging); embeddings de respaldo (dev)| DI
-  EDC -->|audio, texto para detectar, embeddings y rerank (dev)| SP
+  EDC -->|"pregunta y pasajes (staging); embeddings de respaldo (dev)"| DI
+  EDC -->|"audio, texto para detectar, embeddings y rerank (dev)"| SP
   CF -.->|resuelve dominio| EDC
   GH -.->|código para construir| EDC
 ```

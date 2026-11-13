@@ -192,21 +192,21 @@ Escala: **Probabilidad** baja, media, alta. **Gravedad** limitada, significativa
 quadrantChart
   title Riesgo inherente por probabilidad y gravedad
   x-axis Baja probabilidad --> Alta probabilidad
-  y-axis Gravedad limitada --> Gravedad máxima
+  y-axis Gravedad limitada --> Gravedad alta
   quadrant-1 Prioridad alta
   quadrant-2 Vigilar
   quadrant-3 Aceptable
   quadrant-4 Reducir
-  R1 reidentificación: [0.85, 0.75]
-  R2 fuga del original: [0.5, 0.95]
-  R3 falla del detector: [0.5, 0.75]
-  R4 respaldo hospedado: [0.5, 0.72]
-  R5 Spark de terceros: [0.55, 0.7]
-  R6 voz: [0.45, 0.68]
-  R8 admin lee todo: [0.2, 0.7]
-  R10 conversaciones: [0.5, 0.45]
-  R12 derechos: [0.55, 0.42]
-  R14 respaldos: [0.2, 0.75]
+  "R1 reidentificación": [0.85, 0.75]
+  "R2 fuga del original": [0.5, 0.95]
+  "R3 falla del detector": [0.5, 0.75]
+  "R4 respaldo hospedado": [0.5, 0.72]
+  "R5 Spark de terceros": [0.55, 0.7]
+  "R6 voz": [0.45, 0.68]
+  "R8 admin lee todo": [0.2, 0.7]
+  "R10 conversaciones": [0.5, 0.45]
+  "R12 derechos": [0.55, 0.42]
+  "R14 respaldos": [0.2, 0.75]
 ```
 
 Las posiciones del cuadrante son una lectura cualitativa del equipo, no una medición.
