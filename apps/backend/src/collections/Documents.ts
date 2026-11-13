@@ -52,6 +52,7 @@ import { CONSENT_HELD_MESSAGE, isConsentHeld, isConsentHeldNow, readConsentHeld 
 import { verdictSettings } from '../lib/publicFigures'
 import { errSummary, safeErrMessage } from '../lib/errorSummary'
 import { withholdRowText } from '../lib/storedReason'
+import { folio, recordUploadConsent, uploadConsentVersionField } from '../lib/uploadConsent'
 import {
   consumeCorpusCleanupSkip,
   isOwnersMedia,
@@ -4248,6 +4249,9 @@ export const Documents: CollectionConfig = {
           'The document text: extracted for pdf/docx, TRANSCRIBED for audio. Cached so retries do not redo the work — which for audio is CPU-hours, not milliseconds.',
       },
     },
+    // 🔴 Virtual (no column): the upload consent's version, checked on a user
+    // create; the receipt is `recordUploadConsent` below (`lib/uploadConsent.ts`).
+    uploadConsentVersionField,
   ], {
     except: ['consentHeld', 'organization', 'uploadedBy'],
     userAccess: { ingestStatus: ingestMovesWithTextEdit, ingestId: ingestMovesWithTextEdit },
@@ -4270,7 +4274,8 @@ export const Documents: CollectionConfig = {
      * `__skipDocsExtract`, which every internal status write sets — and a
      * privacy invalidation must not be skippable by an internal write path.
      */
-    afterChange: [applyStatusReset, extractAndIngestHook, invalidateGraphOnContentKindChange],
+    // `recordUploadConsent` before the ingest: a failed receipt rolls the create back.
+    afterChange: [applyStatusReset, recordUploadConsent, extractAndIngestHook, invalidateGraphOnContentKindChange],
     /**
      * ✅ CORPUS CLEANUP ON DELETE. Deleting a row used to leave its chunks
      * embedded and retrievable — the document vanished from the UI while the
@@ -4298,6 +4303,8 @@ export const Documents: CollectionConfig = {
     retryGraphEndpoint(),
     // GET / PATCH /api/documents/:id/anonimizacion (`lib/anonymisationControls.ts`).
     ...anonimizacionEndpoints(),
+    // GET /api/documents/:id/constancia (the upload consent's receipt).
+    constanciaEndpoint(),
   ],
 }
 
@@ -4990,4 +4997,91 @@ function publishEndpoint(): Endpoint {
 
 function unpublishEndpoint(): Endpoint {
   return documentActionEndpoint('unpublish')
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/documents/:id/constancia
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 THE UPLOAD CONSENT'S CONSTANCIA (`lib/uploadConsent.ts`). `:id` is the
+ * DOCUMENT's id; after a delete it still resolves through the receipt's
+ * `documentIdSnapshot` (`document: null`). `receipt: null` is a document
+ * uploaded before the consent existed.
+ *
+ * Readers: the uploader (`uploadedBy`, or the receipt's `actor` once the
+ * document is gone) and a platform admin. Anyone else gets the same 404 as a
+ * missing id, so ids cannot be probed. `title` follows `mayReadGatedOriginal`.
+ */
+function constanciaEndpoint(): Endpoint {
+  return {
+    path: '/:id/constancia',
+    method: 'get',
+    handler: async (req) => {
+      const json = (body: unknown, status: number): Response =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+        })
+      const notFound = () => json({ error: 'not_found' }, 404)
+      const user = req.user
+      if (!user || !isActiveUser(user)) return notFound()
+      const id = digitsId((req.routeParams as { id?: string } | undefined)?.id)
+      if (id == null) return notFound()
+
+      const doc = (await req.payload
+        .findByID({ collection: 'documents', id, depth: 0, overrideAccess: true, disableErrors: true, req })
+        .catch(() => null)) as Record<string, unknown> | null
+      const receipt = ((
+        await req.payload.find({
+          collection: 'consent-receipts',
+          where: { documentIdSnapshot: { equals: id }, kind: { equals: 'upload' } },
+          sort: 'createdAt',
+          limit: 1,
+          depth: 0,
+          overrideAccess: true,
+          req,
+        })
+      ).docs[0] ?? null) as unknown as Record<string, unknown> | null
+      if (!doc && !receipt) return notFound()
+
+      const mine = (v: unknown) => String(relationId(v) ?? '') === String(user.id)
+      const allowed = isPlatformAdminUser(user) || (doc ? mine(doc.uploadedBy) : mine(receipt?.actor))
+      if (!allowed) return notFound()
+
+      let ecosystem: { id: number | string; name: string } | null = null
+      const organizationId = relationId(receipt?.organization)
+      if (organizationId != null) {
+        const org = (await req.payload
+          .findByID({ collection: 'organizations', id: organizationId, depth: 0, overrideAccess: true, disableErrors: true, req })
+          .catch(() => null)) as { id: number | string; name?: string } | null
+        if (org) ecosystem = { id: org.id, name: String(org.name ?? '') }
+      }
+
+      return json(
+        {
+          documentId: id,
+          receipt: receipt && {
+            id: receipt.id,
+            folio: folio(receipt.id as number, receipt.createdAt as string),
+            consentVersion: receipt.consentVersion,
+            contentKind: receipt.contentKind,
+            acceptedAt: receipt.createdAt,
+            ecosystem,
+          },
+          document: doc && {
+            kind: doc.kind,
+            contentKind: doc.contentKind,
+            createdAt: doc.createdAt,
+            title:
+              mayReadGatedOriginal(user, doc as Parameters<typeof mayReadGatedOriginal>[1], 'identity') &&
+              typeof doc.name === 'string'
+                ? doc.name
+                : null,
+          },
+        },
+        200,
+      )
+    },
+  }
 }

@@ -32,6 +32,7 @@ vi.mock('@/lib/aiClient', () => {
 })
 
 import { migrations } from '../migrations'
+import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 
 const CONTAINER = `edc-backend-loose-upload-pg-${process.pid}`
 const IMAGE = 'postgres:16-alpine'
@@ -103,7 +104,7 @@ async function createAs(userId: number, data: Record<string, unknown>) {
     collection: 'documents',
     overrideAccess: false,
     user,
-    data: { kind: 'markdown', name: 'nota', bodyMarkdown: 'hola', session: [], ...data } as never,
+    data: { uploadConsentVersion: UPLOAD_CONSENT_VERSION, kind: 'markdown', name: 'nota', bodyMarkdown: 'hola', session: [], ...data } as never,
   })
 }
 

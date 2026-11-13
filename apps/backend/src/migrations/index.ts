@@ -23,6 +23,7 @@ import * as migration_20261104_075139_documents_authors_kept from './20261104_07
 import * as migration_20261108_001902_documents_anonymise_switches from './20261108_001902_documents_anonymise_switches';
 import * as migration_20261110_070204_anonymisation_setting_changes_keys from './20261110_070204_anonymisation_setting_changes_keys';
 import * as migration_20261110_181621_consent_held_reviews_keep from './20261110_181621_consent_held_reviews_keep';
+import * as migration_20261113_015634_consent_receipts from './20261113_015634_consent_receipts';
 
 export const migrations = [
   {
@@ -149,5 +150,10 @@ export const migrations = [
     up: migration_20261110_181621_consent_held_reviews_keep.up,
     down: migration_20261110_181621_consent_held_reviews_keep.down,
     name: '20261110_181621_consent_held_reviews_keep',
+  },
+  {
+    up: migration_20261113_015634_consent_receipts.up,
+    down: migration_20261113_015634_consent_receipts.down,
+    name: '20261113_015634_consent_receipts'
   },
 ];

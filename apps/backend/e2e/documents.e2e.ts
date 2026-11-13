@@ -85,6 +85,7 @@ describe.skipIf(stackDown)('document ingest', () => {
     expect(media.status).toBe(201)
 
     const doc = await apiJson(world.alice.caller, 'POST', '/api/documents', {
+      uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
       name: `${world.ns} sample pdf`,
       kind: 'pdf',
       mode: 'rag-retrieve',
@@ -264,6 +265,7 @@ describe.skipIf(stackDown)('docx ingest', () => {
     expect(media.status).toBe(201)
 
     const doc = await apiJson(world.alice.caller, 'POST', '/api/documents', {
+      uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
       name: `${world.ns} carta docx`,
       kind: 'docx',
       mode: 'rag-retrieve',

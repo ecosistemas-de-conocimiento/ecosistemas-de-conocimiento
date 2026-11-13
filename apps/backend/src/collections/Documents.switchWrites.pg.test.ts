@@ -22,6 +22,7 @@ vi.mock('@/lib/aiClient', () => {
 })
 
 import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, type RealPostgres } from '@/lib/testing/realPostgres'
+import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 
 const SWITCHES = ['keepPublicFigures', 'keepDocumentAuthor', 'keepCitedAuthors'] as const
 const COLUMN = {
@@ -92,7 +93,7 @@ describe.skipIf(!dockerOk)('per-document anonymisation switches: no collection w
   it('a platform admin cannot set a switch on create either', async () => {
     const doc = (await payload.create({
       collection: 'documents',
-      data: { name: 'nuevo.md', organization: 1, keepPublicFigures: true } as never,
+      data: { uploadConsentVersion: UPLOAD_CONSENT_VERSION, name: 'nuevo.md', organization: 1, keepPublicFigures: true } as never,
       user: await root(),
       overrideAccess: false,
     })) as { id: number }

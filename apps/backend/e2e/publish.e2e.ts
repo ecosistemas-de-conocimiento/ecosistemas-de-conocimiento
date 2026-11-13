@@ -51,6 +51,7 @@ describe.skipIf(stackDown)('publish / unpublish', () => {
     // ⚠ Enqueueing an empty body would produce a `published` document that
     // matches nothing — a silent, permanent "why does search never find it".
     const empty = await apiJson(world.alice.caller, 'POST', '/api/documents', {
+      uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
       name: `${world.ns} sin texto`,
       kind: 'markdown',
       bodyMarkdown: 'x',

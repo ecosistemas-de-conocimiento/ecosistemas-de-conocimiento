@@ -268,6 +268,7 @@ describe.skipIf(stackDown)('a published document\'s file follows its document', 
     filename = up.body.doc.filename
 
     const doc = await apiJson(world.alice.caller, 'POST', '/api/documents', {
+      uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
       name: `${world.ns} pdf compartido`,
       kind: 'pdf',
       mode: 'rag-retrieve',

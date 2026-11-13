@@ -20,6 +20,7 @@ import type { PayloadRequest } from 'payload'
 // columns later ones add (`documents.uploaded_in_session_id`).
 import { migrations } from '../migrations'
 import { makeEvalEndpoints } from './evals'
+import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 
 const CONTAINER = `edc-backend-evals-pg-${process.pid}`
 const IMAGE = 'postgres:16-alpine'
@@ -161,7 +162,7 @@ describe.skipIf(!dockerOk)('evals on a real Postgres', () => {
         collection: 'documents',
         overrideAccess: false,
         user: admin,
-        data: { kind: 'markdown', name: 'nota', bodyMarkdown: 'hola', session: [id] } as never,
+        data: { uploadConsentVersion: UPLOAD_CONSENT_VERSION, kind: 'markdown', name: 'nota', bodyMarkdown: 'hola', session: [id] } as never,
       })
       .then(
         () => 'created',
