@@ -13,6 +13,7 @@ Resumen para quien redacte el informe de la Etapa 1. Cada fila remite al documen
 - **EDC** es la plataforma de software del proyecto SECIHTI IH-2025-I-445 del CIDE; su marco conceptual es el Repositorio de Voces y Resonancias, «un sistema de doble flujo»: recibe **voces** y devuelve **resonancias** al campo ([Visión y alcance](01-proyecto/vision-y-alcance.md) §1, citando el brief v1 §1).
 - **Etapa 1:** ejecución del 2026-05-06 al 2026-10-28; después del cierre no hay gasto con cargo a ella (citado de [Visión y alcance](01-proyecto/vision-y-alcance.md) §3).
 - **Lo comprometido:** dos entregables según convenio, la plataforma del repositorio y el prototipo del ciclo cerrado, con tres criterios de éxito (brief v1 §4, citado en [Visión y alcance](01-proyecto/vision-y-alcance.md) §6).
+- **En línea:** el producto está desplegado en el servidor de desarrollo, en <https://dev.ecosistemasdeconocimiento.com> (§3 y §6).
 - **Alcance:** la Etapa 1 funcionó como prueba de concepto. Lo implementado (§2) y su evidencia (§3) muestran, con corpus sintético y en dev, que el núcleo de la plataforma es viable: captura, compuerta de anonimización, acervo por ecosistema y resonancia con citas. La auditoría comunitaria con su veredicto y el backlog pasan a la Etapa 2.
 - **Lo entregado:** un prototipo funcional del repositorio de voces y del grafo de conocimiento, un corpus sintético como banco de pruebas y un marco ético alineado con los Principios de Chapultepec (citado del informe del 21 de octubre en [Cronología](01-proyecto/cronologia-e-hitos.md) §7).
 
@@ -118,10 +119,10 @@ No hay entorno de producción ni testimonio real de personas externas (citado de
 
 | Referencia | Qué contiene |
 |---|---|
-| **`etapa-1`** (etiqueta fija) | **La entrega: la Etapa 1 con correcciones.** Es la referencia que se cita. Marca `main` al entregar los docs, 2026-11-12 |
-| `etapa-1-281026` (rama) | La foto del 2026-10-28, sin correcciones: todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después |
-| `main` | Rama de trabajo; su código es la línea de corte del 2026-11-12, y lo posterior solo cambia `docs/` e `infra/fleet/` |
-| `etapa-2` | Trabajo nuevo; igual a `main` al 2026-11-12 |
+| [**`etapa-1`** (etiqueta fija)](https://github.com/ecosistemas-de-conocimiento/ecosistemas-de-conocimiento/tree/etapa-1) | **La entrega: la Etapa 1 con correcciones.** Es la referencia que se cita. Marca `main` al entregar los docs, 2026-11-12 |
+| [`etapa-1-281026` (rama)](https://github.com/ecosistemas-de-conocimiento/ecosistemas-de-conocimiento/tree/etapa-1-281026) | La foto del 2026-10-28, sin correcciones: todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después |
+| [`main`](https://github.com/ecosistemas-de-conocimiento/ecosistemas-de-conocimiento/tree/main) | Rama de trabajo; su código es la línea de corte del 2026-11-12, y lo posterior solo cambia `docs/` e `infra/fleet/` |
+| [`etapa-2`](https://github.com/ecosistemas-de-conocimiento/ecosistemas-de-conocimiento/tree/etapa-2) | Trabajo nuevo; igual a `main` al 2026-11-12 |
 | Desplegado en dev | La versión de `main` del 2026-11-12. Staging sigue en su imagen del 2026-10-17. Historial de despliegues en [Despliegue y runbook](05-infraestructura/despliegue-y-runbook.md) |
 
 Lo encontrado después del 2026-11-12 va a la Etapa 2.
