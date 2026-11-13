@@ -23,7 +23,7 @@ Mover módulos por fases, cada una con una condición de entrada medible y un pl
 | Fase | Alcance | Estado en dev al 2026-10-30 |
 |---|---|---|
 | 0. Medir | Hardware, red, arneses | Hecha en parte |
-| 1. Detector del gate y rerank | Qwen3-30B-A3B como detector; `Qwen3-Reranker-0.6B` | Detector en el Spark. Rerank en el Spark **inferido, no verificado** (se deduce de que la llave de rerank comparte prefijo con la del proxy del Spark, `infra/fleet/edc-1.md`) |
+| 1. Detector del gate y rerank | Qwen3-30B-A3B como detector; `Qwen3-Reranker-0.6B` | Detector en el Spark. Rerank en el Spark desde el 2026-10-21 (`infra/fleet/edc-1.md` §4y, medido con el registro del proxy y `provider: rerank-api`); staging sigue en DeepInfra |
 | 2. Embeddings | `bge-m3`, mismas dimensiones | En el Spark con respaldo alojado desde el 2026-10-22 |
 | 3. Transcripción | Whisper en GPU | Whisper large-v3 en el Spark desde el 2026-10-22 |
 | 4. Generación pequeña | Condense, expansión, grafo | No desplegada ([ADR-0013](ADR-0013-chat-no-se-mueve-al-spark.md)) |

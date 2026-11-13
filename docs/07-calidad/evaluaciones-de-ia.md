@@ -18,7 +18,7 @@ EDC hace con IA cuatro cosas cuya calidad importa: responder preguntas citando e
 | Herramienta | Dónde vive | Qué mide | Cuándo se usó |
 |---|---|---|---|
 | Panel de evaluaciones `/admin/evals` | `apps/web/src/lib/server/evals/`, `apps/web/src/routes/admin/evals/` | Soporte de citas, rechazos correctos, posición del documento esperado (hit@k), fuga y sobre-redacción de la compuerta, estilo de respuesta | Desde el 2026-10-28; corridas registradas del 2026-10-29 |
-| Arnés GraphRAG | `apps/backend/src/eval/` (`run.ts`, `score.ts`) | Si el grafo mejora las respuestas: recall mecánico contra el manifiesto del corpus | 2026-09-05 y 2026-09-08 |
+| Arnés GraphRAG | `apps/backend/src/eval/` (`run.ts`, `score.ts`) | Si el grafo mejora las respuestas: recall mecánico contra el manifiesto del corpus | 2026-09-05, 2026-09-08 y 2026-10-17 (dev) |
 | Arnés de recuperación | `apps/backend/src/eval/retrieval.ts` | MRR y recall@k de dense contra hybrid, con y sin rerank | 2026-10-17 |
 | `spark-chat-eval` | `scripts/spark-chat-eval/` | Chat hospedado contra chat en el DGX Spark: latencia, concurrencia, marcadores, juez ciego | 2026-10-26 |
 | `cite-eval` | `scripts/cite-eval/` | Soporte de citas antes y después de un cambio de prompt | 2026-10-28 |
@@ -147,6 +147,19 @@ Mismo arnés. El único cambio fue el sembrador de entidades (`seedEntitiesForQu
 - No se movieron G05 (lenguas) ni G07 (comunidad de origen). Esas las responde la columna `documents.lengua`, no el grafo.
 - G09 perdió 0.11; n=1, en observación.
 
+### 3.4 Corrida 3, 2026-10-17, en edc-1 dev (`20261017195542`, `20261017203514`)
+
+Mismo arnés (`run.ts`, brazos plano y grafo, 3 repeticiones), 19 preguntas, 163 documentos publicados de dev, con expansión de la pregunta; una corrida con rerank y otra con `--no-rerank`. Measured por otra sesión el 2026-10-17; citado de `RESULTS.md` («Answer-level rerank arms on edc-1 dev»), no vuelto a medir.
+
+| Clase | Brazo | Recall con rerank | Recall sin rerank |
+|---|---|---:|---:|
+| Local | plano | 0.951 | 0.963 |
+| Global | plano | 0.598 | 0.472 |
+| Global | grafo | **0.720** | 0.669 |
+
+- Con rerank, el grafo sube el recall global de 0.598 a 0.720; sin rerank, de 0.472 a 0.669.
+- Corpus, entorno y número de preguntas distintos a las corridas 1 y 2: no se compara con ellas.
+
 ## 4. Recuperación: dense contra hybrid, con y sin rerank
 
 ### 4.1 Metodología
@@ -174,7 +187,7 @@ Conclusiones registradas:
 - Dense con rerank es el mejor brazo en el conjunto grande: mejor en 18 preguntas, peor en 13, igual en 158.
 - En las 10 globales, el rerank sube el MRR de 0.720 a 0.925. Con n=10 es una pista, no un hallazgo.
 - El rerank agrega entre 0.3 y 0.9 s por recuperación, medidos con carga variable en la máquina.
-- Una sesión aparte midió el rerank a nivel de respuesta en dev (19 preguntas, 3 repeticiones): recall global plano 0.598 con rerank contra 0.472 sin él; con grafo, 0.720 contra 0.669 (citado de `RESULTS.md`, no vuelto a medir).
+- Una sesión aparte midió el rerank a nivel de respuesta en dev (19 preguntas, 3 repeticiones): recall global plano 0.598 con rerank contra 0.472 sin él; con grafo, 0.720 contra 0.669 (citado de `RESULTS.md`, no vuelto a medir; tabla en §3.4).
 
 ## 5. Chat en el DGX Spark: `spark-chat-eval`
 

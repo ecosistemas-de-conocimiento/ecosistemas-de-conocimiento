@@ -11,7 +11,7 @@ Este documento es para quien planee y ejecute las etapas siguientes del proyecto
 
 Lo construido en la Etapa 1 está en [Visión y alcance](vision-y-alcance.md) §6 y en [Historias de usuario](../02-requisitos/historias-de-usuario.md). La secuencia de hechos está en [Cronología e hitos](cronologia-e-hitos.md).
 
-Ramas: `etapa-1` es la Etapa 1 sin correcciones; `main` es la Etapa 1 con correcciones, con el código de la línea de corte del 2026-11-12; la etiqueta `etapa-1-con-correcciones` marca la versión entregada de los docs (2026-11-12, mismo código, solo agrega documentación); la rama `etapa-2` lleva la funcionalidad nueva. Lo que quedó abierto al cierre está en [Lo que quedó abierto al cierre de la Etapa 1](#lo-que-quedó-abierto-al-cierre-de-la-etapa-1). Lo que la revisión del 2026-11-10 clasificó como funcionalidad nueva está en la sección [Etapa 2](#etapa-2), al final.
+Ramas: la etiqueta fija `etapa-1` es la entrega, la Etapa 1 con correcciones (`main` al entregar los docs, 2026-11-12), y es la referencia que se cita; la rama `etapa-1-281026` guarda la foto del 2026-10-28, sin correcciones; `main` lleva el código de la línea de corte del 2026-11-12; la rama `etapa-2` lleva la funcionalidad nueva. Lo que quedó abierto al cierre está en [Lo que quedó abierto al cierre de la Etapa 1](#lo-que-quedó-abierto-al-cierre-de-la-etapa-1). Lo que la revisión del 2026-11-10 clasificó como funcionalidad nueva está en la sección [Etapa 2](#etapa-2), al final.
 
 ## 1. Punto de partida
 
@@ -56,6 +56,7 @@ flowchart LR
 |---|---|---|---|
 | **Miniexperimentos con estudiantes del CIDE** | Primero 2 y luego 5 estudiantes como operadores de la captura, y uno de mayor escala hacia el final del segundo ciclo. Semiosis práctica funciona como prototipo del ecosistema de estudiantes, con posible grupo de control. La vista de estudiante ya existe | Diseño del primer miniexperimento (Responsable Técnico); aviso y consentimiento | Informe del 21 de octubre §I, §VIII |
 | **Aviso de privacidad, consentimiento y comprobante ético** | Lo que el brief v1 pedía y no se construyó: aviso, consentimiento informado, folio y PDF. Es condición para recibir testimonio real | Decidir cómo registrar el consentimiento sin guardar quién habla | Brief v1 §3 y §4; [Aviso de privacidad y consentimiento](../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) |
+| **Autenticación OAuth 2.0** | Comprometida en los anexos técnicos de los prestadores, actividad 6. Hoy hay correo y contraseña de Payload y un emisor de JWT EdDSA con JWKS (vigencia máxima de 900 s) sin consumidores. Va en paralelo con el comprobante ético | Ninguna técnica previa | Anexos técnicos, actividad 6; [Seguridad](../06-privacidad-y-seguridad/seguridad.md#etapa-2) |
 | **Operación por voz** | Un servidor MCP (protocolo que permite a un asistente de IA operar herramientas) para usar la plataforma por voz. Las peticiones de campo incluyen dictar una lista de participantes, interfaz en totonaco, versión solo texto, emitir constancias y enviarlas por WhatsApp | Ninguna técnica previa | Informe del 21 de octubre §III |
 | **Uso B: análisis de patrones** | Recurrencias, tensiones y silencios del acervo. El grafo y GraphRAG ya adelantan la base | Más acervo real | Brief v1 §3 |
 | **Auditoría comunitaria y devolución** | El paso del ciclo que faltó en la Etapa 1: llevar resonancias a la comunidad y registrar el veredicto como dato. El mecanismo de devolución «aún no está diseñado» | Uso A o Uso B con acervo suficiente | Informe del 21 de octubre §IV, principio 4 |
@@ -112,10 +113,11 @@ La revisión de `main` del 2026-11-10 y las correcciones que siguieron cerraron 
 
 ### 3.1 Privacidad y seguridad
 
-Antes de recibir el primer testimonio real conviene cerrar los tres primeros puntos ([Registro de riesgos](registro-de-riesgos.md) §4).
+Antes de recibir el primer testimonio real conviene cerrar los puntos 2 a 4 de la tabla ([Registro de riesgos](registro-de-riesgos.md) §4).
 
 | Pendiente | Prioridad | Fuente |
 |---|---|---|
+| Implementar el flujo OAuth 2.0 (ver §2.2), en paralelo con el comprobante ético | **Muy alta** | Anexos técnicos, actividad 6; [Seguridad](../06-privacidad-y-seguridad/seguridad.md#etapa-2) |
 | Obtener el visto bueno sobre el equipo que aloja el Spark. El respaldo del detector en dev es `hosted`, por OpenRouter con ZDR (`provider.zdr: true`, nunca se reintenta sin esa marca), por decisión del 2026-11-09, confirmada el 2026-11-10. `none` sigue disponible como ajuste y desde el 2026-11-10 frena también el hospedado cuando no hay URL del Spark (desplegado) | **Alta** | `apps/backend/src/lib/anonymise/fallbackGenerator.ts`; `apps/backend/src/lib/anonymise/detector.ts`; `plan/spark-ai-adopcion.md` |
 | Encontrar la causa de la fuga del ecosistema 6 en la primera corrida de evals: un `documento` sintético terminó `ready` con sus 3 nombres privados. Puede ser el detector, la regla de figuras públicas o el comparador de la evaluación | **Alta** | Resultados de evaluación del 2026-10-29 |
 | Construir el aviso de privacidad, el consentimiento y el comprobante (ver §2.2) | **Alta** | Brief v1 §3 y §4 |

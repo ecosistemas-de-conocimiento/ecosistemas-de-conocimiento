@@ -21,7 +21,7 @@ La plataforma de IA está formada por un servicio y tres paquetes internos:
 | ai-service | `services/ai-service` | Servicio HTTP `/v1`: corpus, ingesta, consulta RAG, chat, presupuesto |
 | ai-client | `packages/ai-client` | Cliente tipado de ai-service y verificación de callbacks |
 | chat-engine | `packages/chat-engine` | Motor de chat y RAG: condensación, recuperación, generación, citas; más componentes SvelteKit |
-| identity-client | `packages/identity-client` | Sesiones de usuario, verificación de tokens, permisos entre servicios |
+| identity-client | `packages/identity-client` | Sesiones de usuario, verificación de tokens, permisos entre servicios (sin consumidores en el repo) |
 
 `services/audio-service` es de EDC, pero no forma parte de esta plataforma: es un servicio aparte para transcripción.
 

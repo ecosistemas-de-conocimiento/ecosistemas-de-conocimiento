@@ -49,7 +49,7 @@ flowchart LR
 | `services/audio-service` | sin versión | Transcripción y nada más | fastapi 0.115.6, arq 0.26.3, faster-whisper 1.1.1 (`requirements.txt`) |
 | `packages/ai-client` | 0.34.0 | Cliente tipado de la API `/v1` de ai-service | sin dependencias de producción; vitest ^5.0.0 |
 | `packages/chat-engine` | 0.10.0 | El turno RAG (condensar, recuperar, armar el prompt) y componentes Svelte del chat | agnóstico del dominio; vitest ^5.0.0 |
-| `packages/identity-client` | 0.4.0 | Sesión y verificación de tokens con `jose` | la web no lo importa (citado de la auditoría del 2026-10-28); vitest ^5.0.0 |
+| `packages/identity-client` | 0.4.0 | Sesión y verificación de tokens con `jose` | ningún paquete del repo lo importa (verificado en los `package.json` de `apps/*` y `services/*` el 2026-11-12); vitest ^5.0.0 |
 
 Versiones medidas: leídas de cada `package.json` y de `pnpm-lock.yaml` en `main` 687ff21e, el 2026-11-11. Hay tres versiones de vitest en el repo: 2.1.9 en el backend, 4.1.10 en la web y 5.0.5 en ai-service y los paquetes (lockfile). Sus banderas no son iguales (sección 6). Infraestructura de datos: Postgres 16 con pgvector (imagen propia basada en `pgvector/pgvector:pg16`), Redis 7 y RustFS como almacenamiento compatible con S3. Dos bases en el mismo servidor: `edc_backend` (Payload) y `edc_ai` (ai-service). Están separadas a propósito: Payload y Drizzle guardan su registro de migraciones en el esquema `public` y se pisarían (citado de `infra/.env.example`).
 

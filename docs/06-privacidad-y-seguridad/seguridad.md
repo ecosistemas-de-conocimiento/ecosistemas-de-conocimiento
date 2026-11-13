@@ -15,7 +15,7 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 
 | Estado | Controles | Cuántos |
 |---|---|---|
-| **Implementado** | Autenticación por cookie y JWT; Tokens entre servicios EdDSA; Registro cerrado; Bloqueo por intentos; Correo fijo para la cuenta; Control de acceso en servidor; Aislamiento por ecosistema; Columnas protegidas; Archivos propios; Avisos firmados con HMAC; Llaves de API con SHA-256 en tiempo constante; Token de servicio; Límite de tasa en login; Límites de tasa existentes; Límites de cuerpo y de archivo; Tiempos máximos existentes; Markdown seguro; Secretos fuera del repo; Cifrado en tránsito público; Versiones fijadas; Firewall de Hetzner; Retención cero en OpenRouter; Respaldo del detector; Herramientas de contención (retiro de documento, interruptor, desactivar cuenta); Subidas simultáneas por cuenta y cuerpos lentos; Borrar lo publicado pide membresía; Ajustes solo para el responsable; Registros sin texto de errores; Filtros y orden sobre cualquier colección; Conversaciones nuevas por cuenta; Altas de miembros por cuenta; Chequeo de bloqueos sin filas ajenas; Escritura vieja de fila entera; Una sola conexión por escritura; Publicación tardía y retiro fallido | 35 |
+| **Implementado** | Autenticación por cookie y JWT; Emisor de JWT EdDSA; Registro cerrado; Bloqueo por intentos; Correo fijo para la cuenta; Control de acceso en servidor; Aislamiento por ecosistema; Columnas protegidas; Archivos propios; Avisos firmados con HMAC; Llaves de API con SHA-256 en tiempo constante; Token de servicio; Límite de tasa en login; Límites de tasa existentes; Límites de cuerpo y de archivo; Tiempos máximos existentes; Markdown seguro; Secretos fuera del repo; Cifrado en tránsito público; Versiones fijadas; Firewall de Hetzner; Retención cero en OpenRouter; Respaldo del detector; Herramientas de contención (retiro de documento, interruptor, desactivar cuenta); Subidas simultáneas por cuenta y cuerpos lentos; Borrar lo publicado pide membresía; Ajustes solo para el responsable; Registros sin texto de errores; Filtros y orden sobre cualquier colección; Conversaciones nuevas por cuenta; Altas de miembros por cuenta; Chequeo de bloqueos sin filas ajenas; Escritura vieja de fila entera; Una sola conexión por escritura; Publicación tardía y retiro fallido | 35 |
 | **Planeado** | Respaldos cifrados; Copia del `APP_KEY` de Coolify fuera de la caja; Alertas de caída y de disco; Conserje de sesiones; Inferencia independiente | 5 |
 | **Pendiente** | Límite de tasa en login por correo (etapa 2); Verificación del correo (etapa 2); Cambio obligado de la contraseña temporal (etapa 2); Retención cero con DeepInfra (etapa 2); Protección CSRF de las rutas JSON de la web; Separación entre quien sube y quien revisa; Llaves sin valor por defecto; Límite de turnos de chat y contador por ecosistema; Tiempo máximo en `fetchMe`; CSP y cabeceras; Secretos por servicio; Mínimo privilegio en base de datos; Cifrado hacia el Spark y dentro del servidor; Cifrado en reposo de volúmenes; Escaneo de dependencias; Endurecimiento de ssh; Puertos del servidor; Puertos de desarrollo local; Depuración de trazas de ai-service; Rotación de secretos con bitácora; Procedimiento de actualización ante avisos; Respuesta a incidentes y bitácora; Notificación de vulneraciones | 23 |
 
@@ -112,7 +112,7 @@ flowchart LR
 | Capa | Control | Detalle | Dónde | Estado |
 |---|---|---|---|---|
 | Identidad | **Autenticación por cookie y JWT** | La sesión web es la cookie `chat_auth` con `httpOnly`, `SameSite=Lax` y `secure`, que lleva el JWT de Payload (2 h, valor por defecto de Payload); la cookie vive 7 días | `apps/web/src/lib/server/auth.ts` | **Implementado** |
-| Identidad | **Tokens entre servicios EdDSA** | Firmados con llave privada Ed25519, vigencia máxima 15 min; solo se acepta `alg=EdDSA` | `apps/backend/src/lib/jwt/sign.ts`; `packages/identity-client/src/verify.ts` | **Implementado** |
+| Identidad | **Emisor de JWT EdDSA** | `POST /api/v1/identity/token` firma con llave privada Ed25519, vigencia máxima 900 s; JWKS propio en `/.well-known/jwks.json`; solo se acepta `alg=EdDSA`. Ningún consumidor del repo lo usa todavía. No hay flujo OAuth 2.0 (sin `/authorize`, `grant_type`, PKCE ni descubrimiento): queda para la [Etapa 2](#etapa-2) | `apps/backend/src/endpoints/token.ts`; `apps/backend/src/endpoints/jwks.ts`; `apps/backend/src/lib/jwt/sign.ts`; `packages/identity-client/src/verify.ts` | **Implementado** |
 | Identidad | **Registro cerrado** | No hay registro público; crea cuentas la administración de plataforma, o quien gestiona miembros, al agregarlos por `/miembros` | `apps/backend/src/collections/Users.ts`; `apps/backend/src/endpoints/miembros.ts` | **Implementado** |
 | Identidad | **Bloqueo por intentos** | 5 fallos bloquean la cuenta 10 minutos, valor por defecto de Payload 3.88 (citado de `lib/loginRateLimit.ts`); desbloquear es solo de administración | `Users.ts` | **Implementado** |
 | Identidad | **Límite de tasa en login** | Por debajo del bloqueo: 4 fallos por hora por (IP, correo), para que una IP no pueda bloquear una cuenta ajena; y 100 fallos por hora por IP, contra el rociado de contraseñas (valores por defecto de `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX` e `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX` en `lib/rateLimit.ts`). El intento se reserva antes de comprobar la contraseña y se devuelve si el login funciona. Responde 429 con `Retry-After`, que la web pasa al navegador. La IP es la del navegador, también tras la web (A-08, A-11) | `apps/backend/src/lib/loginRateLimit.ts`; `lib/rateLimit.ts` | **Implementado** |
@@ -196,12 +196,12 @@ Nombres tomados de `infra/fleet/env-manifests.md` y de `infra/fleet/edc-1.md` §
 |---|---|---|
 | `POSTGRES_PASSWORD` | Base de datos | Al cambiar de operador o ante incidente |
 | `PAYLOAD_SECRET` | Firma de la sesión de Payload | Ante incidente; invalida sesiones |
-| `AUTH_PRIVATE_KEY` (con `AUTH_PUBLIC_KEY` y `AUTH_KEY_ID`) | Firma EdDSA de tokens entre servicios | Anual o ante incidente, publicando la nueva llave pública en JWKS antes de retirar la anterior |
+| `AUTH_PRIVATE_KEY` (con `AUTH_PUBLIC_KEY` y `AUTH_KEY_ID`) | Firma EdDSA de los JWT de `/v1/identity/token` | Anual o ante incidente, publicando la nueva llave pública en JWKS antes de retirar la anterior |
 | `SERVICE_TOKENS` | Token de la web ante el backend | Ante incidente |
 | `AI_SERVICE_API_KEY`, `AI_SERVICE_ADMIN_API_KEY` | Llaves de app y de administración de ai-service | Ante incidente |
 | `CALLBACK_SECRET` | Firma de avisos de servicio (mínimo 32 caracteres) | Ante incidente |
 | `OPENROUTER_API_KEY` | Proveedor de modelos | Ante incidente o cambio de cuenta |
-| `RERANK_API_KEY` | DeepInfra, llave propia de EDC | Ante incidente |
+| `RERANK_API_KEY` | DeepInfra en staging (llave propia de EDC); en dev, el token del proxy del Spark desde el 2026-10-21 | Ante incidente |
 | `EMBEDDINGS_API_KEY`, `ANONYMISE_DETECT_API_KEY`, `WHISPER_REMOTE_TOKEN` | Tokens del proxy del Spark | Al terminar el préstamo del Spark o ante incidente |
 | `AUDIO_SERVICE_API_KEY`, `AUDIO_SERVICE_ADMIN_API_KEY` | Llaves de audio-service. La de administración trae valor por defecto, `dev-audio-key-admin` (**Pendiente** de quitar) | Ante incidente |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Almacenamiento de objetos | Ante incidente |
@@ -449,6 +449,7 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 
 Diferido a la etapa 2 (rama `etapa-2`; `main` solo lleva correcciones). Ninguno está hecho:
 
+- Flujo OAuth 2.0 (prioridad muy alta), comprometido en el anexo como «servicio de autenticación bajo estándar OAuth 2.0 / JWT». Hoy el ingreso es correo y contraseña de Payload, y el emisor de JWT EdDSA no tiene consumidores.
 - Límite de tasa en login por correo entre IPs (parte de A-11).
 - Tope del total de conversaciones por cuenta. Hoy solo hay 60 nuevas por hora, y los filtros por relación tienen su propio tope.
 - Verificación del correo cuando la administración lo cambia (parte de A-03).

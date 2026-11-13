@@ -49,7 +49,7 @@ En las 10 preguntas globales del arnés, el rerank subió el MRR@5 de 0.720 a 0.
 ## Consecuencias
 
 - ⚠ **El rerank falla abierto y en silencio.** Un error 401 o un tiempo agotado devuelven el orden fusionado y la respuesta parece normal. La web reintenta una vez sin rerank. Ya hubo tiempos agotados reales en dev (`infra/fleet/edc-1.md`, `rerank degraded … reason: timeout`).
-- La comparación de rerank encendido contra apagado está medida a nivel de recuperación (MRR). A nivel de respuesta final no hay medición (hallazgo C-8 de la auditoría de IA; inferido de que `RESULTS.md` solo reporta MRR y recall).
+- La comparación de rerank encendido contra apagado está medida a nivel de recuperación (MRR) y a nivel de respuesta: en edc-1 dev, el 2026-10-17, con 19 preguntas y 163 documentos, el recall global de la respuesta fue 0.598 con rerank y 0.472 sin él en el brazo plano, y 0.720 contra 0.669 con grafo; en las locales, 0.951 contra 0.963 (measured por otra sesión; citado de `RESULTS.md`, «Answer-level rerank arms on edc-1 dev»; [Evaluaciones de IA](../../07-calidad/evaluaciones-de-ia.md) §3.4). Es recall mecánico, no calidad juzgada de la respuesta.
 - El rerank no aparece en las tablas de uso de ai-service, así que su costo no se registra.
 - Un piso de relevancia, `CHAT_FALLBACK_MIN_RERANK`, decide cuándo una pregunta está fuera de tema (registro del proyecto, actualización del 2026-10-23).
 

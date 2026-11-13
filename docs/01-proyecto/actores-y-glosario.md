@@ -18,7 +18,7 @@ Los roles se toman de minutas, briefs e informes del proyecto. Cada persona se n
 | Responsable Técnico (CIDE-DEM) | Investigador principal; decide la estrategia del proyecto y firma el informe de etapa | Informe del 21 de octubre; minutas del 18 de junio y del 8 de agosto | Leído |
 | Responsable de desarrollo | Coordina el nodo de programación y lleva el desarrollo y la experiencia de usuario. Es el único desarrollador que sostuvo la construcción y quien toma las decisiones técnicas de desarrollo | `briefing-saptiva-repositorio.docx`; minuta del 18 de junio (tabla de roles); bitácora del proyecto de octubre | Leído |
 | Programador de alianzas con proveedores de IA | Llevó las alianzas con proveedores de IA (Maya, Saptiva) y es coautor del briefing de Saptiva. Se le menciona como posible ruta para la estrategia de datos | Minuta del 18 de junio; «Tercera sesión programadores»; informe del 21 de octubre §VI | Leído |
-| Programador destinatario de los briefs | Su rol estaba «por definir» el 18 de junio y su continuidad se discutió el 8 de agosto. Tiene pendiente entregar un componente que necesita el analista de grafos | Reunión del 18 de abril; minutas del 18 de junio y del 8 de agosto; informe del 21 de octubre §VII | Leído |
+| Programador destinatario de los briefs | Su rol estaba «por definir» el 18 de junio y su continuidad se discutió el 8 de agosto | Reunión del 18 de abril; minutas del 18 de junio y del 8 de agosto; informe del 21 de octubre §VII | Leído |
 | Coautor del briefing de Saptiva | Coautor del briefing de Saptiva (2026-04-30) | `briefing-saptiva-repositorio.docx` | Leído. Otro rol: desconocido |
 | Colaborador externo de la línea jurídica | Tiene un sistema RAG sobre sentencias mexicanas y es el piloto de la métrica de divergencia o «curvatura». Se prevé su salida del proyecto | Reunión del 18 de abril §3.3 y §5.5; «Ruta crítica (feb 2026)» | Leído |
 | Analista matemático y de grafos | Análisis matemático y de grafos sobre la métrica de divergencia | Informe del 21 de octubre §VII | Leído. Que sea la misma persona de una carpeta del material de discapacidades es **inferido** |
@@ -224,7 +224,7 @@ Cada término lleva una definición en lenguaje llano y, cuando aplica, su nombr
 | **Payload** | El framework del backend: guarda el dominio y emite la identidad | `apps/backend/` |
 | **SvelteKit / BFF** | El framework de la web; funciona como intermediario entre el navegador y los servicios | `apps/web/` |
 | **Stack de IA** | ai-service y los paquetes `ai-client`, `chat-engine` e `identity-client`: la plataforma de IA del monorepo, agnóstica del dominio | `services/ai-service/`, `packages/` |
-| **Spark** | El NVIDIA DGX Spark prestado por otra organización donde corren Whisper, el detector y los vectores de dev; el rerank de dev probablemente también (no verificado en las variables de Coolify) | `plan/spark-ai-adopcion.md`; `infra/fleet/edc-1.md` |
+| **Spark** | El NVIDIA DGX Spark prestado por otra organización donde corren, en dev, Whisper, el detector y el rerank (desde el 2026-10-21) y los embeddings (desde el 2026-10-22) | `plan/spark-ai-adopcion.md`; `infra/fleet/edc-1.md` |
 | **Whisper** | El modelo de transcripción de voz a texto. EDC usa large-v3, solo en español, en el Spark | Decisión del responsable de desarrollo (octubre de 2026) |
 | **edc-1** | La única caja de hospedaje de EDC, en Hetzner, con su propio Coolify | `infra/fleet/edc-1.md` |
 | **Coolify** | La herramienta que construye y despliega los contenedores en edc-1 | Ídem |

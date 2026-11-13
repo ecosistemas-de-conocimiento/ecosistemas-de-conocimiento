@@ -27,7 +27,7 @@ Este documento es para quien necesita entender qué guarda Ecosistemas de Conoci
 
 `organization:manage` pasó del investigador al responsable por decisión del 2026-11-10 (`50bde2ae`). Implementado y desplegado.
 
-**Administrador de plataforma** no es un rol de membresía. Es la casilla `users.isPlatformAdmin`. Al emitir el token de sesión se resuelve como `owner` en todos los ecosistemas activos.
+**Administrador de plataforma** no es un rol de membresía. Es la casilla `users.isPlatformAdmin`. Al resolver sus permisos se trata como `owner` en todos los ecosistemas activos (`apps/backend/src/lib/permissions.ts`).
 
 **Revocación.** Hay tres interruptores: `users.isActive`, `memberships.isActive` y `organizations.isActive`. Basta con uno en `false` para que el acceso desaparezca.
 
@@ -93,7 +93,7 @@ erDiagram
 
 ### 3.1 `users`: cuentas e identidad
 
-Propósito: la cuenta de cada persona. Payload actúa también como proveedor de identidad (emite el token que leen el frontend y ai-service). Archivo: `apps/backend/src/collections/Users.ts`.
+Propósito: la cuenta de cada persona. Payload actúa también como proveedor de identidad: emite el token de sesión que la web guarda en `chat_auth`. ai-service no lee tokens de usuario; usa llaves bearer por proyecto. Archivo: `apps/backend/src/collections/Users.ts`. El backend emite además, en `/v1/identity/token`, JWT EdDSA de un solo ecosistema, que nada consume todavía; el `name` y la audiencia de las tablas de abajo se refieren a ese JWT.
 
 | Campo | Tipo | Notas |
 |---|---|---|

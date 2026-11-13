@@ -33,7 +33,7 @@ Contexto que pesa en todas las decisiones de este documento: al 2026-10-30 EDC n
 
 | Capa | Qué cubre | Cadencia | Dónde queda | Retención | Cifrado | Procedencia |
 |---|---|---|---|---|---|---|
-| Imagen de Hetzner | Disco completo de `edc-1`: ambos entornos, Coolify, volúmenes, archivos subidos | diaria, ventana 06:00 a 10:00 UTC | Hetzner, mismo proveedor | 7 imágenes diarias rotativas | no documentado | citado, `edc-1.md:102` |
+| Imagen de Hetzner | Disco completo de `edc-1`: ambos entornos, Coolify, volúmenes, archivos subidos | diaria, ventana 06:00 a 10:00 UTC | Hetzner, mismo proveedor | 7 imágenes diarias rotativas | no documentado | citado, `edc-1.md` §1 |
 | `pg_dump -Fc` por base | `edc_backend` y `edc_ai` de dev; de staging, solo hasta el 2026-10-17 | manual, antes de un despliegue con migración; sin cron | `/root/backups/<sello>/` en el servidor, más copia fuera del servidor, en equipo del equipo de desarrollo, en una carpeta por sello | los 7 más recientes por entorno, en el servidor y en la copia; los anteriores se borran (§2.2, paso 7). Primera purga hecha el 2026-11-10 hacia las 20:30 UTC | ninguno; permisos 600/700 desde el 2026-11-10 | citado, `edc-1.md` §4b, §4zzzz y §7 paso 7; medido en el listado local |
 | Verificación | `pg_restore -l` (el archivo se puede leer) y `sha256sum` comparado fuera de la caja | por respaldo | `SHA256SUMS` en la carpeta (desde el 2026-10-27) | | | citado, `edc-1.md` §4zs y §4zzzz; medido en el listado local |
 

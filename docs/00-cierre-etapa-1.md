@@ -3,7 +3,7 @@
 - **Versión:** 1.0
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Código documentado:** la rama `main` del 2026-11-12, la Etapa 1 con correcciones; la etiqueta `etapa-1-con-correcciones` marca esta versión de los docs (mismo código, solo agrega documentación)
+- **Código documentado:** la etiqueta `etapa-1`, la entrega: la Etapa 1 con correcciones (`main` del 2026-11-12)
 - **Fuentes:** [Visión y alcance](01-proyecto/vision-y-alcance.md), [Roadmap](01-proyecto/roadmap.md), [Cronología e hitos](01-proyecto/cronologia-e-hitos.md), [Seguridad](06-privacidad-y-seguridad/seguridad.md), [Protección de datos](06-privacidad-y-seguridad/proteccion-de-datos.md), [Evaluaciones de IA](07-calidad/evaluaciones-de-ia.md), [Estrategia de pruebas](07-calidad/estrategia-de-pruebas.md); `git log` y el árbol de `apps/` en `main`, leídos el 2026-11-12
 
 Resumen para quien redacte el informe de la Etapa 1. Cada fila remite al documento o al código que la respalda.
@@ -13,28 +13,27 @@ Resumen para quien redacte el informe de la Etapa 1. Cada fila remite al documen
 - **EDC** es la plataforma de software del proyecto SECIHTI IH-2025-I-445 del CIDE; su marco conceptual es el Repositorio de Voces y Resonancias, «un sistema de doble flujo»: recibe **voces** y devuelve **resonancias** al campo ([Visión y alcance](01-proyecto/vision-y-alcance.md) §1, citando el brief v1 §1).
 - **Etapa 1:** ejecución del 2026-05-06 al 2026-10-28; después del cierre no hay gasto con cargo a ella (citado de [Visión y alcance](01-proyecto/vision-y-alcance.md) §3).
 - **Lo comprometido:** dos entregables según convenio, la plataforma del repositorio y el prototipo del ciclo cerrado, con tres criterios de éxito (brief v1 §4, citado en [Visión y alcance](01-proyecto/vision-y-alcance.md) §6).
+- **Alcance:** la Etapa 1 funcionó como prueba de concepto. Lo implementado (§2) y su evidencia (§3) muestran, con corpus sintético y en dev, que el núcleo de la plataforma es viable: captura, compuerta de anonimización, acervo por ecosistema y resonancia con citas. La auditoría comunitaria con su veredicto y el backlog pasan a la Etapa 2.
 - **Lo entregado:** un prototipo funcional del repositorio de voces y del grafo de conocimiento, un corpus sintético como banco de pruebas y un marco ético alineado con los Principios de Chapultepec (citado del informe del 21 de octubre en [Cronología](01-proyecto/cronologia-e-hitos.md) §7).
 
 ## 2. Entregables de la Etapa 1
 
-Estados: **Implementado** (en la rama `main`, desplegado en dev), **Planeado** (con plantilla o diseño, sin código), **Pendiente** (sin código). La lista sale de [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.1, §6.2 y §7; cada ruta y archivo se comprobó en el árbol de `main` el 2026-11-12 (medido con `ls` y `grep`).
+Estados: **Implementado** (en la rama `main`, desplegado en dev), **Planeado** (con plantilla o diseño, sin código). La lista sale de [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.1, §6.2 y §7; cada ruta y archivo se comprobó en el árbol de `main` el 2026-11-12 (medido con `ls` y `grep`).
 
 ### 2.1 Entregable 1: plataforma del repositorio
 
 | # | Entregable (brief v1 §4) | Qué hace | Ruta en dev · docs · código principal | Estado |
 |---|---|---|---|---|
-| 1 | Registro y autenticación | Correo y contraseña; el registro público está cerrado desde el 2026-10-21 y las cuentas las crea un admin o se invitan desde Miembros | `/sign-in` (`/sign-up` redirige a `/sign-in?registro=cerrado`) · [Matriz de roles](02-requisitos/matriz-roles-y-permisos.md) · `apps/web/src/routes/sign-up/+server.ts`, `apps/backend/src/collections/Users.ts` | **Implementado**, distinto del brief (sin registro abierto ni QR) |
-| 2 | Captura multiformato | Documentos (PDF, DOCX, XLSX, XLS, CSV, HTML, Markdown, texto), notas, audio y video; transcripción en español; micrófono en vivo | `/documentos` y el chat (`/`) · [Historias de usuario](02-requisitos/historias-de-usuario.md) · `apps/backend/src/collections/Documents.ts`, `Media.ts`, `apps/web/src/lib/components/MicButton.svelte` | **Implementado**. Video: **Implementado** (se almacena y se transcribe su audio; la imagen del video no se procesa, `Media.ts`). Imagen: **Pendiente** |
+| 1 | Registro y autenticación | Correo y contraseña, con sesión JWT (Payload la emite y la web la guarda en la cookie `chat_auth`, `apps/web/src/lib/server/auth.ts`); el registro público está cerrado desde el 2026-10-21 y las cuentas las crea un admin o se invitan desde Miembros | `/sign-in` (`/sign-up` redirige a `/sign-in?registro=cerrado`) · [Matriz de roles](02-requisitos/matriz-roles-y-permisos.md) · `apps/web/src/routes/sign-up/+server.ts`, `apps/backend/src/collections/Users.ts` | **Implementado**, distinto del brief: el registro público está cerrado |
+| 2 | Captura multiformato | Documentos (PDF, DOCX, XLSX, XLS, CSV, HTML, Markdown, texto), notas, audio y video; transcripción en español; micrófono en vivo | `/documentos` y el chat (`/`) · [Historias de usuario](02-requisitos/historias-de-usuario.md) · `apps/backend/src/collections/Documents.ts`, `Media.ts`, `apps/web/src/lib/components/MicButton.svelte` | **Implementado**. El video se almacena y se transcribe su audio (`Media.ts`) |
 | 3 | Resonancia individual | Pestaña **Resonancias** (entrevistadora) y modo «Hazme preguntas» en **Generales** | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/components/ChatWorkspace.svelte`, `apps/web/src/lib/sessionKind.ts` | **Implementado** |
-| 4 | Resonancia de corpus (Uso A) | Chat con citas [n] sobre el acervo, estilo de respuesta por ecosistema y «panorama del corpus»; sin salida dedicada a talleres | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/server/engine/prompt.ts` | **Implementado** |
-| 5 | Mini-formulario de perfil | Enrutar a una sub-base por vínculo con el fenómeno | — | **Pendiente** |
-| 6 | Categorización por tipo y temática | `contentKind`, `tema`, `lengua` y temas extraídos al grafo; sin menú de temáticas por ecosistema | `/biblioteca` · [Modelo de datos](04-datos/modelo-de-datos.md) · `Documents.ts` | **Implementado** |
+| 4 | Resonancia de corpus (Uso A) | Chat con citas [n] sobre el acervo, estilo de respuesta por ecosistema y «panorama del corpus» | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/server/engine/prompt.ts` | **Implementado** |
+| 6 | Categorización por tipo y temática | `contentKind`, `tema`, `lengua` y temas extraídos al grafo | `/biblioteca` · [Modelo de datos](04-datos/modelo-de-datos.md) · `Documents.ts` | **Implementado** |
 | 7 | Comprobante ético (consentimiento, folio, PDF) | — | [Aviso y consentimiento](06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) |
-| 8 | Suscripción a notificaciones | — | — | **Pendiente** |
 | 9 | Panel del participante con historial | «Mis documentos», lista de conversaciones, vista de estudiante | `/documentos`, `/`, `/estudiante` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/estudiante/` | **Implementado** |
-| 10 | Vista administrativa | Resumen del ecosistema, aportes y documentos con filtros; sin distribución por perfil | `/admin` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/admin/` | **Implementado** |
+| 10 | Vista administrativa | Resumen del ecosistema, aportes y documentos con filtros | `/admin` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/admin/` | **Implementado** |
 | 11 | Multi-ecosistema con roles | Cada ecosistema es una organización aislada, con su acervo en el servicio de IA y cinco roles | `/miembros`, `/ajustes` · [Actores y glosario](01-proyecto/actores-y-glosario.md) · `apps/backend/src/collections/Organizations.ts`, `Memberships.ts`, `apps/backend/src/lib/permissions.ts` | **Implementado** |
-| 12 | Figura del capturador | Subir a nombre de otra persona registrando de quién es la voz | — | **Pendiente** (en tensión con «Voces sin sujeto», [Visión y alcance](01-proyecto/vision-y-alcance.md) §7) |
+| 12 | Figura del capturador | Admin, investigador y responsable suben testimonios de otras personas (permiso `voces:upload`), sin registrar quién habla | `/documentos` · [Matriz de roles](02-requisitos/matriz-roles-y-permisos.md) · `apps/backend/src/lib/permissions.ts` | **Implementado**, distinto del brief: no se registra de quién es la voz, por el principio «Voces sin sujeto» ([Visión y alcance](01-proyecto/vision-y-alcance.md) §7) |
 
 Entregado sin que el brief lo pidiera ([Visión y alcance](01-proyecto/vision-y-alcance.md) §6.1):
 
@@ -51,12 +50,10 @@ Entregado sin que el brief lo pidiera ([Visión y alcance](01-proyecto/vision-y-
 | Paso (brief v1 §4) | Estado | Evidencia |
 |---|---|---|
 | 1. Acervo mínimo cargado | **Implementado** | Corpus sintético v1 (250 piezas) y v2 (dengue 70, discapacidad 40), y documentos reales en los ecosistemas 6, 7 y 8 (citado de [Corpus y datos de prueba](04-datos/corpus-y-datos-de-prueba.md)) |
-| 2. Instrucción al modelo para el Uso A | **Implementado** | Prompts de Generales y Resonancias; sin instrucción dedicada a insumos de taller |
+| 2. Instrucción al modelo para el Uso A | **Implementado** | Prompts de Generales y Resonancias |
 | 3. Salida generada | **Implementado** como demostración | Videos V1, V2 y V3 del 2026-10-28 (ver §3) |
-| 4. Sesión de auditoría comunitaria | **Pendiente** | No consta ninguna sesión ([Visión y alcance](01-proyecto/vision-y-alcance.md) §6.2) |
-| 5. Veredicto comunitario documentado | **Pendiente** | Depende del paso 4 |
 
-Criterios de éxito: contribución de punta a punta **implementado** (sin comprobante), acervo por temática **implementado** (sin perfil), ciclo voz-resonancia-auditoría-veredicto **no cumplido** (citado de [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.3).
+Criterios de éxito: contribución de punta a punta **implementado**, acervo por temática **implementado**, ciclo voz-resonancia-auditoría-veredicto **implementado** hasta la salida generada (pasos 1 a 3); la auditoría comunitaria y su veredicto pasan a la Etapa 2 (§7) (detalle en [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.3).
 
 ## 3. Evidencia
 
@@ -121,9 +118,9 @@ No hay entorno de producción ni testimonio real de personas externas (citado de
 
 | Referencia | Qué contiene |
 |---|---|
-| `etapa-1` | La Etapa 1 sin correcciones: todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después |
-| `main` | La Etapa 1 con correcciones; su código es la línea de corte del 2026-11-12, y lo posterior solo cambia `docs/` e `infra/fleet/` |
-| `etapa-1-con-correcciones` (etiqueta fija) | `main` al entregar los docs, 2026-11-12 |
+| **`etapa-1`** (etiqueta fija) | **La entrega: la Etapa 1 con correcciones.** Es la referencia que se cita. Marca `main` al entregar los docs, 2026-11-12 |
+| `etapa-1-281026` (rama) | La foto del 2026-10-28, sin correcciones: todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después |
+| `main` | Rama de trabajo; su código es la línea de corte del 2026-11-12, y lo posterior solo cambia `docs/` e `infra/fleet/` |
 | `etapa-2` | Trabajo nuevo; igual a `main` al 2026-11-12 |
 | Desplegado en dev | La versión de `main` del 2026-11-12. Staging sigue en su imagen del 2026-10-17. Historial de despliegues en [Despliegue y runbook](05-infraestructura/despliegue-y-runbook.md) |
 
@@ -136,8 +133,12 @@ Limitaciones conocidas de la Etapa 1 con correcciones. Ninguna ocurre hoy; su ar
 1. Si ai-service agota sus 7 intentos (unas 2 h 42 min; citado de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
 2. El script de operador `backfillLengua.ts` re-ingesta en el corpus compartido sin `callbackUrl`. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada.
 
-Pendiente para la Etapa 2, además de los entregables marcados **Pendiente** en §2:
+Pendiente para la Etapa 2, además del comprobante ético (**Planeado** en §2):
 
+- Sesión de auditoría comunitaria y veredicto documentado: previstos para la Etapa 2, con la estrategia de talleres ajustada.
+- Mini-formulario de perfil (entregable 5 del brief v1 §4: enrutar a una sub-base por vínculo con el fenómeno) y suscripción a notificaciones (entregable 8).
+- Imágenes en la captura; salida e instrucción al modelo dedicadas a talleres en el Uso A; menú de temáticas por ecosistema; distribución por perfil en la vista administrativa y acervo por perfil.
+- Registro por QR o liga en eventos: el registro público está cerrado desde el 2026-10-21 ([Visión y alcance](01-proyecto/vision-y-alcance.md) §7).
 - Fechas que no son fechas («art. 3-IV-2020»): la excepción se revirtió porque dejaba pasar fechas reales; hoy se tachan de más.
 - Entidades sin menciones en el grafo si la retención llega a mitad de la escritura.
 - Cuando solo la revisión de una nota está retenida, también se retira del corpus el texto viejo de la nota (censura de más).
@@ -147,5 +148,6 @@ Pendiente para la Etapa 2, además de los entregables marcados **Pendiente** en 
 - Tope total de conversaciones por persona; verificación de correo; renombrar las llaves viejas de los archivos.
 - Adjuntar documentos a la vez en la misma conversación; un formulario viejo del panel de admin.
 - `lengua` al re-archivar un documento como testimonio; `anonymisationError` y el `resave` del seed.
+- Flujo OAuth 2.0 (prioridad muy alta): los anexos técnicos de los prestadores (actividad 6) pedían autenticación bajo OAuth 2.0 / JWT. El estándar implementado es JWT: la sesión de Payload (§2.1, fila 1) y, aparte, un emisor de JWT EdDSA con JWKS propio y vigencia máxima de 900 s, que nada consume todavía (`apps/backend/src/endpoints/token.ts`, `jwks.ts`, `lib/jwt/sign.ts`). Va en paralelo con el comprobante ético (§2.1, fila 7).
 
 El resto está en el [Roadmap](01-proyecto/roadmap.md) (§3 y [Etapa 2](01-proyecto/roadmap.md#etapa-2)) y en el [Registro de riesgos](01-proyecto/registro-de-riesgos.md).

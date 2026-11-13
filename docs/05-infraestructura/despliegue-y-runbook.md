@@ -126,7 +126,7 @@ Sin la cabecera `X-AI-Org` responde 403 (medido el 2026-10-21, `edc-1.md` §4p).
 
 ### 1.4 Cambiar una variable sin reconstruir
 
-Coolify genera en cada despliegue el archivo `/data/coolify/applications/<app uuid>/.env`. Para aplicar un cambio sin esperar un build completo (citado, `edc-1.md` §4d y §4f):
+Coolify genera en cada despliegue el archivo `/data/coolify/applications/<app uuid>/.env`. Para aplicar un cambio sin esperar un build completo (citado de `infra/fleet/edc-1.md` §4d y §4f, los cambios de variables del rerank del 2026-10-17, aplicados así en dev y staging):
 
 1. Cambiar la variable en Coolify (panel o API, marcada como literal). Coolify crea él mismo las copias "preview".
 2. Respaldar el `.env` generado y editar la misma línea en él.
@@ -142,7 +142,7 @@ docker compose -p <app uuid> -f docker-compose.yaml up -d --no-deps --no-build <
 Advertencias:
 
 - `docker restart` **no** aplica variables nuevas (citado, `runbook.md` §3). Hay que recrear.
-- Todas las variables llegan a `backend`, `web` y `ai-service`. Si se recrea solo uno, los otros conservan el valor viejo en su entorno hasta el siguiente despliegue (citado, `edc-1.md` §4f).
+- Todas las variables llegan a `backend`, `web` y `ai-service`. Si se recrea solo uno, los otros conservan el valor viejo en su entorno hasta el siguiente despliegue (citado de `infra/fleet/edc-1.md` §4f: el 2026-10-17 se recreó solo ai-service, y web, backend, redis, postgres y rustfs siguieron con el valor anterior).
 - El siguiente despliegue de Coolify regenera el `.env` desde su base de datos, así que el paso 1 es obligatorio.
 
 ## 2. Integración continua
@@ -388,7 +388,7 @@ Caso distinto, registrado en `edc-1.md` §4zn: la migración no corrió y el bac
 - **Llave de un proveedor** (por ejemplo `RERANK_API_KEY` u `OPENROUTER_API_KEY`): emitir la nueva en el proveedor, cambiarla en Coolify (copias normal y preview) y en el archivo local de secretos, aplicar con §1.4 o redesplegando, verificar por hash dentro del contenedor, y revocar la vieja.
 - **Llaves de RustFS** (`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`): la llave raíz se puede rotar por variable de entorno sobre el mismo volumen; al reiniciar, la nueva funciona y la vieja deja de hacerlo (medido localmente, citado de `runbook.md` §8.3). El backend vuelve a aprovisionar bucket y usuario en cada arranque (`pnpm --filter @edc/backend provision:storage` lo hace a mano en local).
 - **Secretos internos** (`CALLBACK_SECRET`, `AI_SERVICE_API_KEY`, `SERVICE_TOKENS`, `PAYLOAD_SECRET`): generar con `openssl rand -hex 32`, por entorno, y redesplegar el stack completo para que todos los servicios queden de acuerdo. Cambiar `PAYLOAD_SECRET` cierra todas las sesiones (inferido del uso de ese secreto en Payload).
-- **Llaves de firma** (`AUTH_PRIVATE_KEY`, `AUTH_PUBLIC_KEY`, `AUTH_KEY_ID`): generar con `pnpm --filter @edc/backend keygen`, subir el `AUTH_KEY_ID` y redesplegar. Los tokens entre servicios duran 15 minutos como máximo; la cookie de sesión web, 7 días (citado, inventario de privacidad). No está documentado un procedimiento de rotación sin cortar sesiones (no verificado).
+- **Llaves de firma** (`AUTH_PRIVATE_KEY`, `AUTH_PUBLIC_KEY`, `AUTH_KEY_ID`): generar con `pnpm --filter @edc/backend keygen`, subir el `AUTH_KEY_ID` y redesplegar. Los JWT de `/v1/identity/token` duran 900 s como máximo y ningún consumidor del repo los usa todavía; la cookie de sesión web, 7 días (citado, inventario de privacidad). No está documentado un procedimiento de rotación sin cortar sesiones (no verificado).
 - **Llave de despliegue de GitHub**: si se pierde la caja, se revoca en GitHub (citado, `edc-1.md` §2).
 
 ### 6.16 Ver logs

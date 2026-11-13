@@ -64,8 +64,8 @@ flowchart LR
   P2 -->|HTTPS| EDC
   P3 -->|HTTPS| EDC
   EDC -->|texto para generar, embeber| OR
-  EDC -->|pregunta y pasajes| DI
-  EDC -->|audio, texto para detectar| SP
+  EDC -->|pregunta y pasajes (staging); embeddings de respaldo (dev)| DI
+  EDC -->|audio, texto para detectar, embeddings y rerank (dev)| SP
   CF -.->|resuelve dominio| EDC
   GH -.->|código para construir| EDC
 ```
@@ -156,7 +156,7 @@ Dos detalles del diagrama. Primero, ai-service devuelve los callbacks al backend
 | Grafo de corpus | `src/lib/graph/*`, `src/endpoints/graph.ts` | Extrae entidades y relaciones con un modelo, las guarda en tres colecciones y las sirve a `/grafo` y a GraphRAG |
 | Transcripción | `src/lib/audioClient.ts`, `src/lib/driveTranscribedSoon.ts`, `src/lib/ingestRecovery.ts` | Pide la transcripción a audio-service, recibe el callback y retoma el gate y la ingesta |
 | Micrófono en vivo | `src/app/api/live/[sid]/route.ts` | Verifica membresía y el interruptor `liveMic`, y reenvía rebanadas de audio a audio-service |
-| Identidad | `src/endpoints/jwks.ts`, `token.ts`, `me.ts`, `resolve.ts`, `src/lib/jwt/*` | Firma tokens EdDSA, publica JWKS, devuelve el mapa de permisos por ecosistema |
+| Identidad | `src/endpoints/jwks.ts`, `token.ts`, `me.ts`, `resolve.ts`, `src/lib/jwt/*` | Firma tokens EdDSA (sin consumidores todavía), publica JWKS, devuelve el mapa de permisos por ecosistema. Sin flujo OAuth 2.0 (Etapa 2) |
 | Receptor de callbacks | `src/app/api/ai-service/callback/route.ts`, `src/lib/hmac.ts` | Verifica la firma HMAC, deduplica en `aiServiceCallbacks` y actualiza el documento |
 | Aprovisionamiento | `src/lib/provisionEcosystem.ts` | Al crear un ecosistema, da de alta su org en ai-service con presupuesto |
 | Barridos programados | `src/lib/ingestRecovery.ts`, `publishJanitor.ts`, `sessionJanitorScheduler.ts`, `transcriptionJanitor.ts`, `embeddingJanitor.ts`, `graph/orphanJanitor.ts`, `callbackRetention.ts` | Retoman trabajo atorado y limpian restos; corren dentro del proceso del backend (sección 4.2) |
@@ -270,7 +270,7 @@ sequenceDiagram
   W->>B: ratings
 ```
 
-Los nombres de corpus nunca se arman en el navegador: el backend los entrega (`Sessions` endpoint `/:id/corpora`). Si los documentos no responden la pregunta, el prompt obliga a la frase fija "Los documentos no hablan de esto." (`apps/web/src/lib/server/engine/prompt.ts`). El detalle de cada paso está en [Pila de IA](pila-de-ia.md), sección "Recuperación y generación".
+Los nombres de corpus nunca se arman en el navegador: el backend los entrega (`Sessions` endpoint `/:id/corpora`). Si los documentos no alcanzan, el prompt vigente (variante E) completa con conocimiento general en un párrafo que empieza con "Fuera de los documentos:", sin fuentes (`apps/web/src/lib/server/engine/prompt.ts`). El detalle de cada paso está en [Pila de IA](pila-de-ia.md), sección "Recuperación y generación".
 
 ### 5.3 Audio subido y transcripción
 
@@ -296,7 +296,7 @@ sequenceDiagram
   B->>B: gate e ingesta en segundo plano (ingestRecovery cada minuto)
 ```
 
-En dev, 130.3 s de audio se decodificaron en 15.4 s y el documento llegó a `published` en 29 s o menos (citado de `infra/fleet/edc-1.md`:1784, medición de 2026-10-25). En staging el perfil de audio está apagado y la transcripción no existe.
+En dev, 130.3 s de audio se decodificaron en 15.4 s y el documento llegó a `published` en 29 s o menos (citado de `infra/fleet/edc-1.md` §4zl, medición de 2026-10-25). En staging el perfil de audio está apagado y la transcripción no existe.
 
 ### 5.4 Micrófono en vivo
 
@@ -324,7 +324,7 @@ sequenceDiagram
   N->>W: subir grabación completa (flujo 5.3, con gate)
 ```
 
-Primer texto a los 4.14 s y mediana de ida y vuelta por rebanada de 2.29 s (citado de `infra/fleet/edc-1.md`:1782, medición de 2026-10-25 en dev). Donde no hay Whisper remoto el endpoint responde 503 y la grabación sigue funcionando.
+Primer texto a los 4.14 s y mediana de ida y vuelta por rebanada de 2.29 s (citado de `infra/fleet/edc-1.md` §4zl, medición de 2026-10-25 en dev). Donde no hay Whisper remoto el endpoint responde 503 y la grabación sigue funcionando.
 
 ### 5.5 Grafo de corpus
 

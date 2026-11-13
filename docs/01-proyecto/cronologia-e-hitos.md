@@ -151,8 +151,8 @@ Commits sin merges en `main`, por fecha de autor (medido con `git log --no-merge
 | 2026-11-12 | Despliegue de dev, 15:25 a 15:31 UTC | Deploy `sdxkgvtdyleewihtbq1scq5i`, sin migración: 32 commits desde el despliegue de las 02:22 UTC (citado de `edc-1.md`): checkouts anidados, retención ante carreras, publicación tardía, enmascarado y columnas de error guardadas | `infra/fleet/edc-1.md` §4zzzzzzzzzz |
 | 2026-11-12 | Scripts aplicados en dev, tras el despliegue de las 15:31 UTC | `clear-legacy-held-text`: 2 filas; `clean-stored-errors`: 0 filas en las 7 columnas (medido por el agente de despliegue, citado de `edc-1.md`) | `infra/fleet/edc-1.md` §4zzzzzzzzzz |
 | 2026-11-12 | Despliegue de dev, terminado a las 19:42 UTC | Deploy `x3o9j5ymeozbz8hrlvvcmrz1`, la versión de `main` del 2026-11-12: las escrituras viejas de fila entera (medido con `docker ps` por el agente de despliegue) | `infra/fleet/edc-1.md` §4 |
-| 2026-11-12 | Ramas de la Etapa 1 | `etapa-1`: la Etapa 1 sin correcciones, todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después; `main` = la Etapa 1 con correcciones; `etapa-2` = trabajo nuevo, hoy igual a `main` | `git rev-parse` (medido el 2026-11-12) |
-| **2026-11-12** | **Línea de corte de la Etapa 1: `main` del 2026-11-12** | Lo que se encuentre después va a la Etapa 2. La etiqueta `etapa-1-con-correcciones` marca la versión entregada de los docs: mismo código, solo agrega documentación | `git log` de `main` |
+| 2026-11-12 | Nombres de ramas y etiqueta de la Etapa 1 | Ese día quedaron así: la etiqueta fija `etapa-1` = la entrega, la Etapa 1 con correcciones; la rama `etapa-1-281026` = la foto del 2026-10-28, sin correcciones (todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después); `main` = rama de trabajo; `etapa-2` = trabajo nuevo, hoy igual a `main` | `git tag`, `git branch` |
+| **2026-11-12** | **Línea de corte de la Etapa 1: `main` del 2026-11-12** | Lo que se encuentre después va a la Etapa 2. La etiqueta `etapa-1` marca la entrega: este código más los docs entregados | `git log` de `main` |
 
 ## 5. Actividad por semana
 

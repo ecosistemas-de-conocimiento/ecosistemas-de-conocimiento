@@ -18,7 +18,7 @@ Glosario mínimo de este documento:
 
 ## 1. Mapa general
 
-Toda llamada a modelos hospedados pasa por `ai-service`, salvo dos casos. El backend llama directo al detector del gate y al generador de títulos cuando esos apuntan al Spark (`apps/backend/src/lib/anonymise/openaiCompatGenerator.ts`). Y audio-service llama directo a Whisper en el Spark. Hay dos entornos, dev y staging, en la misma máquina Hetzner. Solo dev usa el Spark; staging no se ha redesplegado desde el 2026-10-17 y todo su tráfico de IA va a proveedores hospedados (citado de `infra/fleet/edc-1.md`:1691-1697, registro del 2026-10-25).
+Toda llamada a modelos hospedados pasa por `ai-service`, salvo dos casos. El backend llama directo al detector del gate y al generador de títulos cuando esos apuntan al Spark (`apps/backend/src/lib/anonymise/openaiCompatGenerator.ts`). Y audio-service llama directo a Whisper en el Spark. Hay dos entornos, dev y staging, en la misma máquina Hetzner. Solo dev usa el Spark; staging no se ha redesplegado desde el 2026-10-17 y todo su tráfico de IA va a proveedores hospedados (citado de `infra/fleet/edc-1.md` §4j, despliegue de staging del 2026-10-17, y §4zl, registro del 2026-10-25: "Staging was not touched (still its earlier build)").
 
 ```mermaid
 flowchart LR
@@ -35,28 +35,28 @@ flowchart LR
     WH["whisper.cpp large-v3"]
   end
   OR["OpenRouter<br/>DeepSeek V3.1, bge-m3"]
-  DI["DeepInfra<br/>Qwen3-Reranker-0.6B"]
+  DI["DeepInfra<br/>Qwen3-Reranker-0.6B, bge-m3"]
   W --> AI
   BE --> AI
   BE -.->|dev| QW
   AU -.->|dev| WH
   AI -.->|dev| BG
   AI -->|staging y respaldo| OR
-  AI --> DI
-  AI -.->|dev, no verificado| RR
+  AI -->|staging; respaldo de embeddings en dev| DI
+  AI -.->|dev| RR
 ```
 
 ## 2. Modelos por tarea
 
 | Tarea | Modelo | Host en dev | Host en staging | Variables | Fallback | Estado |
 |---|---|---|---|---|---|---|
-| Embeddings de ingesta y consulta | `baai/bge-m3`, 1024 dimensiones | Spark | OpenRouter (pendiente de pasar a DeepInfra) | `EMBEDDINGS_URL`, `EMBEDDINGS_API_KEY`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `EMBEDDINGS_FALLBACK_URL`, `EMBEDDINGS_FALLBACK_API_KEY`, `EMBEDDINGS_FALLBACK_COOLDOWN_S`, `EMBEDDINGS_PRIMARY_TIMEOUT_MS` | En dev, DeepInfra con el mismo modelo desde el 2026-11-06, ante error de red, timeout, 5xx o 429; enfriamiento de 60 s; timeout primario de 5 s en dev (citado de `infra/fleet/edc-1.md`:1294-1324) | En uso en dev desde el 2026-10-22 |
+| Embeddings de ingesta y consulta | `baai/bge-m3`, 1024 dimensiones | Spark | OpenRouter (pendiente de pasar a DeepInfra) | `EMBEDDINGS_URL`, `EMBEDDINGS_API_KEY`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `EMBEDDINGS_FALLBACK_URL`, `EMBEDDINGS_FALLBACK_API_KEY`, `EMBEDDINGS_FALLBACK_COOLDOWN_S`, `EMBEDDINGS_PRIMARY_TIMEOUT_MS` | En dev, DeepInfra con el mismo modelo desde el 2026-11-06, ante error de red, timeout, 5xx o 429; enfriamiento de 60 s; timeout primario de 5 s en dev (citado de `infra/fleet/edc-1.md` §4za, timeout y enfriamiento, y §4zzzzzz, respaldo a DeepInfra) | En uso en dev desde el 2026-10-22 |
 | Embeddings dispersos | `bge-m3` sparse, `sparsevec(250002)` | — | — | `SPARSE_ENABLED` (falso por defecto), `SPARSE_EMBED_URL` | Cae a `tsvector` | Apagado |
-| Rerank | `Qwen/Qwen3-Reranker-0.6B` | **No verificado** (Spark o DeepInfra) | DeepInfra, con llave propia de EDC | `RERANK_API_KEY` (si existe, el compose exporta `RERANK_ENABLED=true`), `RERANK_PROVIDER`, `RERANK_URL`, `RERANK_MODEL`, `RERANK_TIMEOUT_MS` = 8000; en web `CHAT_RERANK` | Falla abierto: devuelve el orden fusionado; la web reintenta una vez sin rerank | En uso en ambos entornos |
+| Rerank | `Qwen/Qwen3-Reranker-0.6B` | Spark (`RERANK_PROVIDER=rerank-api`), desde el 2026-10-21 | DeepInfra, con llave propia de EDC | `RERANK_API_KEY` (si existe, el compose exporta `RERANK_ENABLED=true`), `RERANK_PROVIDER`, `RERANK_URL`, `RERANK_MODEL`, `RERANK_TIMEOUT_MS` = 8000; en web `CHAT_RERANK` | Falla abierto: devuelve el orden fusionado; la web reintenta una vez sin rerank. En dev no cae a DeepInfra: volver a DeepInfra es un cambio manual de las cuatro variables `RERANK_*` | En uso en ambos entornos |
 | Respuesta de chat | `deepseek/deepseek-chat-v3.1`, tier `standard` | OpenRouter | OpenRouter | `CHAT_COMPLETIONS_URL`, `OPENROUTER_API_KEY`; modelo fijo en `EFFORT_PROFILES` | Ninguno entre proveedores; solo reintenta | En uso |
 | Condense (reescritura de seguimiento) | DeepSeek V3.1, tier `quick` | OpenRouter | OpenRouter | `CONDENSE_TIMEOUT_MS` (web) | Usa la pregunta cruda | En uso; en el Spark es viable pero no está desplegado |
 | Expansión de consulta | DeepSeek V3.1, tier `quick`; hasta 3 variantes y una respuesta hipotética; timeout de 5 s | OpenRouter | OpenRouter | `QUERY_EXPANSION` (web) | Se omite | En uso |
-| Detector de datos personales (etapas 3 y 4 del gate) | `qwen3-30b-a3b-instruct-2507` (Q8, llama.cpp) | Spark | DeepSeek V3.1 `quick` vía ai-service | `ANONYMISE_DETECT_URL`, `_API_KEY`, `_MODEL`, `_FALLBACK` (`hosted` o `none`), `_FALLBACK_COOLDOWN_S`, `_CONCURRENCY`, `_TIMEOUT_MS`, `_MIN_GAP_MS`, `ANONYMISE_CHUNK_WORDS`, `ANONYMISE_VERIFY_ROUNDS`; el global `platform-settings.detectorFallback` le gana a la variable | `hosted` por defecto: si el Spark falla, el texto va a OpenRouter, con un enfriamiento de 60 s antes de volver a probar el Spark. `none` retiene, y también impide la llamada hospedada cuando no hay `ANONYMISE_DETECT_URL` (staging): el documento queda retenido con motivo `sin-detector`. Dev volvió a `hosted` el 2026-11-09, con OpenRouter en retención cero (ZDR) (citado de `infra/fleet/edc-1.md`, "Detector fallback to hosted") | En uso en dev: las 6 llamadas registradas las sirvió el Spark (citado de `infra/fleet/edc-1.md`:2173-2179) |
+| Detector de datos personales (etapas 3 y 4 del gate) | `qwen3-30b-a3b-instruct-2507` (Q8, llama.cpp) | Spark | DeepSeek V3.1 `quick` vía ai-service | `ANONYMISE_DETECT_URL`, `_API_KEY`, `_MODEL`, `_FALLBACK` (`hosted` o `none`), `_FALLBACK_COOLDOWN_S`, `_CONCURRENCY`, `_TIMEOUT_MS`, `_MIN_GAP_MS`, `ANONYMISE_CHUNK_WORDS`, `ANONYMISE_VERIFY_ROUNDS`; el global `platform-settings.detectorFallback` le gana a la variable | `hosted` por defecto: si el Spark falla, el texto va a OpenRouter, con un enfriamiento de 60 s antes de volver a probar el Spark. `none` retiene, y también impide la llamada hospedada cuando no hay `ANONYMISE_DETECT_URL` (staging): el documento queda retenido con motivo `sin-detector`. Dev volvió a `hosted` el 2026-11-09, con OpenRouter en retención cero (ZDR) (citado de `infra/fleet/edc-1.md` §4zzzzzzz, "Detector fallback to hosted") | En uso en dev: las 6 llamadas registradas las sirvió el Spark (citado de `infra/fleet/edc-1.md` §4zs) |
 | Títulos de testimonios | El mismo backend que el detector, tier `quick` | Spark primero | Hospedado | `titleClientFromEnv` en `apps/backend/src/lib/testimonioTitle.ts`; interruptor `testimonioTitles` por ecosistema | Sigue el mismo `detectorFallback`. Un registro retenido nunca va al hospedado: solo Spark o queda sin título. Con `none` y sin Spark no hay llamada | En uso |
 | Título de un `documento` con compuerta | El detector, una llamada sobre lo que queda del nombre del archivo | Spark | Hospedado (según `detectorFallback`) | `redactTitle` en `apps/backend/src/lib/anonymise/gate.ts` | Falla cerrado: si el detector falla, el título queda neutro ("Documento"); nunca retiene el documento | En uso (commit b2a51aed) |
 | Extracción del grafo | DeepSeek V3.1, tier `deep`, prompt `v5` | OpenRouter | OpenRouter | `GRAPH_EXTRACT`, `GRAPH_EXTRACT_EFFORT`, `GRAPH_EXTRACT_WINDOW_CHARS` (12000), `GRAPH_EXTRACT_MAX_WINDOWS` (8), `GRAPH_EXTRACT_MAX_CONCURRENCY` (2), `GRAPH_EXTRACT_TIMEOUT_MS` (660000) | Ninguno: `graphStatus: failed` | En uso |
@@ -68,7 +68,7 @@ flowchart LR
 
 Los valores por defecto de la tabla están leídos en `services/ai-service/src/config/env.ts`, `infra/docker-compose.yml`:720-737, `apps/backend/src/lib/anonymise/detector.ts` y `services/audio-service/app/config.py`, salvo donde se cita otra fuente.
 
-**Rerank en dev: no verificado.** El registro de dev dice que el token de embeddings de dev (el del proxy del Spark) comparte prefijo de huella con `RERANK_API_KEY` (citado de `infra/fleet/edc-1.md`:1303), de donde se infiere que el rerank de dev ya va al Spark. Ninguna sección lo registra de forma explícita y la sección §4f del mismo archivo sigue diciendo "DeepInfra en ambos entornos". Hay que confirmarlo en las variables de Coolify.
+**Rerank en dev en el Spark desde el 2026-10-21.** El despliegue de esa noche cambió en `edc-dev` `RERANK_PROVIDER` (`deepinfra` → `rerank-api`), `RERANK_URL`, `RERANK_MODEL` (`qwen3-reranker-0.6b`) y `RERANK_API_KEY` (el token del proxy del Spark); `RERANK_TIMEOUT_MS` sigue en 8000. Verificado ese día: 2 chats subieron de 13 a 17 las llamadas `POST /v1/rerank` en el registro del proxy, todas 200, y ai-service registró `rerank ok` con `provider: rerank-api` (measured por el agente de despliegue, 2026-10-21 23:30-23:36 UTC; citado de `infra/fleet/edc-1.md` §4y). Staging no se tocó y sigue en DeepInfra. Las copias "preview" de las variables conservan los valores de DeepInfra. No hay respaldo automático: si el Spark no responde, el rerank falla abierto y se usa el orden fusionado; volver a DeepInfra es restaurar los cuatro valores anteriores y desplegar (mismo registro, «Revert»).
 
 ## 3. El DGX Spark prestado
 
@@ -87,14 +87,14 @@ El DGX Spark es una computadora NVIDIA (GB10, 128 GB de memoria unificada, arqui
 | whisper.cpp large-v3 | Transcripción de archivos y del micrófono en vivo | audio-service |
 | Qwen3-30B-A3B-Instruct-2507 (Q8, llama.cpp) | Detector y verificación del gate; títulos de testimonios | backend |
 | bge-m3 | Embeddings de ingesta y de consulta | ai-service |
-| Qwen3-Reranker-0.6B | Rerank (uso en dev no verificado) | ai-service |
+| Qwen3-Reranker-0.6B | Rerank en dev desde el 2026-10-21 | ai-service |
 
 El Spark tiene 4 ranuras de 16 384 tokens de contexto compartidas entre el detector y cualquier otro uso de generación (citado de `plan/spark-chat-eval-2026-10-26.md`).
 
 ### 3.3 Qué va a proveedores hospedados
 
 - **OpenRouter:** toda la generación con DeepSeek V3.1 (respuestas, condense, expansión, grafo, preguntas para el estudiante, juez de evals); embeddings y detector en staging. La decisión es pasar todo a DeepInfra; la generación y staging siguen pendientes.
-- **DeepInfra:** el rerank en staging (y en dev si el host no es el Spark).
+- **DeepInfra:** el rerank en staging y el respaldo de embeddings de dev (desde el 2026-11-06).
 
 Toda llamada de ai-service a OpenRouter (generación y embeddings) pide retención cero de datos con `provider.zdr: true`, junto con `require_parameters` en modo estricto. Si ningún endpoint con retención cero sirve el modelo, la llamada falla con `OpenRouterNoZdrEndpointError` (embeddings: `OpenRouterEmbeddingNoZdrEndpointError`): no se reintenta, no va a otro proveedor y nunca se reenvía sin `zdr`. No hay interruptor para apagarlo. En el código desde el 2026-11-07 (commit 9b755298) y desplegado en dev; probado en dev el 2026-11-09 con un modelo sin endpoint ZDR, que respondió 404 y se convirtió en `OpenRouterNoZdrEndpointError` (citado de `infra/fleet/edc-1.md`). Los embeddings con `zdr` no se probaron en dev, porque van al Spark con respaldo DeepInfra (`services/ai-service/src/services/ai/router/adapters/openrouter.ts`, `services/ai-service/src/services/ai/embeddings/openrouter.ts`).
 
@@ -114,7 +114,7 @@ Esta sección enumera el texto concreto que sale de `edc-1` hacia fuera, en qué
 | 3 | Títulos de testimonio | Solo el texto redactado (`redactedText`) o retenido (`heldText`); un registro retenido nunca va al hospedado | Spark | OpenRouter (solo no retenidos, y solo con `detectorFallback: hosted`) | Sí, en el hospedado |
 | 4 | Embeddings de ingesta | `corpusTextFor(row)`: el texto anonimizado si pasó por el gate; el texto crudo de un `documento` normal | Spark (respaldo DeepInfra) | OpenRouter | Sí, en OpenRouter o DeepInfra |
 | 5 | Embeddings de consulta | La pregunta cruda del usuario | Spark (respaldo DeepInfra) | OpenRouter | Sí, en OpenRouter o DeepInfra |
-| 6 | Rerank | La pregunta y los pasajes candidatos (unos 40 como máximo) | No verificado | DeepInfra | Sí |
+| 6 | Rerank | La pregunta y los pasajes candidatos (unos 40 como máximo) | Spark vía ai-service | DeepInfra | Sí |
 | 7 | Condense y expansión | La pregunta del usuario y el historial reciente | OpenRouter | OpenRouter | Sí |
 | 8 | Respuesta de chat | Prompt del sistema y estilo del ecosistema; historial con las preguntas crudas; fragmentos recuperados (anonimizados si pasaron por el gate, crudos si son `documento`); documentos adjuntos o fijados completos; bloque de orientación con turnos anonimizados de otras personas; contexto del grafo | OpenRouter | OpenRouter | Sí |
 | 9 | Extracción del grafo | `corpusTextFor(row)`, nunca `extractedText`; solo filas en estado `ready` o `approved`. La re-extracción por lotes (`scripts/reextract-published-graph.ts`) solo lee filas publicadas y no retenidas por consentimiento; está preparada y no se ha corrido. Ninguna extracción corre sobre una fila retenida por consentimiento (el backfill; que el trabajo del grafo se detenga si la fila quedó retenida, aunque llegue mientras corre el modelo, commits 17a5d985, c12a0ab5, 1ac2669e y ca5cf2b4) | OpenRouter | OpenRouter | Sí |
@@ -135,15 +135,15 @@ Todo el turno de chat se orquesta en `apps/web/src/routes/api/generate/+server.t
 3. **Recuperación densa por defecto.** `CHAT_RETRIEVAL_MODE=dense`. La recuperación híbrida (densa más palabra clave) existe pero quedó apagada porque midió peor: MRR@5 de 0.503 contra 0.936 de la densa en 189 preguntas (citado de `apps/backend/src/eval/RESULTS.md`; ADR-0011). MRR@5 es la posición promedio inversa del primer documento correcto entre los primeros cinco.
 4. **Expansión.** Hasta 3 variantes de la pregunta y una respuesta hipotética, en tier `quick` con timeout de 5 s; cada variante recupera sin rerank (`apps/web/src/lib/server/engine/expand.ts`).
 5. **Fusión RRF.** Los resultados se combinan con fusión por rango recíproco, `Σ 1/(60 + rango)`.
-6. **Rerank.** Sobre un conjunto de `min(topK × 4, 50)` candidatos y solo con la pregunta original. Falla abierto: si el rerank no responde, se usa el orden fusionado. Nunca se midió el efecto de encenderlo contra apagarlo con los datos actuales (pendiente C-8 de la auditoría de IA del 2026-10-17); con los datos de septiembre la densa con rerank midió 0.955 de MRR@5 (citado de `apps/backend/src/eval/RESULTS.md`).
-7. **GraphRAG.** La web llama a `POST /api/graph/retrieve` del backend, que encuentra entidades semilla en el grafo sin usar un modelo y devuelve una consulta expandida (G1) y un resumen determinista (G2). La consulta expandida se recupera sin rerank y entra a la fusión. En la medición de septiembre, GraphRAG cambió 2 de 20 respuestas sin ganancia global medida (citado de `apps/backend/src/eval/RESULTS.md`, 2026-09-05; ADR-0005).
+6. **Rerank.** Sobre un conjunto de `min(topK × 4, 50)` candidatos y solo con la pregunta original. Falla abierto: si el rerank no responde, se usa el orden fusionado. Medido el 2026-10-17 en recuperación, con 189 preguntas sobre 191 documentos: la densa con rerank da 0.955 de MRR@5 contra 0.936 sin él; y en respuestas, en edc-1 dev con 19 preguntas y 163 documentos, el recall global del brazo plano es 0.598 con rerank contra 0.472 sin él (citado de `apps/backend/src/eval/RESULTS.md`). No se ha repetido con los datos actuales de dev.
+7. **GraphRAG.** La web llama a `POST /api/graph/retrieve` del backend, que encuentra entidades semilla en el grafo sin usar un modelo y devuelve una consulta expandida (G1) y un resumen determinista (G2). La consulta expandida se recupera sin rerank y entra a la fusión. En la primera medición (2026-09-05), GraphRAG cambió 2 de 20 respuestas sin ganancia global; con el sembrador nuevo (2026-09-08) el recall global subió de 0.461 a 0.733 (citado de `apps/backend/src/eval/RESULTS.md`; ADR-0005). En edc-1 dev, el 2026-10-17, con 19 preguntas, 163 documentos publicados y rerank encendido, el recall global pasó de 0.598 (plano) a 0.720 (grafo) (measured por otra sesión, corridas `20261017195542` y `20261017203514`; citado de `RESULTS.md`, «Answer-level rerank arms on edc-1 dev»). Detalle en [Evaluaciones de IA](../07-calidad/evaluaciones-de-ia.md) §3.4.
 8. **Orientación.** Los turnos anonimizados de otras personas del ecosistema (`msg-{id}`) se recuperan aparte y entran en un bloque de orientación. Ese bloque nunca se cita: solo da contexto de lo que otros han dicho (`apps/web/src/lib/server/engine/orientation.ts`).
 9. **Menciones `@`.** Los documentos mencionados se resuelven con `/api/context-search` y entran completos.
 
 ### 5.2 Prompt
 
 - **Variante E de citas.** Los fragmentos van dentro de etiquetas `<fuente>` numeradas y el modelo cita con `[N]`, donde `[N]` corresponde a `provenance.chunks[N-1]` (`apps/web/src/lib/server/engine/prompt.ts`).
-- **Respuesta fija de rechazo.** Si los fragmentos no responden la pregunta, el modelo debe decir exactamente "Los documentos no hablan de esto."
+- **Siempre responde (variante E, la de uso en dev desde el 2026-10-22; staging, con imagen del 2026-10-17, es anterior a las variantes y no usa ni la E ni la frase fija).** Sin respuesta fija de rechazo: el modelo responde primero con los pasajes que tienen relación con la pregunta, sin abrir con lo que falta, y completa con conocimiento general en un párrafo final que empieza con "Fuera de los documentos:" y no lleva `[N]`. Una pregunta fuera de tema recibe solo ese párrafo, sin fuentes (`DEFAULT_CITE_VARIANT = 'E'` y `GENERAL_KNOWLEDGE_RULE` en `prompt.ts`). La frase fija "Los documentos no hablan de esto." queda solo en las variantes A-D, que `CHAT_CITE_VARIANT` aún puede elegir; el arnés de evaluación fija la A (`CHAT_SYSTEM_PROMPT`).
 - **Estilos por ecosistema.** `organizations` tiene tres textos de hasta 1500 caracteres (`answerStyleGenerales`, `answerStyleResonancias`, `answerStyleInterviewer`) que se agregan al prompt del sistema. Solo los cambia un administrador de plataforma (`apps/backend/src/collections/Organizations.ts`).
 - **Modo del turno.** `turnMode.ts` decide con reglas, sin modelo, entre `answer` e `interview`. Una conversación `resonancias` usa siempre el prompt de entrevistadora; en `generales`, el interruptor "Hazme preguntas" o un relato en primera persona activan el prompt de entrevista.
 
@@ -225,7 +225,7 @@ No hay tabla de orgs ni de llaves: `org` es texto opaco y las llaves viven en la
 | Grafo | 1.64 USD en 570 llamadas; p50 de 72 s, máximo 190 s | citado de `plan/spark-ai-adopcion.md`:71-79 |
 | Gate completo de 4866 palabras | 0.024 USD en 82 s | citado de `plan/spark-ai-adopcion.md`:89-96 |
 | Entrevista de 60 minutos por el gate | unos 0.04 USD | inferido en `plan/spark-ai-adopcion.md`:89-96 a partir de la fila anterior |
-| `usage_logs` de dev acumulado | 1.86 USD | citado de `infra/fleet/edc-1.md`:1683, registro del 2026-10-24 |
+| `usage_logs` de dev acumulado | 1.86 USD | citado de `infra/fleet/edc-1.md` §4zj, registro del 2026-10-24 ($1.8595) |
 | Una corrida de `/admin/evals` | 0.041 a 0.043 USD por ecosistema | citado de los resultados de evaluación del 2026-10-29, corridas 6 a 8, guardados fuera del repo |
 
 ### 7.4 El costo del Spark es 0, y eso está incompleto
@@ -239,7 +239,7 @@ El plan está en `plan/spark-ai-adopcion.md` (2026-10-17) y en ADR-0012. Su conc
 | Fase | Qué se mueve | Estado al 2026-10-30 |
 |---|---|---|
 | 0 | Medir costos y latencias | Hecha (tabla 7.3) |
-| 1 | Detector del gate y rerank | Detector en uso en dev desde el 2026-10-21, con respaldo hospedado encendido. Rerank en dev no verificado. Staging sigue hospedado en ambos |
+| 1 | Detector del gate y rerank | Detector y rerank en uso en dev desde el 2026-10-21; el detector con respaldo hospedado encendido, el rerank sin respaldo (falla abierto). Staging sigue hospedado en ambos |
 | 2 | Embeddings | En uso en dev desde el 2026-10-22, con respaldo a DeepInfra desde el 2026-11-06. Coseno de 0.99998 o más frente a DeepInfra (medido el 2026-11-06 con dos textos de prueba) |
 | 3 | Transcripción | En uso en dev desde 2026-10-22, y micrófono en vivo desde 2026-10-25 |
 | 4 | Generación pequeña (condense, expansión, grafo) | No desplegada. Condense en el Spark es viable según la evaluación del 2026-10-26 |
@@ -288,14 +288,14 @@ La lista completa de variables, sin valores secretos, está en [Infraestructura 
 
 ## 11. Riesgos y límites
 
-1. **El respaldo del detector manda texto sin anonimizar a OpenRouter.** Es el comportamiento por defecto (`ANONYMISE_DETECT_FALLBACK=hosted`, `apps/backend/src/lib/anonymise/fallbackGenerator.ts`). En staging no hay Spark, así que el detector siempre es hospedado mientras el modo sea `hosted` (inferido de `infra/fleet/edc-1.md`:1259-1262, que no lista variables `ANONYMISE_DETECT_*` en staging); con `none`, staging retiene todo documento con compuerta. Dev usó `none` del 2026-11-06 al 2026-11-09; desde entonces usa `hosted`, y toda llamada a OpenRouter pide retención cero (ZDR) y falla cerrada si no hay proveedor que la cumpla (`infra/fleet/edc-1.md` §4zzzzzzz). Staging está fuera de alcance por ahora (decisión del responsable del 2026-11-10).
+1. **El respaldo del detector manda texto sin anonimizar a OpenRouter.** Es el comportamiento por defecto (`ANONYMISE_DETECT_FALLBACK=hosted`, `apps/backend/src/lib/anonymise/fallbackGenerator.ts`). En staging no hay Spark, así que el detector siempre es hospedado mientras el modo sea `hosted` (inferido de `infra/fleet/edc-1.md` §4y, que no lista variables `ANONYMISE_DETECT_*` en staging); con `none`, staging retiene todo documento con compuerta. Dev usó `none` del 2026-11-06 al 2026-11-09; desde entonces usa `hosted`, y toda llamada a OpenRouter pide retención cero (ZDR) y falla cerrada si no hay proveedor que la cumpla (`infra/fleet/edc-1.md` §4zzzzzzz). Staging está fuera de alcance por ahora (decisión del responsable del 2026-11-10).
 2. **El Spark es prestado y no tiene supervisión.** Un reinicio deja caídos audio, micrófono en vivo y modelos locales; los embeddings caen a DeepInfra y el detector cae a OpenRouter (con `hosted`, el modo de dev) o retiene los documentos (con `none`).
 3. **Siguen saliendo textos crudos a proveedores hospedados:** la pregunta del miembro en condense, expansión, embeddings de consulta y respuesta; el texto de un `documento` sin gate. Si la regla de privacidad del proyecto cubre estos casos es una pregunta abierta (citado de `plan/spark-ai-adopcion.md`, pregunta P6).
 4. **Un solo contador de tasa para todo EDC.** Backend y web usan una sola llave de ai-service, y el límite agrupa por llave: 30 generaciones por minuto compartidas entre chat, detector hospedado, títulos, grafo y evaluaciones (inferido de `infra/docker-compose.yml`:712 y `services/ai-service/src/server.ts`:94-104). El detector se autolimita; el grafo no.
 5. **Latencia.** DeepSeek por OpenRouter bajó a 8 o 9 tokens por segundo en noches malas (citado de `plan/spark-chat-eval-2026-10-26.md`). Una llamada `deep` del grafo tiene p50 de 72 s y máximo de 190 s (citado de `plan/spark-ai-adopcion.md`:79, medición local hasta 2026-10-17).
-6. **Si el Spark se cuelga, el primer turno de chat tarda más:** 11.7 s contra 4.7 s, porque las llamadas en vuelo no ven el enfriamiento del respaldo (citado de `infra/fleet/edc-1.md`:1324).
+6. **Si el Spark se cuelga, el primer turno de chat tarda más:** 11.7 s contra 4.7 s, porque las llamadas en vuelo no ven el enfriamiento del respaldo (citado de `infra/fleet/edc-1.md` §4za, prueba 3).
 7. **Retirar no es borrar.** Un vector retirado sigue en la base con `valid_to` cerrado; una recuperación sin `asOf` lo ve. Por eso el gate es binario.
-8. **El rerank falla en silencio.** Un 401 o un timeout devuelven el orden fusionado y la respuesta parece normal. Ya hubo timeouts reales en dev (citado de `infra/fleet/edc-1.md`:1031).
+8. **El rerank falla en silencio.** Un 401 o un timeout devuelven el orden fusionado y la respuesta parece normal. Ya hubo timeouts reales en dev (citado de `infra/fleet/edc-1.md` §4g y §4t).
 9. **No hay enrutamiento por tier en ai-service.** Mover solo el chat a otro host exige un cambio en ai-service.
 10. **El costo está incompleto.** El Spark y el rerank registran 0 o nada; el costo de las evaluaciones no incluye esas llamadas (`apps/web/src/lib/server/evals/runner.ts`).
 11. **Micrófono en vivo en un solo proceso.** Las sesiones viven en memoria; una segunda réplica de audio-service necesitaría enrutamiento por sesión. ffmpeg no emite nada durante los primeros 7 a 10 s por tubería (`services/audio-service/app/live.py`).

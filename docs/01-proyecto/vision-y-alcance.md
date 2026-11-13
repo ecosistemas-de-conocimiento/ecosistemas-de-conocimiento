@@ -32,7 +32,7 @@ Al cierre de la Etapa 1 (2026-10-28), EDC permite a las personas de un ecosistem
 
 El detalle por historia de usuario está en [Historias de usuario](../02-requisitos/historias-de-usuario.md).
 
-Esta sección describe la plataforma al cierre de la Etapa 1. Las correcciones posteriores, hasta la línea de corte del 2026-11-12 (etiqueta `etapa-1-con-correcciones`), están en [Cronología e hitos](cronologia-e-hitos.md) §4.1 y en el [Roadmap](roadmap.md) §3.0; lo que quedó abierto, en el [Roadmap](roadmap.md#lo-que-quedó-abierto-al-cierre-de-la-etapa-1). Ramas: `etapa-1` es la Etapa 1 sin correcciones, `main` la Etapa 1 con correcciones y `etapa-2` el trabajo nuevo.
+Esta sección describe la plataforma al cierre de la Etapa 1. Las correcciones posteriores, hasta la línea de corte del 2026-11-12 (etiqueta `etapa-1`, la entrega), están en [Cronología e hitos](cronologia-e-hitos.md) §4.1 y en el [Roadmap](roadmap.md) §3.0; lo que quedó abierto, en el [Roadmap](roadmap.md#lo-que-quedó-abierto-al-cierre-de-la-etapa-1). Ramas: la etiqueta fija `etapa-1` es la entrega, la Etapa 1 con correcciones, y es la referencia que se cita; la rama `etapa-1-281026` guarda la foto del 2026-10-28, sin correcciones; `main` es la rama de trabajo y `etapa-2` el trabajo nuevo.
 
 ## 2. El problema que resuelve
 
@@ -112,7 +112,7 @@ El brief v1 §4 fija dos entregables «según convenio» y tres criterios de éx
 
 | # | Capacidad mínima del brief v1 §4 | Estado | Qué se entregó y dónde verlo |
 |---|---|---|---|
-| 1 | Registro y autenticación de participantes, en 2 pasos como máximo | **Distinto** | Autenticación con correo y contraseña, sesión web por cookie y tokens entre servicios. El registro público está **cerrado** por decisión del responsable de desarrollo del 2026-10-21: las cuentas las crea un administrador o se invitan desde Miembros. Ver [Matriz de roles y permisos](../02-requisitos/matriz-roles-y-permisos.md) |
+| 1 | Registro y autenticación de participantes, en 2 pasos como máximo | **Distinto** | Autenticación con correo y contraseña, sesión web por cookie, y un emisor de JWT EdDSA con JWKS propio que nada consume todavía. No hay flujo OAuth 2.0: va a la Etapa 2 con prioridad muy alta. El registro público está **cerrado** por decisión del responsable de desarrollo del 2026-10-21: las cuentas las crea un administrador o se invitan desde Miembros. Ver [Matriz de roles y permisos](../02-requisitos/matriz-roles-y-permisos.md) |
 | 2 | Captura multiformato (texto, audio, video, imagen), por partes | **Parcial** | Texto, notas, PDF, DOCX, hojas de cálculo, HTML, Markdown, audio y video (`apps/backend/src/collections/Documents.ts`, `Media.ts`). Transcripción con Whisper large-v3 y micrófono en vivo desde 2026-10-25. Del video se almacena el archivo y se transcribe su audio; la imagen no se procesa. **No** se aceptan imágenes. La contribución por partes existe de hecho: una conversación admite varios documentos adjuntos |
 | 3 | Resonancia individual: chat informado por el acervo y la temática | **Entregado** | Pestaña Resonancias (entrevistadora que hace una pregunta a la vez) y modo «Hazme preguntas» en Generales. El relato de la persona entra al acervo por el gate. Ver [Pila de IA](../03-arquitectura/pila-de-ia.md) |
 | 4 | Resonancia de corpus, prueba de concepto del Uso A | **Parcial** | Chat con citas sobre el acervo de un ecosistema, con estilo de respuesta configurable y «panorama del corpus». No hay salida específica para taller |

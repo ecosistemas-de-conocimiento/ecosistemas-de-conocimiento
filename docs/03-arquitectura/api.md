@@ -215,7 +215,7 @@ El contrato está en la sección 7.1.
 
 ### 3.8 Identidad
 
-El backend es el proveedor de identidad (IdP) de EDC.
+El backend es el proveedor de identidad (IdP) de EDC. El ingreso es correo y contraseña de Payload. No hay flujo OAuth 2.0 (sin `/authorize`, sin `grant_type`, sin PKCE ni documento de descubrimiento); queda para la Etapa 2.
 
 | Método | Ruta | Propósito | Autenticación |
 |---|---|---|---|
@@ -340,7 +340,7 @@ Lo usan ai-service y audio-service para avisar al backend que terminó un trabaj
 - Los tokens de `/api/v1/identity/token` se firman con Ed25519 (`alg: "EdDSA"`, `kid` = `AUTH_KEY_ID`; `apps/backend/src/lib/jwt/sign.ts`). La llave se genera con `npm run keygen`.
 - Claims: `iss`, `sub` (correo), `aud` (slug del ecosistema), `email`, `name`, `roles`, `perms`, `iat`, `exp`. La audiencia es un ecosistema, así que un token de un ecosistema no sirve en otro.
 - Vida de 900 s como máximo (`AUTH_TOKEN_TTL`, recortado si la variable pide más), porque un token emitido no se puede revocar.
-- Las llaves públicas se publican en `/api/.well-known/jwks.json`. `packages/identity-client` verifica con JWKS; la web no lo importa y lee `/api/v1/identity/me`.
+- Las llaves públicas se publican en `/api/.well-known/jwks.json`. `packages/identity-client` verifica con JWKS. Ningún consumidor del repo pide ni verifica estos tokens todavía: la web no importa `identity-client` y lee `/api/v1/identity/me`; ai-service y audio-service usan llaves bearer propias.
 - El token de sesión de Payload en `chat_auth` es distinto del token EdDSA. Su algoritmo de firma es el de Payload y no se revisó para este documento (no verificado).
 
 ### 7.5 Límites de cuerpo por salto
