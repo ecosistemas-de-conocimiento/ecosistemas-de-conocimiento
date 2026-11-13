@@ -40,11 +40,15 @@ Lo que depende de fuera:
 | Transcripción, detector de anonimización, embeddings y rerank | Un DGX Spark prestado por otra organización, sin arranque automático ni supervisión | No hay Spark. El audio corre con Whisper local (perfil `audio`); el detector usa un modelo hospedado; el rerank va apagado |
 | Respaldo de embeddings y rerank | DeepInfra | No se usa |
 | Llaves de firma, secretos y llaves de proveedores | Fuera del repo | Las generas tú; `infra/.env.example` solo trae marcadores |
-| Corpus sintético de arranque | Cargado | Vive en un repo hermano, `corpus-generativo`; sin él la biblioteca queda vacía |
+| Corpus sintético de arranque | Cargado | Vive en un repo hermano, `corpus-generativo`, privado por ahora; sin él la biblioteca queda vacía |
 
 Con el proveedor falso, la plataforma arranca, se entra y se sube material, pero el chat, el grafo y el detector responden sin sentido: para ver resultados reales hace falta la llave de OpenRouter. Sin el Spark, el entorno de desarrollo pierde el audio y el micrófono en vivo. Detalle en [Infraestructura y entornos](docs/05-infraestructura/infraestructura-y-entornos.md) §4.
 
 Los datos de prueba del repo son sintéticos.
+
+## Cómo se desarrolló
+
+El desarrollo se apoyó en agentes de programación con inteligencia artificial, bajo la revisión e integración del responsable de desarrollo. Los commits hechos con su apoyo lo indican en su firma.
 
 ## Contribuciones
 
