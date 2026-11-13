@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from '@playwright/test';
+import { expect, test, type Page, type Request, type Response } from '@playwright/test';
 import { adminCredentials } from './env';
 import { consentInPanel } from './consent';
 
@@ -27,6 +27,23 @@ function carriesConsent(req: Request): boolean {
   const text = body.toString('utf8');
   // Multipart: the `uploadConsentVersion` field; JSON: the property.
   return /name="uploadConsentVersion"\r\n\r\n\d+/.test(text) || /"uploadConsentVersion":\d+/.test(text);
+}
+
+/**
+ * ⚠ Playwright cannot read a multipart body that carries a FILE:
+ * `postDataBuffer()` is null for it (measured 2026-11-12 on the upload sheet,
+ * Chromium). So a file upload proves the consent on the server side instead:
+ * the created document has a receipt, i.e. its constancia shows a folio.
+ */
+async function expectReceipt(page: Page, res: Response): Promise<void> {
+  const body = (await res.json()) as { doc?: { id?: string | number }; id?: string | number };
+  const id = body.doc?.id ?? body.id;
+  expect(id, 'the upload answered without a document id').toBeDefined();
+  // A second tab: the page renders client-side, so a plain GET has no folio.
+  const tab = await page.context().newPage();
+  await tab.goto(`/documentos/${id}/constancia`);
+  await expect(tab.getByText(/EDC-\d{4}-\d{6}/)).toBeVisible();
+  await tab.close();
 }
 
 async function signIn(page: Page): Promise<void> {
@@ -63,8 +80,8 @@ test('Mis documentos: "Subir" asks for the checkbox before it sends', async ({ p
   const sent = page.waitForResponse((r) => r.url().endsWith('/api/documentos') && r.request().method() === 'POST');
   await sheet.getByTestId('upload-send').click();
   const res = await sent;
-  expect(carriesConsent(res.request())).toBe(true);
   expect(res.ok(), `subida: HTTP ${res.status()}`).toBe(true);
+  await expectReceipt(page, res);
   await expect(sheet.getByTestId('upload-done')).toBeVisible();
 
   const id = String(((await res.json()) as { doc: { id: string | number } }).doc.id);
@@ -75,15 +92,17 @@ test('Mis documentos: "Subir" asks for the checkbox before it sends', async ({ p
 test('Mis documentos: "Nueva nota" keeps Guardar off until the checkbox', async ({ page }) => {
   await page.goto('/documentos');
   await page.getByTestId('owned-new-note').click();
-  await page.getByTestId('note-title').fill(`${RUN}-nota`);
-  await page.getByTestId('note-body').fill(`Nota de prueba ${RUN}.`);
-  await expect(page.getByTestId('note-save')).toBeDisabled();
+  // The page also mounts a second, closed NoteSheet (the note editor): scope to the open one.
+  const note = page.locator('dialog[open]');
+  await note.getByTestId('note-title').fill(`${RUN}-nota`);
+  await note.getByTestId('note-body').fill(`Nota de prueba ${RUN}.`);
+  await expect(note.getByTestId('note-save')).toBeDisabled();
 
-  await page.getByTestId('note-consent').check();
+  await note.getByTestId('note-consent').check();
   const sent = page.waitForResponse(
     (r) => /\/api\/sessions\/[^/]+\/documents$/.test(r.url()) && r.request().method() === 'POST',
   );
-  await page.getByTestId('note-save').click();
+  await note.getByTestId('note-save').click();
   const res = await sent;
   expect(carriesConsent(res.request())).toBe(true);
   expect(res.ok(), `nota: HTTP ${res.status()}`).toBe(true);
@@ -105,6 +124,6 @@ test('chat: "Subir" opens the checkbox before the file picker', async ({ page })
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), consentInPanel(panel)]);
   await chooser.setFiles(markdown(`${RUN}-chat.md`));
   const res = await sent;
-  expect(carriesConsent(res.request())).toBe(true);
   expect(res.ok(), `adjuntar: HTTP ${res.status()}`).toBe(true);
+  await expectReceipt(page, res);
 });
