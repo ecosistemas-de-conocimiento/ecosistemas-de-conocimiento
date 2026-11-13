@@ -325,7 +325,7 @@ El tipo se elige al crear la conversación y no cambia después.
 - **Pasos:** en **Mis documentos**, en la fila del documento, pulsa el icono **Constancia**; para guardarla, pulsa **Descargar** (imprime o guarda como PDF desde el navegador).
 - **Resultado:** ves el folio (`EDC-AAAA-NNNNNN`), la fecha, la versión y el texto de la casilla que aceptaste.
 - **Notas:**
-  - Lo subido antes del 2026-11-12 dice «Sin registro de consentimiento».
+  - Lo subido antes del despliegue del 2026-11-12 a las 21:21 (Ciudad de México) dice «Sin registro de consentimiento».
   - El aviso de privacidad está en `/privacidad`, enlazado desde la casilla, el inicio de sesión y la barra lateral. Es un borrador sin validación jurídica.
 
 ## 4. Biblioteca
