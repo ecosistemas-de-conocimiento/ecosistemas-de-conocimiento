@@ -111,6 +111,38 @@ describe('🔴 DocsPanel — consent before the file picker and before a new not
     expect(q<HTMLInputElement>(root, 'panel-consent-check')!.checked).toBe(false);
   });
 
+  it('🔴 a participant\'s audio file asks again, on the testimonio line, before it goes up', async () => {
+    app.features = { ...app.features, audioUpload: true };
+    const root = panel();
+    await settle();
+    vi.spyOn(app, 'ensureSession').mockResolvedValue('1');
+    const upload = vi.spyOn(app, 'uploadDoc').mockResolvedValue(null);
+    const input = root.querySelector<HTMLInputElement>('input[type="file"]')!;
+    vi.spyOn(input, 'click').mockImplementation(() => {});
+    q(root, 'panel-upload')!.click();
+    await settle();
+    expect(q(root, 'panel-consent')!.textContent).toContain(uploadConsentLine('documento')!.after.trim());
+    q(root, 'panel-consent-check')!.click();
+    await settle();
+    q(root, 'panel-consent-go')!.click();
+    Object.defineProperty(input, 'files', { value: [new File(['x'], 'a.mp3', { type: 'audio/mpeg' })], configurable: true });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    // No voces permission: the backend files it as a testimonio, so the box is
+    // asked again on that line.
+    expect(upload).not.toHaveBeenCalled();
+    expect(q(root, 'panel-consent')!.textContent).toContain(uploadConsentLine('testimonio')!.after.trim());
+    expect(q<HTMLInputElement>(root, 'panel-consent-check')!.checked).toBe(false);
+    expect(q<HTMLButtonElement>(root, 'panel-consent-go')!.disabled).toBe(true);
+    q(root, 'panel-consent-check')!.click();
+    await settle();
+    q(root, 'panel-consent-go')!.click();
+    await settle();
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]![2]).toBe('documento');
+    expect(upload.mock.calls[0]![4]).toBe(UPLOAD_CONSENT_VERSION);
+  });
+
   it('a file chosen without it does not go up', async () => {
     const root = panel();
     await settle();
@@ -173,6 +205,8 @@ describe('🔴 MicButton — the checkbox before the microphone opens', () => {
     q(root, 'mic-start')!.click();
     await settle();
     expect(getUserMedia).not.toHaveBeenCalled();
+    // No voces permission here: it sends `documento`, and the backend refiles a
+    // participant's audio as a testimonio — the line the constancia shows.
     expect(q(root, 'mic-consent')!.textContent).toContain(uploadConsentLine('testimonio')!.after.trim());
     expect(q<HTMLButtonElement>(root, 'mic-consent-go')!.disabled).toBe(true);
 
@@ -186,6 +220,7 @@ describe('🔴 MicButton — the checkbox before the microphone opens', () => {
     q(root, 'mic-stop')!.click();
     await settle();
     expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]![2]).toBe('documento');
     expect(upload.mock.calls[0]![4]).toBe(UPLOAD_CONSENT_VERSION);
     vi.unstubAllGlobals();
   });

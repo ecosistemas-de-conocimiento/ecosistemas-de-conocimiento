@@ -238,7 +238,7 @@
           <div class="kind-options">
             {#each UPLOAD_CONTENT_KINDS as k (k)}
               <label class="kind">
-                <input type="radio" name="upload-kind" value={k} bind:group={contentKind} data-testid={`upload-kind-${k}`} />
+                <input type="radio" name="upload-kind" value={k} bind:group={contentKind} onchange={() => (consent = false)} data-testid={`upload-kind-${k}`} />
                 <span>{UPLOAD_KIND_LABELS[k]}</span>
               </label>
             {/each}
@@ -256,7 +256,7 @@
 
       <UploadConsentCheck
         bind:checked={consent}
-        kind={hasOptions && contentKind === 'testimonio' ? 'testimonio' : 'documento'}
+        kind={(hasOptions && contentKind === 'testimonio') || (!hasOptions && file && isAudioUpload(file)) ? 'testimonio' : 'documento'}
         disabled={uploading}
       />
 

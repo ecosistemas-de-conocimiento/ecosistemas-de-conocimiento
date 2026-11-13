@@ -39,17 +39,17 @@ async function settle(): Promise<void> {
   flushSync();
 }
 
-async function openWithFile(hasOptions = true, status = 201, body = '{}'): Promise<HTMLElement> {
+async function openWithFile(hasOptions = true, status = 201, body = '{}', file = new File(['x'], 'tesis.pdf', { type: 'application/pdf' }), audioOn = false): Promise<HTMLElement> {
   globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
     sent.push(init?.body as FormData);
     return new Response(body, { status });
   }) as typeof fetch;
   const target = document.createElement('div');
   document.body.appendChild(target);
-  mounted.push(mount(UploadSheet, { target, props: { open: true, hasOptions, audioOn: false, onUploaded: () => {} } }));
+  mounted.push(mount(UploadSheet, { target, props: { open: true, hasOptions, audioOn, onUploaded: () => {} } }));
   await settle();
   const input = target.querySelector<HTMLInputElement>('[data-testid="upload-input"]')!;
-  Object.defineProperty(input, 'files', { value: [new File(['x'], 'tesis.pdf', { type: 'application/pdf' })], configurable: true });
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
   input.dispatchEvent(new Event('change', { bubbles: true }));
   await settle();
   return target;
@@ -122,6 +122,21 @@ describe('🔴 UploadSheet — the per-resource consent', () => {
     q(root, 'upload-kind-testimonio').click();
     await settle();
     expect(root.textContent).toContain(uploadConsentLine('testimonio')!.after.trim());
+  });
+
+  it('🔴 a participant\'s audio shows the testimonio wording (the backend files it as one)', async () => {
+    const root = await openWithFile(false, 201, '{}', new File(['x'], 'voz.mp3', { type: 'audio/mpeg' }), true);
+    expect(root.textContent).toContain(uploadConsentLine('testimonio')!.after.trim());
+  });
+
+  it('changing the kind unticks the box', async () => {
+    const root = await openWithFile();
+    q<HTMLInputElement>(root, 'upload-consent').click();
+    await settle();
+    expect(q<HTMLButtonElement>(root, 'upload-send').disabled).toBe(false);
+    q(root, 'upload-kind-testimonio').click();
+    await settle();
+    expect(q<HTMLButtonElement>(root, 'upload-send').disabled).toBe(true);
   });
 
   it('is unchecked again for the next file', async () => {
