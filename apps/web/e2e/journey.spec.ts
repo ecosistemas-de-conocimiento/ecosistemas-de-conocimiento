@@ -1,6 +1,7 @@
 import { extname } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { adminCredentials } from './env';
+import { consentInPanel } from './consent';
 import { fixtureBytes, fixtures, type FixtureEntry } from './fixtures';
 
 /**
@@ -463,10 +464,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     // No standing explainer at the top of the panel (UX backlog #36).
     await expect(panel.getByText('Todo lo que subas entra como')).toHaveCount(0);
 
-    const [chooser] = await Promise.all([
-      page.waitForEvent('filechooser'),
-      panel.getByRole('button', { name: 'Subir documento o audio' }).click(),
-    ]);
+    await panel.getByRole('button', { name: 'Subir documento o audio' }).click();
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), consentInPanel(panel)]);
     await chooser.setFiles({
       name: pdfName,
       mimeType: fx.pdf.mimeType,
@@ -516,10 +515,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
 
   await test.step('upload the Spanish recording and watch it transcribe', async () => {
     const panel = docsPanel(page);
-    const [chooser] = await Promise.all([
-      page.waitForEvent('filechooser'),
-      panel.getByRole('button', { name: 'Subir documento o audio' }).click(),
-    ]);
+    await panel.getByRole('button', { name: 'Subir documento o audio' }).click();
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), consentInPanel(panel)]);
     await chooser.setFiles({
       name: audioName,
       mimeType: fx.audio.mimeType,

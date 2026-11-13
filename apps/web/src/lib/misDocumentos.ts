@@ -141,15 +141,18 @@ export function isInFlight(d: Pick<DocLike, 'ingestStatus' | 'publicationStatus'
  */
 export type UploadStep = 'archivo' | 'opciones' | 'listo';
 
-export function uploadSteps(hasOptions: boolean): UploadStep[] {
-  return hasOptions ? ['archivo', 'opciones', 'listo'] : ['archivo', 'listo'];
-}
+/**
+ * 🔴 Always three: the middle step carries the upload consent checkbox
+ * (`$lib/uploadConsent.ts`), so nobody's pick goes straight up. It is "Tipo"
+ * for someone with a choice (`voces:upload`), "Confirmar" for everyone else.
+ */
+export const UPLOAD_STEPS: UploadStep[] = ['archivo', 'opciones', 'listo'];
 
-export const UPLOAD_STEP_LABELS: Record<UploadStep, string> = {
-  archivo: 'Archivo',
-  opciones: 'Tipo',
-  listo: 'Listo',
-};
+export function uploadStepLabel(step: UploadStep, hasOptions: boolean): string {
+  if (step === 'archivo') return 'Archivo';
+  if (step === 'opciones') return hasOptions ? 'Tipo' : 'Confirmar';
+  return 'Listo';
+}
 
 /** The format chips under the file target. Audio only where it is switched on. */
 export function uploadFormats(audioOn: boolean): string[] {

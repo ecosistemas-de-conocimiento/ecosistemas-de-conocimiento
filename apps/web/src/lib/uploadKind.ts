@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/public';
+import { CONSENT_CHANGED } from './consent';
 
 /**
  * What an upload IS — a `documento` or a Voz (`testimonio`) — and who may say so.
@@ -125,6 +126,8 @@ export function looseUploadErrorCopy(
   code: string | null | undefined,
   maxBytesLabel: string,
 ): { title: string; message: string } {
+  const consent = consentErrorCopy(code);
+  if (consent) return consent;
   switch (code) {
     case 'unsupported_kind':
     case 'unsupported_media_type':
@@ -153,3 +156,12 @@ export const AUDIO_UPLOAD_OFF_COPY = {
   title: 'Por ahora no se pueden subir grabaciones',
   message: 'Sube un PDF o un DOCX. Pronto podrás subir audio.',
 } as const;
+
+/** The upload consent refusals' copy, or null for any other code. */
+export function consentErrorCopy(code: string | null | undefined): { title: string; message: string } | null {
+  if (code === 'upload_consent_required') {
+    return { title: 'Falta el consentimiento', message: 'Marca la casilla de consentimiento.' };
+  }
+  if (code === 'consent_version_changed') return { title: 'El consentimiento cambió', message: CONSENT_CHANGED };
+  return null;
+}

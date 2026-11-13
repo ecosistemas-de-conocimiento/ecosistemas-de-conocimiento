@@ -10,6 +10,8 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 vi.mock('$env/dynamic/public', () => ({ env: {} }));
 
 import UploadSheet from './UploadSheet.svelte';
+import { UPLOAD_CONSENT_VERSION, uploadConsentLine } from '$lib/uploadConsent';
+import { CONSENT_CHANGED } from '$lib/consent';
 
 let sent: FormData[] = [];
 beforeAll(() => {
@@ -37,14 +39,14 @@ async function settle(): Promise<void> {
   flushSync();
 }
 
-async function openWithFile(): Promise<HTMLElement> {
+async function openWithFile(hasOptions = true, status = 201, body = '{}'): Promise<HTMLElement> {
   globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
     sent.push(init?.body as FormData);
-    return new Response('{}', { status: 201 });
+    return new Response(body, { status });
   }) as typeof fetch;
   const target = document.createElement('div');
   document.body.appendChild(target);
-  mounted.push(mount(UploadSheet, { target, props: { open: true, hasOptions: true, audioOn: false, onUploaded: () => {} } }));
+  mounted.push(mount(UploadSheet, { target, props: { open: true, hasOptions, audioOn: false, onUploaded: () => {} } }));
   await settle();
   const input = target.querySelector<HTMLInputElement>('[data-testid="upload-input"]')!;
   Object.defineProperty(input, 'files', { value: [new File(['x'], 'tesis.pdf', { type: 'application/pdf' })], configurable: true });
@@ -55,12 +57,19 @@ async function openWithFile(): Promise<HTMLElement> {
 
 const q = <T extends HTMLElement>(root: HTMLElement, id: string) => root.querySelector<T>(`[data-testid="${id}"]`)!;
 
+/** 🔴 Tick the per-resource consent and send. */
+async function consentAndSend(root: HTMLElement): Promise<void> {
+  q(root, 'upload-consent').click();
+  await settle();
+  q(root, 'upload-send').click();
+  await settle();
+}
+
 describe('UploadSheet — "Anonimizar" (ADR-0020)', () => {
   it('starts on for a documento and the upload asks for the gate', async () => {
     const root = await openWithFile();
     expect(q<HTMLInputElement>(root, 'owned-anonymise').checked).toBe(true);
-    q(root, 'upload-send').click();
-    await settle();
+    await consentAndSend(root);
     expect(sent).toHaveLength(1);
     expect(sent[0]!.get('contentKind')).toBe('documento');
     expect(sent[0]!.get('anonymise')).toBe('true');
@@ -71,8 +80,7 @@ describe('UploadSheet — "Anonimizar" (ADR-0020)', () => {
     q(root, 'owned-anonymise').click();
     await settle();
     expect(q<HTMLInputElement>(root, 'owned-anonymise').checked).toBe(false);
-    q(root, 'upload-send').click();
-    await settle();
+    await consentAndSend(root);
     expect(sent[0]!.get('anonymise')).toBeNull();
   });
 
@@ -81,9 +89,54 @@ describe('UploadSheet — "Anonimizar" (ADR-0020)', () => {
     q(root, 'upload-kind-testimonio').click();
     await settle();
     expect(root.querySelector('[data-testid="owned-anonymise"]')).toBeNull();
-    q(root, 'upload-send').click();
-    await settle();
+    await consentAndSend(root);
     expect(sent[0]!.get('contentKind')).toBe('testimonio');
     expect(sent[0]!.get('anonymise')).toBeNull();
+  });
+});
+
+describe('🔴 UploadSheet — the per-resource consent', () => {
+  it('always stops on a confirmation step, even with no options, and sends nothing unticked', async () => {
+    const root = await openWithFile(false);
+    expect(sent).toHaveLength(0);
+    const box = q<HTMLInputElement>(root, 'upload-consent');
+    expect(box.checked).toBe(false);
+    expect(root.querySelector('[data-testid="upload-kind-documento"]')).toBeNull();
+    expect(root.querySelector('a[href="/privacidad"]')?.getAttribute('target')).toBe('_blank');
+    expect(q<HTMLButtonElement>(root, 'upload-send').disabled).toBe(true);
+    q(root, 'upload-send').click();
+    await settle();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('ticked, the upload carries the version', async () => {
+    const root = await openWithFile(false);
+    await consentAndSend(root);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.get('uploadConsentVersion')).toBe(String(UPLOAD_CONSENT_VERSION));
+  });
+
+  it('a testimonio shows the testimonio wording', async () => {
+    const root = await openWithFile();
+    expect(root.textContent).toContain(uploadConsentLine('documento')!.after.trim());
+    q(root, 'upload-kind-testimonio').click();
+    await settle();
+    expect(root.textContent).toContain(uploadConsentLine('testimonio')!.after.trim());
+  });
+
+  it('is unchecked again for the next file', async () => {
+    const root = await openWithFile(false);
+    await consentAndSend(root);
+    const input = q<HTMLInputElement>(root, 'upload-input');
+    Object.defineProperty(input, 'files', { value: [new File(['y'], 'otro.pdf', { type: 'application/pdf' })], configurable: true });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    expect(q<HTMLInputElement>(root, 'upload-consent').checked).toBe(false);
+  });
+
+  it('a 409 shows the "text changed" copy', async () => {
+    const root = await openWithFile(false, 409, JSON.stringify({ error: 'consent_version_changed' }));
+    await consentAndSend(root);
+    expect(q(root, 'upload-error').textContent).toContain(CONSENT_CHANGED);
   });
 });

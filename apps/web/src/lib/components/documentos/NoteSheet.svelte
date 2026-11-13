@@ -22,6 +22,8 @@
   import { Button } from '$lib/primitives';
   import Markdown from '$lib/components/Markdown.svelte';
   import type { WorkingDoc } from '$lib/types';
+  import { UPLOAD_CONSENT_VERSION } from '$lib/uploadConsent';
+  import UploadConsentCheck from '../UploadConsentCheck.svelte';
 
   let {
     open = $bindable(false),
@@ -32,7 +34,8 @@
     canEdit = true,
   }: {
     open?: boolean;
-    onSave: (note: { title: string; body: string }) => Promise<boolean>;
+    /** 🔴 `uploadConsentVersion`: the consent the person ticked (`$lib/uploadConsent.ts`). */
+    onSave: (note: { title: string; body: string; uploadConsentVersion: number }) => Promise<boolean>;
     /** The own note being edited; `null` is "Nueva nota". */
     editing?: WorkingDoc | null;
     onEdit?: (patch: { title?: string; body?: string }) => void;
@@ -46,6 +49,8 @@
   let title = $state(untrack(() => editing?.title ?? ''));
   let body = $state(untrack(() => editing?.body ?? ''));
   let saving = $state(false);
+  /** 🔴 The per-resource consent: unchecked every time the sheet opens. */
+  let consent = $state(false);
   /** An existing note opens on its rendered text; "Editar" turns this off. */
   let preview = $state(true);
 
@@ -55,6 +60,7 @@
       title = untrack(() => editing?.title ?? '');
       body = untrack(() => editing?.body ?? '');
       preview = true;
+      consent = false;
       dialog.showModal();
     } else if (!open && dialog.open) {
       dialog.close();
@@ -72,10 +78,11 @@
       close();
       return;
     }
-    if (saving || !body.trim()) return;
+    if (saving || !body.trim() || !consent) return;
     saving = true;
     try {
-      if (await onSave({ title: title.trim() || 'Nota sin título', body })) open = false;
+      const note = { title: title.trim() || 'Nota sin título', body, uploadConsentVersion: UPLOAD_CONSENT_VERSION };
+      if (await onSave(note)) open = false;
     } finally {
       saving = false;
     }
@@ -141,6 +148,7 @@
             <span>Texto</span>
             <textarea bind:value={body} rows="8" required disabled={saving} data-testid="note-body"></textarea>
           </label>
+          <UploadConsentCheck bind:checked={consent} kind="documento" disabled={saving} testId="note-consent" />
         {/if}
       {/if}
     </div>
@@ -167,7 +175,7 @@
         <Button type="submit" label="Listo" dataTestId="note-done" />
       {:else}
         <Button variant="ghost" label="Cancelar" disabled={saving} onClick={close} />
-        <Button type="submit" label={saving ? 'Guardando…' : 'Guardar'} loading={saving} disabled={saving || !body.trim()} dataTestId="note-save" />
+        <Button type="submit" label={saving ? 'Guardando…' : 'Guardar'} loading={saving} disabled={saving || !body.trim() || !consent} dataTestId="note-save" />
       {/if}
     </div>
   </form>

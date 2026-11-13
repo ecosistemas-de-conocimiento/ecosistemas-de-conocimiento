@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { expect, test, type Page, type Response } from '@playwright/test';
 import { abrirConexiones, leerFuentes, preguntar, renombrarActiva, seguirChip, tarjeta } from './comun';
 import { RUN_ID, abrirPanel, cerrarPanel, escena } from './escena';
+import { consentInPanel } from '../consent';
 
 /**
  * The V3 stories (owner plan via coordinator, 2026-10-28). Each `*.v3.spec.ts`
@@ -200,6 +201,7 @@ export async function hojaDeCalculo(page: Page, pregunta: string): Promise<void>
     const chooser = page.waitForEvent('filechooser');
     // "Subir documento" or "Subir documento o audio": the label depends on the audio switch.
     await page.getByRole('button', { name: /^Subir documento/ }).first().click();
+    await consentInPanel(page);
     await (await chooser).setFiles(hojaDePrueba());
     const res = await respuesta;
     expect(res.ok(), `subida de la hoja: HTTP ${res.status()}`).toBe(true);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileTile, isInFlight, kindTile, publishLabel, statusPills, uploadFormats, uploadSteps } from './misDocumentos';
+import { fileTile, isInFlight, kindTile, publishLabel, statusPills, uploadFormats, UPLOAD_STEPS, uploadStepLabel } from './misDocumentos';
 
 const base = {
   id: '7',
@@ -81,9 +81,10 @@ describe('isInFlight', () => {
 });
 
 describe('upload flow', () => {
-  it('the options step exists only for someone with a choice', () => {
-    expect(uploadSteps(true)).toEqual(['archivo', 'opciones', 'listo']);
-    expect(uploadSteps(false)).toEqual(['archivo', 'listo']);
+  it('🔴 always has a confirmation step (the consent checkbox); "Tipo" only with a choice', () => {
+    expect(UPLOAD_STEPS).toEqual(['archivo', 'opciones', 'listo']);
+    expect(uploadStepLabel('opciones', true)).toBe('Tipo');
+    expect(uploadStepLabel('opciones', false)).toBe('Confirmar');
   });
   it('offers audio only when it is switched on', () => {
     expect(uploadFormats(false)).not.toContain('Audio');

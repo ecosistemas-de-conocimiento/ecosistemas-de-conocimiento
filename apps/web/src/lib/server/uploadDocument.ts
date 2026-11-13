@@ -12,6 +12,35 @@ import {
 
 export type UploadResult = { status: number; body: Record<string, unknown> };
 
+/**
+ * 🔴 The per-resource upload consent (`$lib/uploadConsent.ts`): the version the
+ * person ticked, as sent by the browser (a form field or a JSON property).
+ * Forwarded as is; THE BACKEND decides (400 without it, 409 on another version).
+ * Anything that is not a positive integer is "not sent".
+ */
+export function parseUploadConsentVersion(raw: unknown): number | undefined {
+  const n = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : raw;
+  return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/** The backend's consent refusals, by Payload error message; passed on by code. */
+const CONSENT_ERRORS = ['upload_consent_required', 'consent_version_changed'] as const;
+
+/**
+ * `upload_consent_required` / `consent_version_changed` when the backend's
+ * refusal is one of them (Payload's `{ errors: [{ message }] }`), else null.
+ */
+export function consentErrorCode(body: unknown): (typeof CONSENT_ERRORS)[number] | null {
+  const errors = (body as { errors?: unknown } | null)?.errors;
+  if (!Array.isArray(errors)) return null;
+  for (const e of errors) {
+    const m = (e as { message?: unknown } | null)?.message;
+    const hit = CONSENT_ERRORS.find((c) => c === m);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /** A PDF header may sit after some junk; the spec reader looks in the first 1 KB. */
 const SNIFF_BYTES = 1024;
 
@@ -210,6 +239,7 @@ export async function uploadDocument(
 
   const name = form.get('name');
   const pinnedRaw = form.get('isPinned');
+  const uploadConsentVersion = parseUploadConsentVersion(form.get('uploadConsentVersion'));
   const docRes = await backendFetch(token, '/api/documents', {
     method: 'POST',
     body: JSON.stringify({
@@ -228,13 +258,15 @@ export async function uploadDocument(
       mediaFile: mediaId,
       isPinned: pinnedRaw === null ? opts.defaultPinned : pinnedRaw !== 'false',
       ingestStatus: 'pending',
+      ...(uploadConsentVersion !== undefined ? { uploadConsentVersion } : {}),
     }),
   });
   const body = (await docRes.json().catch(() => ({}))) as Record<string, unknown>;
   if (!docRes.ok) {
     await discardUpload(token, mediaId);
-    // ⚠ Payload's validation messages are English. Never pass one to the browser.
-    return { status: docRes.status, body: { error: 'document_create_failed' } };
+    // ⚠ Payload's validation messages are English. Never pass one to the browser;
+    // the consent refusals go on as their code (the browser has the Spanish).
+    return { status: docRes.status, body: { error: consentErrorCode(body) ?? 'document_create_failed' } };
   }
   return { status: docRes.status, body };
 }

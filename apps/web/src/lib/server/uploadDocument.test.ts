@@ -5,7 +5,7 @@ vi.mock('$lib/server/auth', () => ({
   backendFetch: vi.fn(),
 }));
 
-import { bytesMatchKind, uploadDocument } from './uploadDocument';
+import { bytesMatchKind, consentErrorCode, parseUploadConsentVersion, uploadDocument } from './uploadDocument';
 import { backendFetch } from '$lib/server/auth';
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -265,5 +265,19 @@ describe('🔴 uploadDocument — a refused create deletes the stored file (audi
     const res = await uploadDocument('tok', pdfForm(), { session: [], defaultPinned: false, organization: '4' });
     expect(res.status).toBe(201);
     expect(fetchMock()).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('🔴 parseUploadConsentVersion / consentErrorCode', () => {
+  it('takes a positive integer, as a form string or a JSON number', () => {
+    expect(parseUploadConsentVersion('1')).toBe(1);
+    expect(parseUploadConsentVersion(2)).toBe(2);
+    for (const bad of [null, '', '0', '1.5', 'sí', -1, 0, true]) expect(parseUploadConsentVersion(bad)).toBeUndefined();
+  });
+  it("reads Payload's consent refusals and nothing else", () => {
+    expect(consentErrorCode({ errors: [{ message: 'upload_consent_required' }] })).toBe('upload_consent_required');
+    expect(consentErrorCode({ errors: [{ message: 'consent_version_changed' }] })).toBe('consent_version_changed');
+    expect(consentErrorCode({ errors: [{ message: 'Forbidden' }] })).toBeNull();
+    expect(consentErrorCode(null)).toBeNull();
   });
 });

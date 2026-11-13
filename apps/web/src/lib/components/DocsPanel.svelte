@@ -5,6 +5,8 @@
   import { Button } from '$lib/primitives';
   import Markdown from './Markdown.svelte';
   import TestimonySource from './TestimonySource.svelte';
+  import UploadConsentCheck from './UploadConsentCheck.svelte';
+  import { UPLOAD_CONSENT_VERSION } from '$lib/uploadConsent';
   import type { WorkingDoc } from '$lib/types';
   import { noteEdited, publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
   import {
@@ -99,6 +101,30 @@
   let uploadContentKind = $state<UploadContentKind>('documento');
   /** 🔴 On by default for a `documento` (ADR-0020: the most protective value), as in `UploadSheet`. */
   let uploadAnonymise = $state(true);
+
+  /**
+   * 🔴 THE PER-RESOURCE UPLOAD CONSENT (`$lib/uploadConsent.ts`). "Subir" and
+   * "Nota" first open the checkbox; the file picker / the new note only once it
+   * is ticked. Reset after every resource: never remembered.
+   */
+  let consentFor = $state<'upload' | 'note' | null>(null);
+  let consent = $state(false);
+  function askConsent(what: 'upload' | 'note') {
+    consentFor = consentFor === what ? null : what;
+    consent = false;
+  }
+  function doneConsent() {
+    consentFor = null;
+    consent = false;
+  }
+  async function createNote() {
+    if (!consent) return;
+    doneConsent();
+    const sessionId = await app.ensureSession();
+    if (!sessionId) return;
+    const d = await app.newDoc(sessionId, undefined, UPLOAD_CONSENT_VERSION);
+    if (d) expandedId = d.id;
+  }
 
   // ── Traer un documento de otra conversación ─────────────────────────────
   //
@@ -239,6 +265,12 @@
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
+    // 🔴 No consent, no upload (the picker only opens once it is ticked).
+    if (!consent) {
+      input.value = '';
+      return;
+    }
+    doneConsent();
     // 🔴 Audio is switched off (`AUDIO_UPLOAD_ENABLED`). The picker already
     // hides audio, but "Todos los archivos" in the OS dialog still lets one through.
     if (!audioOn && isAudioUpload(file)) {
@@ -260,6 +292,7 @@
         file,
         canUploadVoces ? uploadContentKind : 'documento',
         canUploadVoces && uploadContentKind === 'documento' && uploadAnonymise,
+        UPLOAD_CONSENT_VERSION,
       );
       if (doc) expandedId = doc.id;
     } finally {
@@ -384,8 +417,10 @@
              for. The aria-label keeps the full name; the word is the short one. -->
         <button
           class="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-surface-soft text-ink-body text-xs font-semibold disabled:opacity-40"
-          onclick={() => fileInput?.click()}
+          onclick={() => askConsent('upload')}
           disabled={uploading}
+          aria-expanded={consentFor === 'upload'}
+          data-testid="panel-upload"
           title={uploadButtonTitle()}
           aria-label={audioOn ? 'Subir documento o audio' : 'Subir documento'}
         >
@@ -411,12 +446,9 @@
         </button>
         <button
           class="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-surface-soft text-ink-body text-xs font-semibold"
-          onclick={async () => {
-            const sessionId = await app.ensureSession();
-            if (!sessionId) return;
-            const d = await app.newDoc(sessionId);
-            if (d) expandedId = d.id;
-          }}
+          onclick={() => askConsent('note')}
+          aria-expanded={consentFor === 'note'}
+          data-testid="panel-new-note"
           title="Nueva nota"
           aria-label="Nueva nota"
         >
@@ -480,6 +512,25 @@
             <span>Anonimizar</span>
           </label>
         {/if}
+      </div>
+    {/if}
+
+    {#if consentFor}
+      <div class="px-3 py-2 border-b border-elevated grid gap-2" data-testid="panel-consent">
+        <UploadConsentCheck
+          bind:checked={consent}
+          kind={consentFor === 'upload' && canUploadVoces && uploadContentKind === 'testimonio' ? 'testimonio' : 'documento'}
+          disabled={uploading}
+          testId="panel-consent-check"
+        />
+        <div class="flex justify-end gap-2">
+          <Button variant="ghost" label="Cancelar" onClick={doneConsent} />
+          {#if consentFor === 'upload'}
+            <Button label="Elegir archivo" disabled={!consent || uploading} dataTestId="panel-consent-go" onClick={() => fileInput?.click()} />
+          {:else}
+            <Button label="Crear nota" disabled={!consent} dataTestId="panel-consent-go" onClick={createNote} />
+          {/if}
+        </div>
       </div>
     {/if}
 
