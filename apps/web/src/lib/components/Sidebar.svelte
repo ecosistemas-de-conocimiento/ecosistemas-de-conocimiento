@@ -3,6 +3,7 @@
   import EcosystemPicker from './EcosystemPicker.svelte';
   import { TITLE_MAX } from '$lib/sessionTitle';
   import { SESSION_KIND_LABELS, SESSION_KINDS } from '$lib/sessionKind';
+  import { PRIVACY_PATH } from '$lib/uploadConsent';
 
   /**
    * ⚠ THE `/admin` ENTRY THAT USED TO LIVE HERE MOVED TO THE PRIMARY NAV.
@@ -295,5 +296,6 @@
         </div>
       {/each}
     </nav>
+    <a href={PRIVACY_PATH} class="p-3 border-t border-line text-xs text-ink-soft underline">Aviso de privacidad</a>
   </aside>
 {/if}
