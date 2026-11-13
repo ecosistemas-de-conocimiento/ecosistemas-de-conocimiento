@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { safeErrMessage } from '$lib/errorSummary';
+  import { PRIVACY_PATH } from '$lib/uploadConsent';
 
   // Old `/sign-up` links land here (sign-up is closed, UX backlog #6). Say why
   // instead of silently showing a login form to someone with no account.
@@ -108,6 +109,8 @@
     <button type="submit" disabled={submitting} class="login-submit">
       {submitting ? 'Entrando…' : 'Entrar'}
     </button>
+
+    <p class="privacy-link"><a href={PRIVACY_PATH}>Aviso de privacidad</a></p>
   </form>
 </div>
 
@@ -155,6 +158,15 @@
     font-weight: 600;
     border: 1px solid var(--edc-color-brand-outline);
     cursor: pointer;
+  }
+  .privacy-link {
+    margin: 1rem 0 0;
+    text-align: center;
+    font-size: 0.8rem;
+  }
+  .privacy-link a {
+    color: var(--edc-color-ink-soft);
+    text-decoration: underline;
   }
   .login-submit:disabled {
     opacity: 0.6;

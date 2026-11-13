@@ -92,6 +92,12 @@ describe('existing auth behaviour is unchanged', () => {
     expect(res).toBe(resolved);
   });
 
+  it('/privacidad answers 200 to a signed-out visitor (the notice comes before any account)', async () => {
+    const res = await handle({ event: event('/privacidad') as never, resolve: resolve as never });
+    expect(res).toBe(resolved);
+    expect(res.status).toBe(200);
+  });
+
   it('still lets a public auth proxy through', async () => {
     const ev = event('/api/auth/login', { method: 'POST' });
     const res = await handle({ event: ev as never, resolve: resolve as never });
