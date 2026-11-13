@@ -172,7 +172,6 @@ El NVIDIA DGX Spark prestado sirve hoy la transcripción, el detector de anonimi
 |---|---|---|
 | Pruebas de experiencia de uso con personas | Media | Bitácora del proyecto (2026-10-28) |
 | Página de funciones por ecosistema para el admin de plataforma | Media | Bitácora del proyecto (2026-10-28) |
-| Regrabar los videos de evidencia de admin con una cuenta de demostración, sin mostrar el correo de una cuenta personal | Media | Bitácora del proyecto (2026-10-28) |
 | Verificar en dev las correcciones de citas fuera de rango, la tarjeta de adjunto y las citas en Resonancias | Media | Bitácora del proyecto (2026-10-28) |
 | Ajustes del micrófono en vivo | Baja | Bitácora del proyecto (2026-10-28) |
 | Correcciones menores en el compositor de mensajes y en la colección `Documents` | Baja | Bitácora del proyecto (2026-10-28) |
@@ -264,7 +263,6 @@ Decisiones del proyecto que siguen abiertas al 2026-11-11. Cada una afecta al pr
 - **Regla de nodos y tipo de grafo.** Umbral de 1 mención (vigente) o mayor; grafo por ecosistema, general o combinado (informe del 21 de octubre §VI y §VIII).
 - **Si se genera el corpus nuevo de unas 280 piezas** (`plan/corpus-recomendaciones.md`).
 - **Qué hacer con el audio de prueba**, que es un fragmento de una junta real: conservarlo o borrarlo.
-- **Si se conservan los videos automáticos** como respaldo de los grabados a mano.
 
 ## Referencias
 

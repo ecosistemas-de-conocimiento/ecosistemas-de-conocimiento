@@ -44,7 +44,7 @@ sequenceDiagram
 
 Desde el 2026-11-10 hay dos líneas: `main` solo recibe correcciones, y la funcionalidad nueva va a la rama `etapa-2` (decisión del 2026-11-10). Dev despliega `main`.
 
-**Estado de dev al 2026-11-13.** Dev corre `db9a4456`, el código de `main` (los commits posteriores solo cambian `docs/` e `infra/fleet/`), desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (deploy `4lcl4hdx1fmfcn91ywb4zhyu`; measured con `docker ps` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz), con una migración: `20261113_015634_consent_receipts` (`payload_migrations` 26, último lote 18). El 2026-11-12 hubo tres despliegues sin migración (`payload_migrations` 25, último lote 17). Cada uno, con respaldo previo y prueba de humo:
+**Estado de dev al 2026-11-13.** Dev corre `db9a4456`, el código de `main` (los commits posteriores solo cambian `docs/` e `infra/fleet/`), desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz), con una migración: `20261113_015634_consent_receipts` (`payload_migrations` 26, último lote 18). El 2026-11-12 hubo tres despliegues sin migración (`payload_migrations` 25, último lote 17). Cada uno, con respaldo previo y prueba de humo:
 
 | Hora (UTC) | Versión | Scripts aplicados después | Fuente |
 |---|---|---|---|

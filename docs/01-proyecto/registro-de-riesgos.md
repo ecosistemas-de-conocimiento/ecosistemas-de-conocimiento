@@ -66,7 +66,6 @@ quadrantChart
 | R-42 | **Material del taller de Semiosis sin consentimiento de sus autores.** Está en dev como borrador; un re-gate, un backfill o una ingesta podría mandarlo otra vez a los modelos o al grafo (`plan/orchestration/taller-2026-11-10/informe.md`, fuera del repositorio) | Baja | Alto | Media | Las filas siguen en borrador, fuera del corpus compartido (medido en dev el 2026-11-10, citado del mismo informe). El re-gate ya no reprocesa borradores que él no despublicó (desplegado). Retenido por consentimiento (`consentHeld`, ids desde `CONSENT_IDS_FILE`): bloquea re-gate, backfill, ingesta y publicación (desplegado). Ninguna ruta reprocesa una fila retenida, la revisión de una nota retenida queda retenida y el grafo hereda la retención (desplegado el 2026-11-12). Desde el 2026-11-11 la retención gana también las carreras: en el grafo, en «Publicar cambios», en el re-índice tardío y en una primera publicación tardía, y ninguna escritura de fila entera reescribe `consent_held` (ver §5). En dev, 184 filas del taller retenidas el 2026-11-12 (citado de `infra/fleet/edc-1.md` §4zzzzzzzzz). Huecos conocidos: R-43 y R-44. Levantarlo es un `UPDATE` a mano | Responsable técnico | Mitigado en parte | `apps/backend/src/lib/consentHold.ts`; `scripts/hold-for-consent.ts` |
 | R-43 | **Copia viva en el corpus compartido tras agotar los reintentos (limitación conocida).** Si ai-service agota sus 7 intentos del aviso (unas 2 h 42 min; citado de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después. No ocurre hoy | Baja | Alto | Media | Ninguna en código. Prevista para la Etapa 2: una tabla de retiros pendientes con un barrido que los reintente | Equipo de desarrollo | Aceptado (limitación conocida, decisión del 2026-11-12) | `services/ai-service/src/services/callbacks/emit.ts`; [Roadmap](roadmap.md#lo-que-quedó-abierto-al-cierre-de-la-etapa-1) |
 | R-44 | **`backfillLengua.ts` re-ingesta sin `callbackUrl` (limitación conocida).** El script de operador re-ingesta en el corpus compartido sin aviso de vuelta. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada. No ocurre hoy | Baja | Alto | Media | Es un script de operador que se corre a mano. Prevista para la Etapa 2: que el script mande `callbackUrl` o vuelva a revisar la retención al terminar | Equipo de desarrollo | Aceptado (limitación conocida, decisión del 2026-11-12) | `apps/backend/src/lib/backfillLengua.ts`; [Roadmap](roadmap.md#lo-que-quedó-abierto-al-cierre-de-la-etapa-1) |
-| R-35 | **La evidencia en video expone datos de una cuenta.** Los videos de admin anteriores muestran el correo de una cuenta personal | Alta | Bajo | Media | Chequeo por reconocimiento de texto de nombres reales (ninguno aparece); regrabación manual con una cuenta de demostración | Equipo de desarrollo | Mitigado en parte | Bitácora del proyecto (2026-10-28) |
 
 ### 3.2 Seguridad
 
@@ -123,9 +122,9 @@ quadrantChart
 |---|---|---|
 | Crítica | R-02, R-04, R-06, R-29, R-32 | 5 |
 | Alta | R-01, R-03, R-05, R-08, R-09, R-10, R-14, R-16, R-17, R-18, R-19, R-20, R-26, R-30, R-31, R-33, R-34, R-41 | 18 |
-| Media | R-07, R-11, R-12, R-13, R-21, R-22, R-23, R-27, R-28, R-35, R-36, R-37, R-38, R-39, R-40, R-42, R-43, R-44 | 18 |
+| Media | R-07, R-11, R-12, R-13, R-21, R-22, R-23, R-27, R-28, R-36, R-37, R-38, R-39, R-40, R-42, R-43, R-44 | 17 |
 | Baja | R-24, R-25 | 2 |
-| **Total** | | **43** |
+| **Total** | | **42** |
 
 Los conteos salen de este registro; las severidades son juicio del redactor (ver la advertencia del inicio).
 

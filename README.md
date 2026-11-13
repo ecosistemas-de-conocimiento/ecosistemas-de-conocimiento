@@ -15,6 +15,15 @@ Más contexto: [Visión y alcance](docs/01-proyecto/vision-y-alcance.md).
 
 Cierre de la etapa: [docs/00-cierre-etapa-1.md](docs/00-cierre-etapa-1.md). Toda la documentación: [docs/README.md](docs/README.md).
 
+## Cambios desde el 2026-10-28
+
+- **Consentimiento por recurso.** Cada subida pide una casilla de consentimiento y deja una constancia imprimible con folio. El aviso de privacidad es público en `/privacidad`, en borrador sin validación jurídica.
+- **Anonimización más estricta.** Por omisión se anonimiza todo, incluidos los títulos; conservar nombres es una decisión explícita, por ecosistema o por documento, que queda registrada.
+- **Retención por consentimiento.** El material marcado como pendiente del consentimiento de sus autores ya no se procesa ni se publica, y no entra al grafo.
+- **Retiros más confiables.** Una primera publicación que llega después de un retiro o de una retención se retira.
+- **Seguridad y privacidad.** Correcciones de la auditoría de código, retención cero en las llamadas a OpenRouter, límites de acceso y de carga, y errores que ya no exponen datos.
+- **Consistencia de los datos.** Una escritura vieja ya no deshace una más nueva.
+
 ## Qué hay en el repo
 
 | Carpeta | Qué contiene |
