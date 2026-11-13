@@ -46,10 +46,6 @@ Con el proveedor falso, la plataforma arranca, se entra y se sube material, pero
 
 Los datos de prueba del repo son sintéticos.
 
-## Cómo se desarrolló
-
-El desarrollo se apoyó en agentes de programación con inteligencia artificial, bajo la revisión e integración del responsable de desarrollo. Los commits hechos con su apoyo lo indican en su firma.
-
 ## Contribuciones
 
 Es un prototipo de investigación. Por ahora no se aceptan contribuciones externas ni se da soporte; los issues y pull requests no se atienden.
@@ -61,3 +57,7 @@ Apache-2.0. Ver [LICENSE](LICENSE).
 ## Privacidad
 
 El repo no contiene datos personales reales, y la plataforma anonimiza los testimonios antes de publicarlos. Ver [docs/06-privacidad-y-seguridad/](docs/06-privacidad-y-seguridad/).
+
+---
+
+<sub>El desarrollo se apoyó en agentes de programación con IA, bajo la revisión del responsable de desarrollo.</sub>
