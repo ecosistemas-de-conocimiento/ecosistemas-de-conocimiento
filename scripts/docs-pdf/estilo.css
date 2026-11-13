@@ -1,0 +1,43 @@
+@page { size: A4; margin: 16mm 15mm 18mm 15mm; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 9.5pt; line-height: 1.42; color: #111; margin: 0; }
+
+.portada { height: 255mm; display: flex; flex-direction: column; justify-content: center; break-after: page; }
+.portada .org { font-size: 11pt; color: #444; margin: 0 0 18mm; letter-spacing: .02em; }
+.portada .titulo { font-size: 32pt; line-height: 1.1; margin: 0 0 4mm; border: 0; }
+.portada .sub { font-size: 15pt; color: #333; margin: 0 0 14mm; }
+.portada .sub2 { font-size: 13pt; margin: 0 0 40mm; }
+.portada .fecha { font-size: 10pt; color: #555; }
+
+.indice { break-after: page; }
+.indice ol { list-style: none; padding: 0; margin: 0; }
+.indice li { margin: 0; padding: 1.2pt 0; break-inside: avoid; }
+.indice li.grupo { font-weight: bold; margin-top: 7pt; padding-bottom: 2pt; border-bottom: .5pt solid #bbb; break-after: avoid; }
+.indice li.adr { padding-left: 14pt; font-size: 8.5pt; }
+.indice a { display: flex; color: #111; }
+.indice .t { flex: 1; }
+.indice .pg { min-width: 22pt; text-align: right; color: #444; }
+
+.capitulo { break-before: page; }
+h1, h2, h3, h4 { break-after: avoid; line-height: 1.25; }
+h1 { font-size: 17pt; margin: 0 0 8pt; padding-bottom: 4pt; border-bottom: 1pt solid #333; }
+h2 { font-size: 13pt; margin: 14pt 0 5pt; }
+h3 { font-size: 11pt; margin: 11pt 0 4pt; }
+h4 { font-size: 10pt; margin: 9pt 0 3pt; }
+p, li { orphans: 2; widows: 2; }
+
+a { color: #1a4f8b; text-decoration: none; }
+code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.3pt; background: #f2f2f2; padding: 0 1.5pt; border-radius: 2pt; overflow-wrap: anywhere; }
+pre { background: #f6f6f6; border: .5pt solid #ddd; padding: 5pt 6pt; font-size: 7.8pt; line-height: 1.3; white-space: pre-wrap; overflow-wrap: anywhere; break-inside: avoid; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { margin: 6pt 0; padding: 2pt 9pt; border-left: 2.5pt solid #bbb; color: #333; }
+
+table { border-collapse: collapse; width: 100%; font-size: 8pt; line-height: 1.3; margin: 6pt 0; }
+th, td { border: .5pt solid #999; padding: 2.5pt 4pt; vertical-align: top; text-align: left; overflow-wrap: anywhere; }
+th { background: #e9e9e9; }
+thead { display: table-header-group; }
+tr { break-inside: avoid; }
+td code, th code { font-size: 7.5pt; }
+
+pre.mermaid { background: none; border: 0; padding: 0; text-align: center; white-space: pre; }
+pre.mermaid svg { max-width: 100% !important; max-height: 235mm; height: auto; }
