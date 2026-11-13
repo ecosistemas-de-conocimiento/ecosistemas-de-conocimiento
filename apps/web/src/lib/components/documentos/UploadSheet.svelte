@@ -256,7 +256,7 @@
 
       <UploadConsentCheck
         bind:checked={consent}
-        kind={hasOptions && contentKind === 'testimonio' ? 'testimonio' : 'documento'}
+        kind={(hasOptions && contentKind === 'testimonio') || (!hasOptions && file && isAudioUpload(file)) ? 'testimonio' : 'documento'}
         disabled={uploading}
       />
 

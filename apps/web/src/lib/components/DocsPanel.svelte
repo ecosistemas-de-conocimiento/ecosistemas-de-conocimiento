@@ -109,13 +109,27 @@
    */
   let consentFor = $state<'upload' | 'note' | null>(null);
   let consent = $state(false);
+  /**
+   * 🔴 A participant's audio file (no `voces:upload`) is refiled as a
+   * testimonio by the backend (`fileParticipantAudioAsTestimonio`), and the
+   * receipt records that. The checkbox was ticked on the documento line before
+   * the file was known, so it is asked again, on the testimonio line.
+   */
+  let pendingAudio = $state<File | null>(null);
+  const consentKind = $derived(
+    pendingAudio || (consentFor === 'upload' && canUploadVoces && uploadContentKind === 'testimonio')
+      ? 'testimonio'
+      : 'documento',
+  );
   function askConsent(what: 'upload' | 'note') {
     consentFor = consentFor === what ? null : what;
     consent = false;
+    pendingAudio = null;
   }
   function doneConsent() {
     consentFor = null;
     consent = false;
+    pendingAudio = null;
   }
   async function createNote() {
     if (!consent) return;
@@ -265,17 +279,29 @@
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
+    input.value = ''; // allow re-selecting the same file
     // 🔴 No consent, no upload (the picker only opens once it is ticked).
-    if (!consent) {
-      input.value = '';
+    if (!consent) return;
+    if (!canUploadVoces && audioOn && isAudioUpload(file)) {
+      pendingAudio = file;
+      consent = false;
       return;
     }
+    await uploadFile(file);
+  }
+
+  async function uploadPendingAudio() {
+    const file = pendingAudio;
+    if (!file || !consent) return;
+    await uploadFile(file);
+  }
+
+  async function uploadFile(file: File) {
     doneConsent();
     // 🔴 Audio is switched off (`AUDIO_UPLOAD_ENABLED`). The picker already
     // hides audio, but "Todos los archivos" in the OS dialog still lets one through.
     if (!audioOn && isAudioUpload(file)) {
       toasts.push({ kind: 'warning', ...AUDIO_UPLOAD_OFF_COPY });
-      input.value = '';
       return;
     }
     uploading = true;
@@ -298,7 +324,6 @@
     } finally {
       uploading = false;
       uploadingFile = null;
-      input.value = ''; // allow re-selecting the same file
     }
   }
 
@@ -519,14 +544,18 @@
       <div class="px-3 py-2 border-b border-elevated grid gap-2" data-testid="panel-consent">
         <UploadConsentCheck
           bind:checked={consent}
-          kind={consentFor === 'upload' && canUploadVoces && uploadContentKind === 'testimonio' ? 'testimonio' : 'documento'}
+          kind={consentKind}
           disabled={uploading}
           testId="panel-consent-check"
         />
         <div class="flex justify-end gap-2">
           <Button variant="ghost" label="Cancelar" onClick={doneConsent} />
           {#if consentFor === 'upload'}
-            <Button label="Elegir archivo" disabled={!consent || uploading} dataTestId="panel-consent-go" onClick={() => fileInput?.click()} />
+            {#if pendingAudio}
+              <Button label="Subir" disabled={!consent || uploading} dataTestId="panel-consent-go" onClick={uploadPendingAudio} />
+            {:else}
+              <Button label="Elegir archivo" disabled={!consent || uploading} dataTestId="panel-consent-go" onClick={() => fileInput?.click()} />
+            {/if}
           {:else}
             <Button label="Crear nota" disabled={!consent} dataTestId="panel-consent-go" onClick={createNote} />
           {/if}
