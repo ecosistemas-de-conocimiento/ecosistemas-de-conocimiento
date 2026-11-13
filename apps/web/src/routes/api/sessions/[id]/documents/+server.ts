@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
-import { uploadDocument } from '$lib/server/uploadDocument';
+import { consentErrorCode, parseUploadConsentVersion, uploadDocument } from '$lib/server/uploadDocument';
 import { relationIds } from '$lib/documents';
 import { backendJson } from '$lib/server/backendResponse';
 
@@ -86,12 +86,14 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     isPinned?: boolean;
     kind?: 'markdown' | 'pdf' | 'docx' | 'audio';
     mode?: 'full-text' | 'rag-retrieve';
+    uploadConsentVersion?: unknown;
   } = {};
   try {
     body = (await request.json()) as typeof body;
   } catch {
     /* allow empty */
   }
+  const uploadConsentVersion = parseUploadConsentVersion(body.uploadConsentVersion);
   const res = await backendFetch(locals.token, '/api/documents', {
     method: 'POST',
     body: JSON.stringify({
@@ -103,8 +105,13 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       bodyMarkdown: body.bodyMarkdown ?? '',
       isPinned: body.isPinned ?? true,
       ingestStatus: 'n/a',
+      // 🔴 The per-resource consent: forwarded when ticked; the backend decides.
+      ...(uploadConsentVersion !== undefined ? { uploadConsentVersion } : {}),
     }),
   });
   const out = await res.json().catch(() => ({}));
+  // The consent refusals go on as a code the browser maps to Spanish.
+  const consent = res.ok ? null : consentErrorCode(out);
+  if (consent) return json({ error: consent }, { status: res.status });
   return backendJson(out, res);
 };

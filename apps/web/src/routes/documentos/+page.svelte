@@ -259,13 +259,17 @@
    * open one (the empty one waiting is reused), write the note there, take it
    * out again. The note lands here "Sin conversación", like a loose upload.
    */
-  async function saveNote(note: { title: string; body: string }): Promise<boolean> {
+  async function saveNote(note: { title: string; body: string; uploadConsentVersion: number }): Promise<boolean> {
     const sessionId = await app.newSession();
     if (!sessionId) {
       toasts.push({ kind: 'error', title: 'No se pudo crear la nota', message: 'Inténtalo de nuevo en un momento.' });
       return false;
     }
-    const created = await app.newDoc(sessionId, { title: note.title, body: note.body, includeInContext: false });
+    const created = await app.newDoc(
+      sessionId,
+      { title: note.title, body: note.body, includeInContext: false },
+      note.uploadConsentVersion,
+    );
     if (!created) {
       toasts.push({ kind: 'error', title: 'No se pudo crear la nota', message: 'Inténtalo de nuevo en un momento.' });
       return false;
@@ -403,6 +407,18 @@
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12M6 10l6 6 6-6M4 20h16" /></svg>
                 </button>
+              {/if}
+              {#if d.uploadedByCaller}
+                <!-- 🔴 The upload consent receipt (`/documentos/[id]/constancia`): only the uploader's. -->
+                <a
+                  class="icon-btn"
+                  href={`/documentos/${encodeURIComponent(d.id)}/constancia`}
+                  aria-label="Constancia"
+                  title="Constancia"
+                  data-testid={`constancia-${d.id}`}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z" /><path d="M14 3v5h5M9 14l2 2 4-4" /></svg>
+                </a>
               {/if}
               <!-- 🔴 The only verb on this screen that destroys anything: danger tone, "Eliminar". -->
               <button

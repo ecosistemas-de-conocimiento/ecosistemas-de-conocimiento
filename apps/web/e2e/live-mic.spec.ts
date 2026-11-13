@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { adminCredentials } from './env';
+import { startRecordingWithConsent } from './consent';
 
 /**
  * Live mic: speak → partial text appears → stop → the recording uploads.
@@ -116,7 +117,7 @@ test('live mic shows partial text while recording, then uploads the recording', 
   test.skip(!SIM, `${SIM_REL} not found (set LIVE_SIM_FILE)`);
   await setUp(page);
 
-  await page.getByTestId('mic-start').click();
+  await startRecordingWithConsent(page);
   await expect(page.getByTestId('mic-clock')).toBeVisible();
 
   // SIM_0015 opens "Nací hace 76 años en Juchitán, Oaxaca".
@@ -134,7 +135,7 @@ test('?simvoz=1 feeds a picked file through the same path', async ({ page }) => 
   await setUp(page, '/?simvoz=1');
 
   const chooser = page.waitForEvent('filechooser');
-  await page.getByTestId('mic-start').click();
+  await startRecordingWithConsent(page);
   // WAV, not the m4a: Playwright's Chromium has no AAC decoder.
   await (await chooser).setFiles(WAV);
 

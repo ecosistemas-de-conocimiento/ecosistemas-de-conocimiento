@@ -1,5 +1,5 @@
 import { MAX_UPLOAD_BYTES, formatBytes } from './config';
-import { AUDIO_UPLOAD_ENABLED } from './uploadKind';
+import { AUDIO_UPLOAD_ENABLED, consentErrorCopy } from './uploadKind';
 
 /**
  * Map a BFF upload error code (see /api/sessions/[id]/documents +server.ts)
@@ -43,6 +43,10 @@ export function uploadErrorToast(
         title: 'Sin permiso para subir voces',
         message: 'Subir testimonios requiere el rol de investigador en este ecosistema.',
       };
+    // 🔴 The per-resource upload consent (`$lib/uploadConsent.ts`).
+    case 'upload_consent_required':
+    case 'consent_version_changed':
+      return consentErrorCopy(code)!;
     case 'invalid_content_kind':
       return { title: 'Tipo de material no válido', message: 'Elige Documento o Voz / testimonio.' };
     case 'media_upload_rejected':

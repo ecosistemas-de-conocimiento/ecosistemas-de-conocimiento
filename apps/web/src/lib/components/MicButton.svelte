@@ -12,12 +12,20 @@
    * the composer's state only, is shown to the speaker while recording, and is
    * dropped on stop: it never reaches the chat input (C-13).
    *
+   * 🔴 THE PER-RESOURCE UPLOAD CONSENT (`$lib/uploadConsent.ts`): the first
+   * tap opens the checkbox (testimonio wording); recording starts only once it
+   * is ticked, because the recording uploads on its own at stop and there is
+   * no later moment to ask. The version rides with THAT recording. The live
+   * text creates no resource and needs no consent.
+   *
    * Simulator (dev/test): `?simvoz=1` makes the button pick an audio file and
    * play it into the same recorder at real-time pace, instead of the mic.
    */
   import { onDestroy } from 'svelte';
   import { page } from '$app/stores';
-  import { IconButton } from '$lib/primitives';
+  import { Button, IconButton } from '$lib/primitives';
+  import UploadConsentCheck from './UploadConsentCheck.svelte';
+  import { UPLOAD_CONSENT_VERSION } from '$lib/uploadConsent';
   import { app } from '$lib/stores/app.svelte';
   import { toasts } from '$lib/stores/toasts.svelte';
   import { LiveUplink, liveLine } from '$lib/liveCapture';
@@ -34,6 +42,11 @@
   let saving = $state(false);
   let starting = $state(false);
   let elapsed = $state(0);
+  /** The consent checkbox is open; `consent` is never remembered between recordings. */
+  let asking = $state(false);
+  let consent = $state(false);
+  /** The consent version ticked for the recording in progress; consumed on upload. */
+  let recordingConsent: number | undefined;
 
   let recorder: MediaRecorder | null = null;
   let stream: MediaStream | null = null;
@@ -103,10 +116,19 @@
     timer = setInterval(() => (elapsed = Math.floor((Date.now() - t0) / 1000)), 500);
   }
 
+  function ask(): void {
+    if (recording || saving || starting) return;
+    asking = !asking;
+    consent = false;
+  }
+
   async function begin(): Promise<void> {
     // ⚠ `starting` covers the await on the permission prompt: without it a
     // second click there starts a second recorder on the same chunks.
-    if (recording || saving || starting) return;
+    if (recording || saving || starting || !consent) return;
+    asking = false;
+    consent = false;
+    recordingConsent = UPLOAD_CONSENT_VERSION;
     if (simulate) {
       fileInput?.click();
       return;
@@ -115,6 +137,7 @@
     try {
       await start(await navigator.mediaDevices.getUserMedia({ audio: true }));
     } catch {
+      recordingConsent = undefined;
       toasts.push({ kind: 'error', message: 'Sin acceso al micrófono.' });
     } finally {
       starting = false;
@@ -155,6 +178,8 @@
     const closing = uplink?.close();
     uplink = null;
     ontext(null);
+    const consentVersion = recordingConsent;
+    recordingConsent = undefined;
     if (!chunks.length) return;
     const ext = type.includes('mp4') ? 'm4a' : 'webm';
     const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h');
@@ -163,7 +188,9 @@
     saving = true;
     try {
       const sessionId = await app.ensureSession();
-      if (sessionId) await app.uploadDoc(sessionId, file, canUploadVoces ? 'testimonio' : 'documento');
+      if (sessionId) {
+        await app.uploadDoc(sessionId, file, canUploadVoces ? 'testimonio' : 'documento', false, consentVersion);
+      }
     } finally {
       saving = false;
       await closing;
@@ -181,6 +208,17 @@
 
   const clock = $derived(`${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`);
 </script>
+
+<span class="mic">
+{#if asking && !recording}
+  <div class="consent-pop" data-testid="mic-consent">
+    <UploadConsentCheck bind:checked={consent} kind="testimonio" testId="mic-consent-check" />
+    <div class="pop-foot">
+      <Button variant="ghost" size="sm" label="Cancelar" onClick={() => (asking = false)} />
+      <Button size="sm" label="Grabar" disabled={!consent} dataTestId="mic-consent-go" onClick={begin} />
+    </div>
+  </div>
+{/if}
 
 {#if simulate}
   <input
@@ -206,8 +244,9 @@
   <IconButton
     label={saving ? 'Guardando grabación' : 'Grabar'}
     disabled={disabled || saving || starting}
+    selected={asking}
     dataTestId="mic-start"
-    onClick={begin}
+    onClick={ask}
   >
     {#snippet icon()}
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -217,8 +256,34 @@
     {/snippet}
   </IconButton>
 {/if}
+</span>
 
 <style>
+  .mic {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .consent-pop {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.5rem);
+    z-index: 20;
+    display: grid;
+    gap: 0.5rem;
+    width: min(20rem, calc(100vw - 2rem));
+    padding: 0.75rem;
+    border: 1px solid var(--edc-color-elevated-border);
+    border-radius: var(--edc-radius-2);
+    background: var(--edc-color-surface-strong);
+    box-shadow: var(--edc-shadow-3);
+  }
+  .pop-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
   .clock {
     align-self: center;
     font-variant-numeric: tabular-nums;

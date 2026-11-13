@@ -642,3 +642,65 @@ describe('GET /api/sessions/[id]/documents — uploadedByCaller', () => {
     ]);
   });
 });
+
+// ── 🔴 The per-resource upload consent (contract §6) ──────────────────────
+
+describe('POST /api/sessions/[id]/documents — upload consent', () => {
+  const pdf = () => new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
+  const noteRequest = (extra: Record<string, unknown> = {}) =>
+    new Request('http://chat.test/api/sessions/42/documents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Nota', bodyMarkdown: 'x', ...extra }),
+    });
+  const sentBody = () => JSON.parse((mockedBackendFetch.mock.calls[0]![2] as RequestInit).body as string);
+  const refusal = (message: string, status: number) =>
+    new Response(JSON.stringify({ errors: [{ message }] }), { status });
+
+  it('forwards the ticked version on a file upload', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 9 } }), { status: 200 }));
+    mockedBackendFetch.mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 3 } }), { status: 201 }));
+    await POST(makeEvent({ request: multipartRequest(pdf(), { uploadConsentVersion: '1' }) }));
+    expect(sentBody().uploadConsentVersion).toBe(1);
+  });
+
+  it('names no version when the browser sent none (the backend refuses)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 9 } }), { status: 200 }));
+    mockedBackendFetch.mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 3 } }), { status: 201 }));
+    await POST(makeEvent({ request: multipartRequest(pdf()) }));
+    expect(sentBody()).not.toHaveProperty('uploadConsentVersion');
+  });
+
+  it.each([
+    ['upload_consent_required', 400],
+    ['consent_version_changed', 409],
+  ])('a file upload refused with %s answers that code', async (message, status) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 9 } }), { status: 200 }));
+    mockedBackendFetch.mockResolvedValueOnce(refusal(message, status)).mockResolvedValueOnce(new Response('{}'));
+    const res = await POST(makeEvent({ request: multipartRequest(pdf(), { uploadConsentVersion: '1' }) }));
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: message });
+  });
+
+  it('forwards the ticked version on a note', async () => {
+    mockedBackendFetch.mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 3 } }), { status: 201 }));
+    await POST(makeEvent({ request: noteRequest({ uploadConsentVersion: 1 }) }));
+    expect(sentBody().uploadConsentVersion).toBe(1);
+  });
+
+  it('a note without it names none', async () => {
+    mockedBackendFetch.mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 3 } }), { status: 201 }));
+    await POST(makeEvent({ request: noteRequest({ uploadConsentVersion: 'sí' }) }));
+    expect(sentBody()).not.toHaveProperty('uploadConsentVersion');
+  });
+
+  it.each([
+    ['upload_consent_required', 400],
+    ['consent_version_changed', 409],
+  ])('a note refused with %s answers that code, not Payload’s body', async (message, status) => {
+    mockedBackendFetch.mockResolvedValueOnce(refusal(message, status));
+    const res = await POST(makeEvent({ request: noteRequest({ uploadConsentVersion: 1 }) }));
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: message });
+  });
+});

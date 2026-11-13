@@ -1,5 +1,5 @@
 import { safeErrMessage } from '$lib/errorSummary';
-import type { UploadContentKind } from '$lib/uploadKind';
+import { consentErrorCopy, type UploadContentKind } from '$lib/uploadKind';
 import type {
   DocKind,
   IngestStatus,
@@ -1178,7 +1178,16 @@ class AppStore {
   }
 
   // ── doc ops ────────────────────────────────────────────────────────────
-  async newDoc(sessionId: string, seed?: Partial<WorkingDoc>): Promise<WorkingDoc | null> {
+  /**
+   * `uploadConsentVersion`: the per-resource consent the person ticked
+   * (`$lib/uploadConsent.ts`); sent only when given. The backend refuses a
+   * note without it.
+   */
+  async newDoc(
+    sessionId: string,
+    seed?: Partial<WorkingDoc>,
+    uploadConsentVersion?: number,
+  ): Promise<WorkingDoc | null> {
     try {
       const data = await fetchJson<{ doc: Record<string, unknown> }>(
         `/api/sessions/${sessionId}/documents`,
@@ -1191,6 +1200,7 @@ class AppStore {
             isPinned: seed?.includeInContext ?? true,
             kind: 'markdown',
             mode: 'full-text',
+            ...(uploadConsentVersion !== undefined ? { uploadConsentVersion } : {}),
           }),
           credentials: 'same-origin',
         },
@@ -1202,6 +1212,8 @@ class AppStore {
       return created;
     } catch (err) {
       console.error('newDoc failed', safeErrMessage(err));
+      const consent = consentErrorCopy(err instanceof Error ? err.message : null);
+      if (consent) toasts.push({ kind: 'error', ...consent });
       return null;
     }
   }
@@ -1282,6 +1294,8 @@ class AppStore {
     contentKind: UploadContentKind = 'documento',
     /** "Anonimizar": a documento whose text passes the gate before anyone else reads it. */
     anonymise = false,
+    /** The per-resource consent the person ticked (`$lib/uploadConsent.ts`); sent only when given. */
+    uploadConsentVersion?: number,
   ): Promise<WorkingDoc | null> {
     // Client-side gate. Server enforces it too; this saves a round-trip and
     // gives the user a specific reason without a server 413.
@@ -1317,6 +1331,7 @@ class AppStore {
       form.append('isPinned', 'true');
       form.append('contentKind', contentKind);
       if (anonymise) form.append('anonymise', 'true');
+      if (uploadConsentVersion !== undefined) form.append('uploadConsentVersion', String(uploadConsentVersion));
       const res = await fetch(`/api/sessions/${sessionId}/documents`, {
         method: 'POST',
         body: form,

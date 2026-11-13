@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Response } from '@playwrigh
 import { elegirEcosistema, limpiar, renombrarActiva, tarjeta } from './comun';
 import { RUN_ID, abrirPanel, cerrarPanel, cerrarSesion, escena, iniciarSesion, instalarSubtitulos, ir } from './escena';
 import { nuevaConversacion, soloV3 } from './v3';
+import { consentInPanel } from '../consent';
 
 soloV3();
 
@@ -220,6 +221,7 @@ test('estudiante nota', async ({ page }) => {
         { timeout: 60_000 },
       );
       await page.getByRole('button', { name: 'Nueva nota' }).first().click();
+      await consentInPanel(page);
       const res = await creada;
       expect(res.ok(), `nueva nota: HTTP ${res.status()}`).toBe(true);
       id = String(((await res.json()) as { doc: { id: string | number } }).doc.id);

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { expect, type Locator, type Page, type Response } from '@playwright/test';
 import { RUN_ID, abrirPanel, archivoDePrueba, cerrarPanel, escena, ir } from './escena';
+import { consentInPanel, startRecordingWithConsent } from '../consent';
 
 /**
  * Stories every role shares, recorded the same way in every video. Each role's
@@ -126,6 +127,7 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
     await abrirPanel(page, 'documents');
     const chooser = page.waitForEvent('filechooser');
     await page.getByRole('button', { name: /^Subir documento/ }).first().click();
+    await consentInPanel(page);
     await (await chooser).setFiles(archivoDePrueba('documento'));
     await expect
       .poll(() => page.getByLabel('Título del documento').evaluateAll((els, run) => els.some((e) => (e as HTMLInputElement).value.includes(run)), RUN_ID), { timeout: 60_000 })
@@ -136,6 +138,7 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
   });
   await escena(page, 'C1.2', async () => {
     await page.getByRole('button', { name: 'Nueva nota' }).first().click();
+    await consentInPanel(page);
     // fix/markdown-rendering: a note may open on its preview; open the editor first.
     const editar = page.locator('[data-testid^="note-edit-open-"]').last();
     if (await editar.isVisible().catch(() => false)) await editar.click();
@@ -234,6 +237,7 @@ export async function audio(page: Page): Promise<void> {
       const chooser = page.waitForEvent('filechooser');
       // The name says audio upload is on for this ecosistema.
       await page.getByRole('button', { name: 'Subir documento o audio' }).first().click();
+      await consentInPanel(page);
       await (await chooser).setFiles(audioDePrueba());
     });
     const card = tarjeta(page, id);
@@ -273,7 +277,7 @@ export async function audio(page: Page): Promise<void> {
   await escena(page, 'B3.1', async () => {
     const vivo = page.getByTestId('live-text');
     const grabacion = await esperarSubida(page, async () => {
-      await page.getByTestId('mic-start').click();
+      await startRecordingWithConsent(page);
       await expect(page.getByTestId('mic-clock')).toBeVisible();
       // A real word, not the '…' placeholder (`MicButton` shows it until the first slice).
       await expect(vivo).toHaveText(/\p{L}{4,}/u, { timeout: 30_000 });

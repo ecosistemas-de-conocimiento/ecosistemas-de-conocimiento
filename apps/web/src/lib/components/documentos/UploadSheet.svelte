@@ -3,8 +3,9 @@
 <script lang="ts">
   /**
    * "Subir" in Mis documentos: a short stepped flow in a modal dialog.
-   * Archivo → (Tipo) → Listo. The Tipo step only exists for someone with a
-   * choice (`hasOptions`: `voces:upload`); everyone else picks and it goes up.
+   * Archivo → Tipo / Confirmar → Listo. The middle step always exists: it holds
+   * the upload consent checkbox (🔴 `$lib/uploadConsent.ts`, unchecked every
+   * time), plus the kind choice for someone with one (`voces:upload`).
    *
    * Posts to `POST /api/documentos` (no conversation). Errors stay INSIDE the
    * dialog: a toast would sit under the modal's backdrop.
@@ -23,7 +24,9 @@
     uploadButtonTitle,
     type UploadContentKind,
   } from '$lib/uploadKind';
-  import { fileTile, UPLOAD_STEP_LABELS, uploadFormats, uploadSteps, type UploadStep } from '$lib/misDocumentos';
+  import { fileTile, UPLOAD_STEPS, uploadFormats, uploadStepLabel, type UploadStep } from '$lib/misDocumentos';
+  import { UPLOAD_CONSENT_VERSION } from '$lib/uploadConsent';
+  import UploadConsentCheck from '../UploadConsentCheck.svelte';
 
   let {
     open = $bindable(false),
@@ -44,11 +47,13 @@
   let contentKind = $state<UploadContentKind>('documento');
   /** 🔴 On by default for a `documento` (ADR-0020: the most protective value). */
   let anonymise = $state(true);
+  /** 🔴 Never remembered: every resource is consented on its own. */
+  let consent = $state(false);
   let uploading = $state(false);
   let dragging = $state(false);
   let error = $state<{ title: string; message: string } | null>(null);
 
-  const steps = $derived(uploadSteps(hasOptions));
+  const steps = UPLOAD_STEPS;
   const stepIndex = $derived(steps.indexOf(step));
 
   function reset() {
@@ -56,6 +61,7 @@
     file = null;
     contentKind = 'documento';
     anonymise = true;
+    consent = false;
     error = null;
     dragging = false;
   }
@@ -88,8 +94,8 @@
       return;
     }
     file = f;
-    if (hasOptions) step = 'opciones';
-    else void send();
+    consent = false;
+    step = 'opciones';
   }
 
   function onPicked(e: Event) {
@@ -106,7 +112,7 @@
   }
 
   async function send() {
-    if (!file || uploading) return;
+    if (!file || uploading || !consent) return;
     uploading = true;
     error = null;
     try {
@@ -116,6 +122,7 @@
         form.append('contentKind', contentKind);
         if (contentKind === 'documento' && anonymise) form.append('anonymise', 'true');
       }
+      form.append('uploadConsentVersion', String(UPLOAD_CONSENT_VERSION));
       const res = await fetch('/api/documentos', { method: 'POST', body: form });
       if (!res.ok) {
         const code = ((await res.json().catch(() => ({}))) as { error?: string }).error;
@@ -165,7 +172,7 @@
       {#each steps as s, i (s)}
         <li class="step" class:done={i < stepIndex} class:current={i === stepIndex} aria-current={i === stepIndex ? 'step' : undefined}>
           <span class="dot" aria-hidden="true">{i < stepIndex ? '✓' : i + 1}</span>
-          <span>{UPLOAD_STEP_LABELS[s]}</span>
+          <span>{uploadStepLabel(s, hasOptions)}</span>
         </li>
       {/each}
     </ol>
@@ -225,19 +232,21 @@
         <button type="button" class="link" onclick={() => fileInput?.click()} disabled={uploading}>Cambiar</button>
       </div>
 
-      <fieldset class="kinds" disabled={uploading}>
-        <legend>Tipo</legend>
-        <div class="kind-options">
-          {#each UPLOAD_CONTENT_KINDS as k (k)}
-            <label class="kind">
-              <input type="radio" name="upload-kind" value={k} bind:group={contentKind} data-testid={`upload-kind-${k}`} />
-              <span>{UPLOAD_KIND_LABELS[k]}</span>
-            </label>
-          {/each}
-        </div>
-      </fieldset>
+      {#if hasOptions}
+        <fieldset class="kinds" disabled={uploading}>
+          <legend>Tipo</legend>
+          <div class="kind-options">
+            {#each UPLOAD_CONTENT_KINDS as k (k)}
+              <label class="kind">
+                <input type="radio" name="upload-kind" value={k} bind:group={contentKind} data-testid={`upload-kind-${k}`} />
+                <span>{UPLOAD_KIND_LABELS[k]}</span>
+              </label>
+            {/each}
+          </div>
+        </fieldset>
+      {/if}
 
-      {#if contentKind === 'documento'}
+      {#if hasOptions && contentKind === 'documento'}
         <label class="switch">
           <input type="checkbox" role="switch" bind:checked={anonymise} disabled={uploading} data-testid="owned-anonymise" />
           <span class="track" aria-hidden="true"><span class="thumb"></span></span>
@@ -245,9 +254,15 @@
         </label>
       {/if}
 
+      <UploadConsentCheck
+        bind:checked={consent}
+        kind={hasOptions && contentKind === 'testimonio' ? 'testimonio' : 'documento'}
+        disabled={uploading}
+      />
+
       <div class="foot">
         <Button variant="ghost" label="Atrás" disabled={uploading} onClick={() => ((step = 'archivo'), (file = null))} />
-        <Button label={uploading ? 'Subiendo…' : 'Subir'} loading={uploading} disabled={uploading} dataTestId="upload-send" onClick={send} />
+        <Button label={uploading ? 'Subiendo…' : 'Subir'} loading={uploading} disabled={uploading || !consent} dataTestId="upload-send" onClick={send} />
       </div>
     {:else if step === 'listo'}
       <div class="finished" role="status" data-testid="upload-done">
