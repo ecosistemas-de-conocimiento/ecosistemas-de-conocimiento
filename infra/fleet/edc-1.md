@@ -1,6 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` (`[[wikilink]]` graph seeds, student
+**Status:** live since 2026-10-17. Dev runs `main` at `db9a4456` (per-resource upload consent with
+`consent_receipts`, the constancia page, a public `/privacidad`; migration `20261113_015634_consent_receipts` applied
+on start), deployed 2026-11-13 03:21 UTC — see §4zzzzzzzzzzzzzz. Before that, the deploys and dev data fixes of
+2026-10-29 to 2026-11-12 — §4zz to §4zzzzzzzzzzzzz. Before that (`[[wikilink]]` graph seeds, student
 notes on "Publicar" and "Publicar cambios", `.xls` uploads; migrations `20261028_170129`,
 `20261028_231948` with the `processed_body` backfill and `20261028_235647` applied on start), deployed
 2026-10-29 00:24 UTC — see §4zy. Before that (per-ecosistema answer style, `/grafo` org 6
@@ -3088,6 +3091,68 @@ $0.000007. 0 error/fatal lines 20:29-20:32 in backend, ai-service, web, postgres
 Measured by an agent on edc-1, dev only, owner-authorised. Doc 377 (org 6, uploader user 1) had `anonymise` on and gate `ready` but was left `draft` by the re-gate script. As the seed admin (= user 1; credentials read from the backend container's env by node, never printed): `POST /api/users/login` 200, `POST /api/documents/377/publish` 202 at 20:44:01.
 `psql` 20:44:14: `publication_status` published, `publication_error` empty, `ingest_status` ready, `publish_ingest_id` NULL; `edc_ai` holds the row in corpus `eco-6` (1 chunk, open validity), and the `eco-6-draft-1` copy has `valid_to` 20:44:08. `graph_status` still `pending` (not followed).
 Doc 375 not touched (still `held`/`draft`, waiting for Revisión). 0 `error`/`fatal` lines in the 9 dev containers from 20:43:30, apart from the agent's own mistyped read-only `psql` query on postgres.
+
+### 4zzzzzzzzzzzzzz. Done 2026-11-13 03:11-03:26 UTC: dev only - one migration; per-resource upload consent
+
+Measured by the deploy agent from the owner's laptop and on edc-1. Staging not touched (no read either). Range
+`f971d54c` (§4zzzzzzzzzzz) -> `db9a4456`, 20 commits (15 without merges): per-resource upload consent (a ticked
+checkbox in the five upload entries, the backend refuses a create without `uploadConsentVersion`, one
+`consent_receipts` row per upload), the printable constancia `/documentos/<id>/constancia`, a public `/privacidad`,
+and the Etapa 1 closing docs. One backend migration, `20261113_015634_consent_receipts`. Under `infra/` only this file
+changed (`git diff --name-only f971d54c..db9a4456 -- infra/`), so no variable check (§4 footgun 1).
+
+Pre-check: `docker ps` web, backend and ai-service on `f971d54c`; `GET /api/v1/deployments` empty (before the backup
+and again right before the deploy); GitHub `main` = `db9a4456` (`git ls-remote`); 0 active queries on
+`edc_backend`; `payload_migrations` 25, last batch 17; `consent_receipts` absent (`to_regclass`); 15 users, 1103
+documents; 184 rows with `consent_held`.
+
+Backup `/root/backups/20261113T0312Z/` under `umask 077`, 03:12:59-03:13:52: `edc_ai` 299 MB, `edc_backend` 18 MB,
+plus `documents`, `organizations`, `platform_settings` and `anonymisation_setting_changes` alone, 17 MB (`du -sh`);
+`pg_restore -l` 152 / 507 / 75 lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's
+`cide/backups/edc-1/20261113T0312Z/` under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
+
+| deploy | uuid | queued -> finished (UTC) |
+|---|---|---|
+| first | `4lcl4hdx1fmfcn91ywb4zhyu` | 03:14:48 -> 03:21:10 |
+
+**Migration** at start (backend log): 03:21:15 "Migrating: 20261113_015634_consent_receipts", "Migrated (87ms)",
+`Done.`, "Ready in 859ms". `payload_migrations` 26 (+1), last batch 18; `consent_receipts` exists with 10 columns
+(ids, `document_id_snapshot`, `organization_id`, `actor_id`, two enums, `consent_version`, timestamps; no text
+column), 0 rows before the smoke. After: 9 dev containers up, web, backend and ai-service on tag `db9a4456` (`docker
+ps`), 7 with a healthcheck all healthy.
+
+**Smoke**, 03:21-03:24, through `https://dev.ecosistemasdeconocimiento.com` with an `Origin` header; uploader
+`EDC_DEV_INVESTIGADOR_*` (user 2, org 7), other user `EDC_DEV_PARTICIPANT_*`; small generated PDF:
+
+| check | result |
+|---|---|
+| health | `dev.` and `api.dev.` `/api/health` 200 (after the deploy and again after cleanup); ai-service `/health` 200 inside its container |
+| login, both users, web `POST /api/auth/login` | 200, 200; session 359 created |
+| 1. multipart upload to `/api/sessions/359/documents` without `uploadConsentVersion` | 400 `{"error":"upload_consent_required"}`; no new `documents` row and no media row left (`psql`) |
+| 2. same with `uploadConsentVersion=1` | body `{"doc":{"id":1463,...}}` (the status code was not captured: the agent's pipe cut the output; 201 inferred from Payload's create passed through `backendJson`), doc 1463 in `psql`; `consent_receipts` exactly 1 row: `document_id` 1463, snapshot 1463, org 7, `actor_id` 2, `kind` upload, `consent_version` 1, `content_kind` documento |
+| 3. constancia | `/documentos/1463/constancia/__data.json` (the page is client-rendered, `ssr = false`): uploader 200 with folio `EDC-2026-000001`; participant 200 carrying the error node 404 `kind: not-found`, `module: constancia`. Backend `GET /api/documents/1463/constancia`: uploader 200 (folio, version 1, ecosistema 7), participant 404 `not_found` |
+| 4. `/privacidad`, no session | 200, stays on `/privacidad`; headless Chromium shows «Borrador sin validación jurídica» (the shell HTML alone has no text) |
+| 5. headless Chromium, uploader: `/documentos` -> Subir -> PDF chosen | checkbox unticked, Subir disabled; link "aviso de privacidad" -> `/privacidad`; after ticking, Subir enabled. Not sent |
+
+Logs from 03:21:00 to 03:23:55: 0 `error`/`fatal` lines in 7 of 9; backend 1, the expected `upload_consent_required`
+of check 1; postgres only the agent's own mistyped read-only `usage_logs` queries.
+
+Spend: `usage_logs` since 03:10 UTC, all from this run: 1 `edc-eco-7` `/v1/ingest` `baai/bge-m3` row (10 input tokens)
+and 1 `budget-reset` row, $0.000000. No chat was run.
+
+**Cleanup**, 03:23:42: as the uploader, `DELETE /api/documents/1463` 200 and `DELETE /api/sessions/359` 200. After
+(`psql`): documents 1103, no id above 1426, media 1137 gone, session 359 gone. The receipt stays, by design:
+`document_id` NULL, `document_id_snapshot` 1463 (`set null` FK, see the migration's header). Cookie files deleted from
+the laptop.
+
+**Images and disk** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): `docker rmi` of
+dev's `6c0f65ad` images (backend, ai-service, web); the `f971d54c` images stay for rollback. `docker builder prune
+-af` (14.88 GB). `df -h /` free: 51 GB before, 37 GB after the build, 51 GB after the cleanup.
+
+**Retention** (§7 step 7), dev only: with the new stamp dev held 8; `20261029T0643Z` (dev files only) deleted in
+`/root/backups/` and in the laptop copy, 331.1 MB freed on each side (`du -sb`). Dev keeps `20261110T0538Z`,
+`20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z`, `20261112T1934Z` and `20261113T0312Z`,
+`sha256sum -c` OK on both sides after; staging's 7 unchanged.
 
 ---
 
