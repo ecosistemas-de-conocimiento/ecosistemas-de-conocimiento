@@ -213,7 +213,7 @@ El brief (§5) proponía roles preliminares. Así quedaron en la Etapa 1:
 | Admin de ecosistema | `owner` (responsable); `investigador` para todo menos Ajustes | El valor `admin` existe pero no se ofrece (ver anomalía) |
 | Usuario contribuidor | `member` (participante) | Publicación automática con `autoPublishMembers` |
 | Moderador-facilitador | Sin equivalente directo; lo más cercano es `investigador`, que revisa y publica | Pendiente |
-| Capturador | No existe | Pendiente; ver [historias del brief no implementadas](historias-de-usuario.md#historias-del-brief-no-implementadas) |
+| Capturador | No existe como rol; lo cubre `voces:upload` (administra, investigador, responsable) | Distinto del brief: no se registra de quién es la voz; ver [historias del brief no implementadas](historias-de-usuario.md#historias-del-brief-no-implementadas) |
 | (no previsto) | `estudiante` | Se agregó para el ecosistema Semiosis práctica, con la vista de estudiante |
 
 ## Referencias

@@ -83,7 +83,7 @@ El brief v1 §5 proponía, como preliminares: super admin, admin de ecosistema, 
 | Admin de ecosistema | `owner` (responsable); `investigador` para todo menos Ajustes |
 | Usuario contribuidor | `member` (participante) |
 | Moderador-facilitador | No existe como rol. Sus tareas de revisión las hacen `admin`, `investigador` y `owner` |
-| Capturador | No existe. Ver [Visión y alcance](vision-y-alcance.md) §7 |
+| Capturador | No existe como rol propio; lo cubre quien tiene el permiso `voces:upload` (administra, investigador, responsable), sin registrar de quién es la voz. Ver [Visión y alcance](vision-y-alcance.md) §7 |
 
 Los roles `estudiante` e `investigador` no estaban en el brief; nacieron con la vista de estudiante y con la necesidad de dar acceso de gestión limitado a investigadores (decisiones del responsable de desarrollo, octubre de 2026).
 
@@ -147,7 +147,7 @@ Cada término lleva una definición en lenguaje llano y, cuando aplica, su nombr
 | **Métrica de divergencia** | Cuánto se separan los enunciados de los estudiantes de una línea base generada por IA. Es el componente analítico independiente del software | Informe del 21 de octubre §VII |
 | **Auditoría comunitaria** | La sesión en que la comunidad juzga las resonancias («esto nos representa / esto no»). El veredicto es dato del proyecto | Reunión del 18 de abril §3.4; brief v1 §3 |
 | **Ciclo** | Captura, categorización, resonancia, auditoría y retroalimentación, y vuelta a empezar | Brief v1 §3 |
-| **Capturador** | La persona que registra en campo contribuciones de terceros a nombre de ellos. No existe en la plataforma | Síntesis del kickoff; brief v1 §4 |
+| **Capturador** | La persona que registra en campo contribuciones de terceros a nombre de ellos. No existe como rol; quien tiene el permiso `voces:upload` (administra, investigador, responsable) sube testimonios de terceros sin registrar de quién es la voz | Síntesis del kickoff; brief v1 §4 |
 | **Moderador o facilitador** | Figura intermedia, prioritaria para el trabajo de campo. No existe como rol en la plataforma | Kickoff; brief v1 §5 |
 | **Comprobante ético** | La constancia de cada contribución: aviso de privacidad, consentimiento informado y folio único descargable en PDF. En la plataforma, desde el 2026-11-12, es la constancia de cada subida, con folio `EDC-AAAA-NNNNNN` (`/documentos/<id>/constancia`), que el navegador guarda como PDF | Brief v1 §3; síntesis del kickoff |
 | **Operación** | El procedimiento sostenido para capturar voces en territorio. Es la hipótesis central de la Etapa 2 | Informe del 21 de octubre §I |

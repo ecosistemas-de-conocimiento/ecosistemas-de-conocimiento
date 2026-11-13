@@ -123,7 +123,7 @@ El brief v1 §4 fija dos entregables «según convenio» y tres criterios de éx
 | 9 | Panel del participante con historial | **Entregado** | «Mis documentos», lista de conversaciones y la vista de estudiante con sus temas y autores |
 | 10 | Vista administrativa con distribución por categorías y perfil | **Parcial** | `/admin` muestra resumen del ecosistema, quién ha aportado y todos los documentos con filtros; `/admin/evals` mide calidad. No hay distribución por perfil porque no hay perfil |
 | 11 | Multi-ecosistema con acceso y roles por ecosistema | **Entregado** | Cada ecosistema es una organización aislada, con su propio acervo en el servicio de IA (`edc-eco-<id>`), cinco roles por ecosistema y un administrador de plataforma. Ver [Actores y glosario](actores-y-glosario.md) |
-| 12 | Figura del capturador | **No construido** | Ver §7 |
+| 12 | Figura del capturador | **Distinto** | Lo cubre quien tiene el permiso `voces:upload` (administra, investigador, responsable): sube testimonios de otras personas sin registrar de quién es la voz, por «Voces sin sujeto». Ver §7 |
 
 Lo que se entregó y el brief no pedía:
 
