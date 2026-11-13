@@ -8,6 +8,7 @@
  */
 
 import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import path from 'node:path'
 
 /** Repo root, from `apps/backend/src/eval/`. */
@@ -73,7 +74,7 @@ export function loadEvalEnv(root = REPO_ROOT): EvalEnv {
     orgKey: e.ORG_KEY?.trim() || 'edc',
     graphMinSupport: Number.isFinite(minSupport) && minSupport >= 1 ? Math.floor(minSupport) : 3,
     corpusRoot:
-      process.env.EVAL_CORPUS_ROOT ?? '~/chamba/cide/corpus-generativo/resultados',
+      process.env.EVAL_CORPUS_ROOT ?? path.join(homedir(), 'chamba/cide/corpus-generativo/resultados'),
   }
 }
 

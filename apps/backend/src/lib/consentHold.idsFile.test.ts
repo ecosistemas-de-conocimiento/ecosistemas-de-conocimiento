@@ -1,11 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 
 import { describe, expect, it } from 'vitest'
 
 import { parseConsentIdsFile } from './consentHold'
 
 /** The workshop list kept outside the repo (2026-11-10); checked only where it exists. */
-const WORKSHOP_LIST = '~/chamba/cide/plan/orchestration/taller-2026-11-10/consent-ids.txt'
+const WORKSHOP_LIST = `${homedir()}/chamba/cide/plan/orchestration/taller-2026-11-10/consent-ids.txt`
 
 describe('parseConsentIdsFile', () => {
   it('reads the first column, skips comments and blanks, leaves out EXTRA-NO-TALLER', () => {

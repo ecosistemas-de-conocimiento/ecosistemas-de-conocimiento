@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { expect, test, type Page } from '@playwright/test';
 import { historia } from './historias';
 
@@ -59,8 +60,8 @@ export function credenciales(cuenta: Cuenta): { email: string; password: string 
   const k = KEYS[cuenta];
   const file =
     k.file === 'env'
-      ? (process.env.EVID_ENV_FILE ?? '~/chamba/cide/.env')
-      : (process.env.EVID_DEMO_USERS_FILE ?? '~/chamba/cide/.env.demo-users');
+      ? (process.env.EVID_ENV_FILE ?? `${homedir()}/chamba/cide/.env`)
+      : (process.env.EVID_DEMO_USERS_FILE ?? `${homedir()}/chamba/cide/.env.demo-users`);
   const vars = parseDotenv(file);
   const email = process.env[k.email] ?? vars.get(k.email);
   const password = process.env[k.password] ?? vars.get(k.password);

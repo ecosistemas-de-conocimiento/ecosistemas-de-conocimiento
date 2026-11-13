@@ -37,6 +37,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import path from 'node:path'
 
 import type { Payload } from 'payload'
@@ -45,7 +46,7 @@ import type { OrgRole } from '../lib/permissions'
 
 import { manualSeedAllowed, manualSeedGateReason } from './env-gate'
 
-export const DEFAULT_DEMO_USERS_FILE = '~/chamba/cide/.env.demo-users'
+export const DEFAULT_DEMO_USERS_FILE = path.join(homedir(), 'chamba/cide/.env.demo-users')
 
 export interface DemoUser {
   /** The env-file key stem, e.g. `ESTUDIANTE1`. */

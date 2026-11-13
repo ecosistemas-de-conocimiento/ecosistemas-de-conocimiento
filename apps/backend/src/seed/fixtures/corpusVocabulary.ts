@@ -23,13 +23,13 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
 
-export const SEMIOTICA_CORPUS_DIR = '~/chamba/cide/plan/docs/Textos del proyecto/Semiótica'
+export const SEMIOTICA_CORPUS_DIR = path.join(homedir(), 'chamba/cide/plan/docs/Textos del proyecto/Semiótica')
 
 export const foldWord = (w: string): string =>
   w
