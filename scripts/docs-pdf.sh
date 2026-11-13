@@ -8,7 +8,7 @@
 # ADR después de adr/README.md). Los enlaces entre docs son anclas internas
 # del PDF; un enlace a otro archivo del repo apunta a GitHub blob/main.
 #
-# Requiere: pandoc, google-chrome (o CHROME=...), python3 con pypdf y
+# Requiere: pandoc, google-chrome (o CHROME=...), qpdf, python3 con pypdf y
 # reportlab, y mermaid.min.js: MERMAID_JS=/ruta, o se descarga una vez
 # (versión fija) a ~/.cache/edc-docs-pdf/.
 #
@@ -74,6 +74,10 @@ echo "== imprimir (2/2: final)" >&2
 python3 "$AQUI/ensamblar.py" "$REPO" "$TMP/docs.html" "$FECHA" "$TMP/paginas.json" 2>/dev/null
 chrome_pdf "$TMP/docs.html" "$TMP/p2.pdf"
 mkdir -p "$(dirname "$SALIDA")"
-python3 "$AQUI/terminar.py" final "$TMP/p2.pdf" "$TMP/docs.html.json" "$SALIDA" "$FECHA"
+python3 "$AQUI/terminar.py" final "$TMP/p2.pdf" "$TMP/docs.html.json" "$TMP/final.pdf" "$FECHA"
+# pypdf deja los flujos sin comprimir (~58 MB); qpdf los comprime (~9 MB).
+qpdf --object-streams=generate --compress-streams=y --recompress-flate \
+  --compression-level=9 "$TMP/final.pdf" "$SALIDA"
+python3 "$AQUI/terminar.py" verificar "$SALIDA" "$TMP/docs.html.json"
 echo "diagramas: $DIAGRAMAS, con error: $(grep -c . <<<"$ROTOS" || true)" >&2
 echo "listo: $SALIDA" >&2

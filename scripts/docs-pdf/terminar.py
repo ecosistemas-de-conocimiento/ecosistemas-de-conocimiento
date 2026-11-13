@@ -3,8 +3,9 @@
   terminar.py paginas <pdf> <docs.html.json> <paginas.json>
       página (1-based) donde empieza cada capítulo, para el índice.
   terminar.py final <pdf> <docs.html.json> <salida.pdf> <fecha>
-      marcadores por capítulo, número de página al pie, metadatos y
-      verificación: 0 file://, todas las anclas internas resuelven.
+      marcadores por capítulo, número de página al pie y metadatos.
+  terminar.py verificar <pdf> <docs.html.json>
+      0 file://, todas las anclas internas resuelven (sale con error si no).
 """
 import io
 import json
@@ -34,55 +35,59 @@ if modo == "paginas":
     json.dump(inicios(reader, capitulos), open(sys.argv[4], "w"))
     sys.exit(0)
 
-salida, fecha = sys.argv[4], sys.argv[5]
-pags = inicios(reader, capitulos)
-n = len(reader.pages)
+if modo == "verificar":
+    salida = pdf
+else:
+    salida, fecha = sys.argv[4], sys.argv[5]
+    pags = inicios(reader, capitulos)
+    n = len(reader.pages)
 
-# Pie: «n / N» desde la página 2 (la portada va sin número).
-buf = io.BytesIO()
-c = canvas.Canvas(buf, pagesize=A4)
-for i in range(1, n + 1):
-    if i > 1:
-        c.setFont("Helvetica", 8)
-        c.setFillGray(0.35)
-        c.drawCentredString(A4[0] / 2, 9 * 2.8346, f"{i} / {n}")
-    c.showPage()
-c.save()
-pie = PdfReader(io.BytesIO(buf.getvalue()))
+    # Pie: «n / N» desde la página 2 (la portada va sin número).
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    for i in range(1, n + 1):
+        if i > 1:
+            c.setFont("Helvetica", 8)
+            c.setFillGray(0.35)
+            c.drawCentredString(A4[0] / 2, 9 * 2.8346, f"{i} / {n}")
+        c.showPage()
+    c.save()
+    pie = PdfReader(io.BytesIO(buf.getvalue()))
 
-w = PdfWriter(clone_from=reader)
-for i, p in enumerate(w.pages):
-    if i > 0:
-        p.merge_page(pie.pages[i])
+    w = PdfWriter(clone_from=reader)
+    for i, p in enumerate(w.pages):
+        if i > 0:
+            p.merge_page(pie.pages[i])
 
-w.add_outline_item("Índice", 1)
-grupos = {}
-NOMBRES = {"01": "01 Proyecto", "02": "02 Requisitos", "03": "03 Arquitectura", "04": "04 Datos",
-           "05": "05 Infraestructura", "06": "06 Privacidad y seguridad", "07": "07 Calidad",
-           "08": "08 Manuales"}
-adr_padre = None
-for sid, r, titulo in capitulos:
-    pg = pags[sid] - 1
-    g = r.split("/")[0][:2] if "/" in r else None
-    padre = None
-    if g in NOMBRES:
-        if g not in grupos:
-            grupos[g] = w.add_outline_item(NOMBRES[g], pg)
-        padre = grupos[g]
-    if "/adr/ADR-" in "/" + r and adr_padre is not None:
-        padre = adr_padre
-    item = w.add_outline_item(titulo, pg, parent=padre)
-    if r.endswith("adr/README.md"):
-        adr_padre = item
-w.page_mode = "/UseOutlines"
-w.add_metadata({
-    "/Title": "Ecosistemas de Conocimiento · Documentación de la Etapa 1",
-    "/Subject": f"Documentación de docs/ en la rama main del {fecha}",
-    "/Creator": "scripts/docs-pdf.sh",
-    "/Producer": "pandoc + Chrome + pypdf",
-})
-with open(salida, "wb") as f:
-    w.write(f)
+    w.add_outline_item("Índice", 1)
+    grupos = {}
+    NOMBRES = {"01": "01 Proyecto", "02": "02 Requisitos", "03": "03 Arquitectura", "04": "04 Datos",
+               "05": "05 Infraestructura", "06": "06 Privacidad y seguridad", "07": "07 Calidad",
+               "08": "08 Manuales"}
+    adr_padre = None
+    for sid, r, titulo in capitulos:
+        pg = pags[sid] - 1
+        g = r.split("/")[0][:2] if "/" in r else None
+        padre = None
+        if g in NOMBRES:
+            if g not in grupos:
+                grupos[g] = w.add_outline_item(NOMBRES[g], pg)
+            padre = grupos[g]
+        if "/adr/ADR-" in "/" + r and adr_padre is not None:
+            padre = adr_padre
+        item = w.add_outline_item(titulo, pg, parent=padre)
+        if r.endswith("adr/README.md"):
+            adr_padre = item
+    w.page_mode = "/UseOutlines"
+    w.add_metadata({
+        "/Title": "Ecosistemas de Conocimiento · Documentación de la Etapa 1",
+        "/Subject": f"Documentación de docs/ en la rama main del {fecha}",
+        "/Creator": "scripts/docs-pdf.sh",
+        "/Producer": "pandoc + Chrome + pypdf",
+    })
+    with open(salida, "wb") as f:
+        w.write(f)
+    sys.exit(0)
 
 # --- verificación sobre el archivo escrito ---------------------------------------
 r2 = PdfReader(salida)
