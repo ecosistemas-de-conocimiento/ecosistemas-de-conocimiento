@@ -28,7 +28,7 @@ Este documento es para el equipo del proyecto, para revisores institucionales y 
 
 El rol de ecosistema `admin` (en pantalla, "administra") no aparece en el mapa. Tiene los permisos de revisión, miembros y subida de testimonios, pero no Ajustes ni Administración. Ver [matriz de roles y permisos](matriz-roles-y-permisos.md).
 
-**Estado.** Todas las historias del mapa están implementadas en `main` del 2026-10-29. La versión 1.2 revisa los criterios contra `main` (b7dc944f) el 2026-11-10; la 1.4, contra `main` `f971d54c` el 2026-11-12. Estado de dev = `f971d54c`, desplegado el 2026-11-12 (citado del coordinador del cierre; no verificado en este documento): todo lo que está en `main` `f971d54c` está desplegado en dev. Se distinguen dos estados:
+**Estado.** Todas las historias del mapa están implementadas en `main` del 2026-10-29. La versión 1.2 revisa los criterios contra `main` (b7dc944f) el 2026-11-10; la 1.4, contra `main` `f971d54c` el 2026-11-12. Estado de dev = `db9a4456`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz): todo lo que está en `main` `db9a4456` está desplegado en dev; `db9a4456` agrega a `f971d54c` el consentimiento por recurso. Se distinguen dos estados:
 - **implementada**: al menos una prueba automatizada (unitaria, contra Postgres, e2e o spec de evidencia con aserción) comprueba el resultado.
 - **implementada sin prueba automatizada**: la historia existe y se graba, pero ninguna prueba comprueba el resultado.
 

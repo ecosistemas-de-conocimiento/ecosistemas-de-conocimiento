@@ -30,7 +30,7 @@ Estados: **Implementado** (en la rama `main`, desplegado en dev), **Planeado** (
 | 3 | Resonancia individual | Pestaña **Resonancias** (entrevistadora) y modo «Hazme preguntas» en **Generales** | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/components/ChatWorkspace.svelte`, `apps/web/src/lib/sessionKind.ts` | **Implementado** |
 | 4 | Resonancia de corpus (Uso A) | Chat con citas [n] sobre el acervo, estilo de respuesta por ecosistema y «panorama del corpus» | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/server/engine/prompt.ts` | **Implementado** |
 | 6 | Categorización por tipo y temática | `contentKind`, `tema`, `lengua` y temas extraídos al grafo | `/biblioteca` · [Modelo de datos](04-datos/modelo-de-datos.md) · `Documents.ts` | **Implementado** |
-| 7 | Comprobante ético (consentimiento, folio, PDF) | Casilla de consentimiento por recurso al subir: quien sube declara su consentimiento (y, en un testimonio, que la persona que habla dio el suyo), nunca de quién son las palabras; constancia imprimible con folio `EDC-AAAA-NNNNNN`, que el navegador guarda como PDF; aviso de privacidad en borrador sin validación jurídica; derechos ARCO ante la Unidad de Transparencia del CIDE | `/documentos/<id>/constancia`, `/privacidad` · [Aviso y consentimiento](06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) · `apps/web/src/lib/uploadConsent.ts`, `apps/web/src/lib/privacyNotice.ts`, colección `consent-receipts` | **Implementado** |
+| 7 | Comprobante ético (consentimiento, folio, PDF) | Casilla de consentimiento obligatoria por recurso al subir un documento, una nota o un audio, también como capturador: quien sube declara su consentimiento (y, en un testimonio, que la persona que habla dio el suyo), nunca de quién son las palabras; constancia imprimible con folio `EDC-AAAA-NNNNNN`, que el navegador guarda como PDF; aviso de privacidad en borrador sin validación jurídica; derechos ARCO ante la Unidad de Transparencia del CIDE | `/documentos/<id>/constancia`, `/privacidad` · [Aviso y consentimiento](06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) · `apps/web/src/lib/uploadConsent.ts`, `apps/web/src/lib/privacyNotice.ts`, `apps/backend/src/collections/ConsentReceipts.ts` | **Implementado**. Quién recibe el folio cuando el testimonio es de otra persona: por definir |
 | 9 | Panel del participante con historial | «Mis documentos», lista de conversaciones, vista de estudiante | `/documentos`, `/`, `/estudiante` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/estudiante/` | **Implementado** |
 | 10 | Vista administrativa | Resumen del ecosistema, aportes y documentos con filtros | `/admin` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/admin/` | **Implementado** |
 | 11 | Multi-ecosistema con roles | Cada ecosistema es una organización aislada, con su acervo en el servicio de IA y cinco roles | `/miembros`, `/ajustes` · [Actores y glosario](01-proyecto/actores-y-glosario.md) · `apps/backend/src/collections/Organizations.ts`, `Memberships.ts`, `apps/backend/src/lib/permissions.ts` | **Implementado** |
@@ -69,7 +69,7 @@ Criterios de éxito: contribución de punta a punta **implementado**, acervo por
 
 ## 4. Correcciones posteriores al cierre (29 oct - 12 nov)
 
-167 commits sin merges con fecha de autor del 2026-10-29 al 2026-11-12 (medido con `git log --no-merges` sobre `main` el 2026-11-12): 4 el 29 oct, 18 el 4 nov, 2 el 6, 9 el 7, 3 el 9, 103 el 10, 18 el 11 y 10 el 12. Desde el 2026-11-10, `main` solo recibe correcciones y la funcionalidad nueva va a `etapa-2`. La lista completa está en [Cronología e hitos](01-proyecto/cronologia-e-hitos.md) §4.1.
+182 commits sin merges con fecha de autor del 2026-10-29 al 2026-11-12, hasta la línea de corte del código (medido con `git log --no-merges` el 2026-11-12): 4 el 29 oct, 18 el 4 nov, 2 el 6, 9 el 7, 3 el 9, 103 el 10, 18 el 11 y 25 el 12. Desde el 2026-11-10, `main` solo recibe correcciones y la funcionalidad nueva va a `etapa-2`. La lista completa está en [Cronología e hitos](01-proyecto/cronologia-e-hitos.md) §4.1.
 
 | Tema | Qué se corrigió | Fechas |
 |---|---|---|
@@ -82,6 +82,7 @@ Criterios de éxito: contribución de punta a punta **implementado**, acervo por
 | Abuso y carga | Cuerpos JSON acotados a 8 MiB, subidas simultáneas por cuenta, filtros por relación y conversaciones nuevas acotados | 11-10 |
 | Errores sin datos | Ningún registro, respuesta ni columna que lee el navegador lleva el texto crudo de un error (regla de lint `edc/no-raw-error-log`, también en ai-service); las columnas de error guardadas se ocultan al leer | 11-10 a 11-12 |
 | Concurrencia en la base | Cada escritura usa una sola conexión; el chequeo de bloqueos ya no revela filas de otro ecosistema; una escritura vieja de fila entera ya no revierte ninguna columna de `documents`; editar el texto contra un veredicto concurrente responde 409 | 11-10 a 11-12 |
+| Consentimiento por recurso | Casilla obligatoria al subir un documento, una nota o un audio; el backend rechaza un alta sin ella; recibo por subida y constancia imprimible con folio; aviso de privacidad público en `/privacidad`, en borrador sin validación jurídica ([ADR-0019](03-arquitectura/adr/ADR-0019-voces-sin-sujeto-ni-consentimiento.md), enmienda del 2026-11-12) | 11-12 |
 
 Scripts aplicados en dev el 2026-11-12 (medido por el despliegue de ese día): `hold-for-consent` 184 filas del taller; `refresh-ai-titles` 52 documentos; `backfill-provenance-titles` 0 pendientes; `clear-legacy-held-text` 2 filas; `clean-stored-errors` 0 filas.
 
@@ -108,7 +109,8 @@ Estados citados de [Protección de datos](06-privacidad-y-seguridad/proteccion-d
 | Conserje de sesiones a 90 días | **Planeado** | Ídem |
 | Comprobante ético con folio | **Implementado**: constancia imprimible con folio en `/documentos/<id>/constancia` | Protección de datos |
 | Canal ARCO (Unidad de Transparencia del CIDE, descrito en `/privacidad`) | **Implementado** | Ídem |
-| Cancelación de cuenta | **Pendiente** | Ídem |
+| Cancelación de cuenta; retiro o cancelación por folio en la plataforma | **Pendiente** | Ídem |
+| Cómo recibe su folio quien da un testimonio; revisión de accesibilidad del aviso | **Pendiente** | [Aviso y consentimiento](06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) |
 | Política de retención aprobada; depuración de trazas de ai-service | **Pendiente** | Ídem |
 | Retención cero con DeepInfra | **Pendiente** | Ídem; Seguridad |
 | Separar a quien sube de quien revisa una retención | **Pendiente** | Ídem; Seguridad |
@@ -122,18 +124,19 @@ No hay entorno de producción ni testimonio real de personas externas (citado de
 |---|---|
 | [**`etapa-1`** (etiqueta fija)](https://github.com/ecosistemas-de-conocimiento/ecosistemas-de-conocimiento/tree/etapa-1) | **La entrega: la Etapa 1 con correcciones.** Es la referencia que se cita. Marca `main` al entregar los docs, 2026-11-12 |
 | [`etapa-1-281026` (rama)](https://github.com/ecosistemas-de-conocimiento/ecosistemas-de-conocimiento/tree/etapa-1-281026) | La foto del 2026-10-28, sin correcciones: todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después |
-| [`main`](https://github.com/ecosistemas-de-conocimiento/ecosistemas-de-conocimiento/tree/main) | Rama de trabajo; su código es la línea de corte del 2026-11-12, y lo posterior solo cambia `docs/` e `infra/fleet/` |
+| [`main`](https://github.com/ecosistemas-de-conocimiento/ecosistemas-de-conocimiento/tree/main) | Rama de trabajo; su código es la línea de corte: `main` del 2026-11-12 con el consentimiento por recurso, integrado a las 21:07 (hora de la Ciudad de México). Lo posterior solo cambia `docs/` e `infra/fleet/` (medido con `git diff --name-only` el 2026-11-12) |
 | [`etapa-2`](https://github.com/ecosistemas-de-conocimiento/ecosistemas-de-conocimiento/tree/etapa-2) | Trabajo nuevo; igual a `main` al 2026-11-12 |
-| Desplegado en dev | La versión de `main` del 2026-11-12. Staging sigue en su imagen del 2026-10-17. Historial de despliegues en [Despliegue y runbook](05-infraestructura/despliegue-y-runbook.md) |
+| Desplegado en dev | La versión de `main` del 2026-11-12, con el consentimiento por recurso; despliegue terminado el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México). Staging sigue en su imagen del 2026-10-17. Historial de despliegues en [Despliegue y runbook](05-infraestructura/despliegue-y-runbook.md) |
 
 Lo encontrado después del 2026-11-12 va a la Etapa 2.
 
 ## 7. Lo que quedó abierto
 
-Limitaciones conocidas de la Etapa 1 con correcciones. Ninguna ocurre hoy; su arreglo va a la Etapa 2:
+Limitaciones conocidas de la Etapa 1 con correcciones; su arreglo va a la Etapa 2. Las dos primeras no ocurren hoy; ninguna es una fuga de datos personales:
 
 1. Si ai-service agota sus 7 intentos (unas 2 h 42 min; citado de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
 2. El script de operador `backfillLengua.ts` re-ingesta en el corpus compartido sin `callbackUrl`. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada.
+3. Borrar un ecosistema borra sus recibos de consentimiento. En la Etapa 2 deberían sobrevivir, como sobreviven al borrar un documento ([Protección de datos](06-privacidad-y-seguridad/proteccion-de-datos.md#limitaciones-conocidas)).
 
 Pendiente para la Etapa 2:
 

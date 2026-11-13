@@ -44,13 +44,14 @@ sequenceDiagram
 
 Desde el 2026-11-10 hay dos líneas: `main` solo recibe correcciones, y la funcionalidad nueva va a la rama `etapa-2` (decisión del 2026-11-10). Dev despliega `main`.
 
-**Estado de dev al 2026-11-12.** Dev corre `f971d54c`, el código de `main` (los commits posteriores solo agregan documentación), desplegado el 2026-11-12 a las 19:42 UTC (deploy `x3o9j5ymeozbz8hrlvvcmrz1`; measured con `docker ps` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzz). Ese día hubo tres despliegues, ninguno con migración (`payload_migrations` 25, último lote 17), cada uno con respaldo previo y prueba de humo:
+**Estado de dev al 2026-11-13.** Dev corre `db9a4456`, el código de `main` (los commits posteriores solo cambian `docs/` e `infra/fleet/`), desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (deploy `4lcl4hdx1fmfcn91ywb4zhyu`; measured con `docker ps` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz), con una migración: `20261113_015634_consent_receipts` (`payload_migrations` 26, último lote 18). El 2026-11-12 hubo tres despliegues sin migración (`payload_migrations` 25, último lote 17). Cada uno, con respaldo previo y prueba de humo:
 
 | Hora (UTC) | Versión | Scripts aplicados después | Fuente |
 |---|---|---|---|
 | 02:16-02:22 | `a6026876` | `hold-for-consent.ts`: 184 filas del taller; `refresh-ai-titles.ts`: 52 documentos (104 escrituras); `backfill-provenance-titles.ts`: 0 pendientes | `edc-1.md` §4zzzzzzzzz |
 | 15:25-15:31 | `6c0f65ad` | `clear-legacy-held-text.ts`: 2 filas; `clean-stored-errors.ts`: 0 filas | `edc-1.md` §4zzzzzzzzzz |
 | 19:36-19:42 | `f971d54c` | ninguno; la prueba de humo renombró dos documentos y comprobó con `psql` que ninguna otra columna cambió | `edc-1.md` §4zzzzzzzzzzz |
+| 2026-11-13 03:14-03:21 | `db9a4456` | ninguno; la prueba de humo: alta sin `uploadConsentVersion` 400 y 0 documentos, con versión 1 documento y 1 recibo, constancia 200 para quien subió y 404 para otra cuenta, `/privacidad` 200 sin sesión | `edc-1.md` §4zzzzzzzzzzzzzz |
 
 Antes, dev corría `c4f53632` (2026-11-10 23:03 UTC). Todo lo que estos documentos marcan como Implementado está en dev.
 

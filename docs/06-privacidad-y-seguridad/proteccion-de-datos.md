@@ -11,7 +11,7 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. El consentimiento por recurso, la constancia con folio y `/privacidad` entraron después, en el commit [HECHO PENDIENTE: SHA integrado en main], desplegado en dev el [HECHO PENDIENTE: fecha y hora del deploy en dev, measured]. Staging sigue en su imagen del 2026-10-17 (etiqueta `97d5316a`, citado de `infra/fleet/edc-1.md` §4zzzzzzzz), y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Lo diferido a la etapa 2 está en la sección [Etapa 2](#etapa-2).
+Definiciones. **Implementado:** está en `main` `db9a4456` o antes, la versión que corre en dev desde el despliegue terminado el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México; measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12; el consentimiento por recurso, la constancia con folio y `/privacidad`, en `db9a4456` (integrado el 2026-11-12 a las 21:07 -0600, migración `20261113_015634_consent_receipts`). Staging sigue en su imagen del 2026-10-17 (etiqueta `97d5316a`, citado de `infra/fleet/edc-1.md` §4zzzzzzzz), y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Lo diferido a la etapa 2 está en la sección [Etapa 2](#etapa-2).
 
 | Control | Estado | Evidencia o nota |
 |---|---|---|
@@ -63,11 +63,11 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 | Respaldo del detector por OpenRouter con ZDR (`hosted`), por decisión del responsable técnico del 2026-11-09, confirmada el 2026-11-10 | **Implementado** | Dev usa `hosted` desde el 2026-11-10, con ZDR en OpenRouter; antes, del 2026-11-06 al 2026-11-09, usó `none` (citado de `infra/fleet/edc-1.md` §4zzzzzz y §4zzzzzzz). `none` sigue disponible. Staging no usa el Spark |
 | Conserje de sesiones a 90 días de inactividad | **Planeado** | Código en `lib/sessionJanitor.ts`, apagado por defecto (`SESSION_JANITOR_ENABLED`) |
 | Respaldos cifrados con copia en otro proveedor y prueba de restauración | **Planeado** | Diseño en `infra/fleet/backups.md`; nada construido |
-| Aviso en la interfaz de que las conversaciones alimentan el acervo | **Implementado** | Finalidad 5 del aviso en `/privacidad`, pública y con el encabezado «Borrador sin validación jurídica» (`apps/web/src/lib/privacyNotice.ts`); enlazada desde el inicio de sesión y la barra lateral; commit [HECHO PENDIENTE: SHA integrado en main] |
-| Consentimiento informado para quien aporta un testimonio | **Implementado** | Casilla por recurso al subir: quien sube declara que la persona que da el testimonio dio su consentimiento informado fuera del sistema (texto y versión en `apps/web/src/lib/uploadConsent.ts`). Pantallas: [HECHO PENDIENTE: pantallas exactas de la casilla] |
+| Aviso en la interfaz de que las conversaciones alimentan el acervo | **Implementado** | Finalidad 5 del aviso en `/privacidad`, pública y con el encabezado «Borrador sin validación jurídica» (`apps/web/src/lib/privacyNotice.ts`); pública sin sesión (`PUBLIC_PATHS`, `apps/web/src/hooks.server.ts:15`), enlazada desde el inicio de sesión y el pie de la barra lateral (`Sidebar.svelte:299`); commit `db9a4456`. Sin revisión de accesibilidad: **Pendiente** |
+| Consentimiento informado para quien aporta un testimonio | **Implementado** | Casilla obligatoria por recurso, desmarcada cada vez (`UploadConsentCheck.svelte`): subir en `/documentos` (`UploadSheet.svelte:257`), «Subir» y «Nota» del chat (`DocsPanel.svelte:545`), micrófono antes de abrirlo (`MicButton.svelte:219`) y nota nueva (`NoteSheet.svelte:151`). Cubre documento, nota y audio, también la subida del capturador (`voces:upload`). En un testimonio, quien sube declara que la persona que habla dio su consentimiento informado fuera del sistema (texto y versión 1 en `apps/web/src/lib/uploadConsent.ts`). El backend rechaza un alta sin versión (400 `upload_consent_required`) o con otra (409 `consent_version_changed`; `apps/backend/src/lib/uploadConsent.ts:28-29`, campo virtual en `Documents.ts:4254`); las altas del servidor (revisión de nota, semillas) quedan exentas. Los documentos anteriores al 2026-11-13 no tienen recibo, a propósito |
 | Migración a inferencia albergada de forma independiente | **Planeado** | Sin contratos documentados |
 | Retención cero con DeepInfra (embeddings de respaldo en dev, reordenamiento en staging) | **Pendiente** | DeepInfra no recibe parámetro de retención (P-06); etapa 2 |
-| Comprobante ético con folio | **Implementado** | Cada subida guarda un recibo en `consent-receipts` (migración [HECHO PENDIENTE: nombre de la migración]) con la declaración de quien sube, nunca de quién son las palabras ([ADR-0019](../03-arquitectura/adr/ADR-0019-voces-sin-sujeto-ni-consentimiento.md), enmienda del 2026-11-12). Constancia en `/documentos/<id>/constancia` con folio `EDC-AAAA-NNNNNN`, derivado del id del recibo; «Descargar» abre la impresión del navegador para guardarla como PDF. Solo la ven quien subió y la administración de plataforma (`+page.server.ts` de la constancia) |
+| Comprobante ético con folio | **Implementado** | Cada subida guarda un recibo en `consent-receipts` (`ConsentReceipts.ts:26`; migración `20261113_015634_consent_receipts`, aplicada en dev el 2026-11-13 a las 03:21 UTC), en la misma transacción que el documento (`Documents.ts:4277`), con la declaración de quien sube, nunca de quién son las palabras ([ADR-0019](../03-arquitectura/adr/ADR-0019-voces-sin-sujeto-ni-consentimiento.md), enmienda del 2026-11-12). Constancia en `/documentos/<id>/constancia` con folio `EDC-AAAA-NNNNNN` (año en la Ciudad de México e id del recibo a 6 cifras, `lib/uploadConsent.ts:84`); «Descargar» abre la impresión del navegador para guardarla como PDF (`+page.svelte:94`). Los recibos y la constancia los leen solo quien subió y la administración de plataforma; revisión (`holds:review`) no, porque uniría a quien subió con el documento retenido (`ConsentReceipts.ts:44`; `Documents.ts:5018`; en dev, 200 para quien subió y 404 para otra cuenta, measured el 2026-11-13 por el agente de despliegue). Sin retiro ni cancelación por folio en la plataforma: **Pendiente**. Cómo recibe su folio la persona que da un testimonio: **Pendiente**, por definir |
 | Fecha y versión de `shareWithPeers` y `shareActivity` | **Pendiente** | `StudentProfiles.ts` solo guarda fecha y versión de testimonios |
 | Cancelación de cuenta | **Pendiente** | Sin ruta; la base rechaza borrar un usuario con conversación o membresía (`Ratings.deletePaths.pg.test.ts`) |
 | Canal para derechos de acceso, rectificación, cancelación y oposición (ARCO) | **Implementado** | La Unidad de Transparencia del CIDE, por su correo, la Plataforma Nacional de Transparencia o por escrito; procedimiento y plazos en `/privacidad`, «Tus derechos» (`privacyNotice.ts`). Sin formulario propio |
@@ -81,10 +81,11 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 
 ### Limitaciones conocidas
 
-Ninguna ocurre hoy. Su arreglo va a la [Etapa 2](#etapa-2).
+Las dos primeras no ocurren hoy. El arreglo de las tres va a la [Etapa 2](#etapa-2).
 
 1. Si ai-service agota sus 7 intentos (unas 2 h 42 min; quoted de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
 2. El script de operador `backfillLengua.ts` re-ingesta en el corpus compartido sin `callbackUrl`. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada.
+3. Borrar un ecosistema borra sus recibos de consentimiento (llave `organization` con `ON DELETE cascade`, `20261113_015634_consent_receipts.ts:35`). En la Etapa 2 deberían sobrevivir, como sobreviven al borrar un documento. No es una fuga de datos personales.
 
 **Sobre la inferencia.** Por ahora se usan proveedores hospedados. Toda llamada a OpenRouter pide retención cero (ZDR) y falla cerrada si no la consigue; DeepInfra no recibe ese parámetro y su retención depende de sus condiciones. Está planeado migrar a inferencia albergada de forma independiente.
 
@@ -268,7 +269,7 @@ Consecuencias de esta decisión:
 - La grabación de un testimonio nunca se comparte con el ecosistema, aunque su texto anonimizado esté publicado (`Media.ts`).
 - El grafo nunca crea nodos de persona a partir de un testimonio (sección 6).
 - El consentimiento de quien da el testimonio se recaba fuera del sistema. La plataforma solo guarda la declaración de quien sube, con un folio que no nombra a nadie (**Implementado**; ver [consentimientos](aviso-de-privacidad-y-consentimiento.md#d-consentimiento-informado-para-quien-aporta-un-testimonio)).
-- La persona que dio el testimonio no puede localizarlo por su nombre, porque el sistema no lo sabe. Lo localiza por el folio de la constancia, ante la Unidad de Transparencia (**Implementado**; ver el [procedimiento ARCO](aviso-de-privacidad-y-consentimiento.md#f-procedimiento-arco-y-de-retiro-de-una-contribución)).
+- La persona que dio el testimonio no puede localizarlo por su nombre, porque el sistema no lo sabe. Puede pedirlo a la Unidad de Transparencia con el folio de la constancia; cómo recibe ese folio está por definir, y la plataforma no tiene retiro por folio: el borrado lo hacen quien subió o la administración de plataforma (ambos **Pendiente**; ver el [procedimiento ARCO](aviso-de-privacidad-y-consentimiento.md#f-procedimiento-arco-y-de-retiro-de-una-contribución)).
 
 ## 5. Conversaciones y acervo
 
@@ -463,7 +464,7 @@ El original de un testimonio lo protege `mayReadGatedOriginal` en `Documents.ts`
 
 ## Siguientes pasos
 
-Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente. Lo que estaba en `main` ya corre en dev (`f971d54c`, 2026-11-12), y `scripts/refresh-ai-titles.ts` se aplicó en dev a 52 documentos el 2026-11-12 (measured por el agente de despliegue, `edc-1.md` §4zzzzzzzzz).
+Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente. Lo que estaba en `main` ya corre en dev (`db9a4456`, 2026-11-13 03:21 UTC), y `scripts/refresh-ai-titles.ts` se aplicó en dev a 52 documentos el 2026-11-12 (measured por el agente de despliegue, `edc-1.md` §4zzzzzzzzz).
 
 0. **Pendiente.** Decidir si se corre `scripts/reextract-published-graph.ts`.
 1. **Planeado.** Activar el conserje de sesiones, tras aprobar el plazo.
@@ -489,4 +490,4 @@ Diferido a la etapa 2 (rama `etapa-2`; `main` solo lleva correcciones). Ninguno 
 - **Retención cero con DeepInfra (P-06),** por contrato o sacándolo de la ruta.
 - **Borrado pendiente en el servicio de IA (P-08):** una tabla de borrados pendientes o un barrido de huérfanos, para que un borrado que falló se reintente.
 - **Trazas sin nombres (P-14):** no guardar la salida de `anonymise-detect` ni de los títulos de testimonio, y purgar las trazas existentes.
-- **Las dos [limitaciones conocidas](#limitaciones-conocidas):** un retiro que agota los 7 intentos de ai-service y `backfillLengua.ts` sin `callbackUrl`.
+- **Las tres [limitaciones conocidas](#limitaciones-conocidas):** un retiro que agota los 7 intentos de ai-service, `backfillLengua.ts` sin `callbackUrl` y los recibos que se van al borrar un ecosistema.

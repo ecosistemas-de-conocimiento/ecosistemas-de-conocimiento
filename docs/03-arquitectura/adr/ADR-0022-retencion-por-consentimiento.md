@@ -49,7 +49,7 @@ La decisión no cambia. Desplegado en dev:
 
 ## Estado al 2026-11-12
 
-La decisión no cambia. Desplegado en dev (`f971d54c`, desplegado el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz)):
+La decisión no cambia. Desplegado en dev (`db9a4456`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz)):
 
 - **Retenciones a medio camino.** Una retención que llega mientras corre el modelo del grafo lo termina `skipped` y conserva las filas anteriores (commits 1ac2669e, ca5cf2b4). "Publicar cambios" de una nota revisa la retención bajo bloqueo de fila justo antes del cambio, y un re-índice que aterriza después se retira (commits 0d3f2de6, d97271fb, 6a9a3e45).
 - **Publicación tardía.** Una primera publicación que aterriza después de una retención o un retiro se retira, y una fila retenida nunca pasa a publicada (commit 3f5f2a29). Si el retiro falla, el aviso responde 500 y ai-service lo reenvía (commit dd7b7bce).

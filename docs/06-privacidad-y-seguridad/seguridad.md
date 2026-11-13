@@ -11,7 +11,7 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. Staging sigue en su imagen del 2026-10-17, y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. La sección 2 da el detalle de cada control; lo diferido está en [Etapa 2](#etapa-2).
+Definiciones. **Implementado:** está en `main` `db9a4456` o antes, la versión que corre en dev desde el despliegue terminado el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México; measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12; el consentimiento por recurso, la constancia con folio y `/privacidad`, en `db9a4456` (integrado el 2026-11-12 a las 21:07 -0600, migración `20261113_015634_consent_receipts`). Staging sigue en su imagen del 2026-10-17, y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. La sección 2 da el detalle de cada control; lo diferido está en [Etapa 2](#etapa-2).
 
 | Estado | Controles | Cuántos |
 |---|---|---|

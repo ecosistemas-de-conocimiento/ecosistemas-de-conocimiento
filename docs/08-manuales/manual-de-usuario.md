@@ -5,7 +5,7 @@
 - **Estado:** vigente
 - **Fuentes:** `plan/funcionalidades.md` (inventario por pantalla, 2026-10-27), `plan/mapa-historias.md`, `apps/web/src/lib/nav.ts`, `apps/web/src/lib/miembros.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/routes/` (textos de cada pantalla, leídos en `main` 687ff21e y revisados en `f971d54c` el 2026-11-12), `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/holdReview.ts`, `apps/backend/src/lib/contentKind.ts`, `apps/backend/src/collections/Media.ts`, `apps/web/e2e/evidencia/`, `plan/ux-demo-backlog.md`, `TESTING.md`.
 
-**Estados.** Lo que no lleva marca está **Implementado** y desplegado en dev (dev = `f971d54c`, desplegado el 2026-11-12 (citado del coordinador del cierre; no verificado en este documento)). Todo lo que está en `main` `f971d54c` está desplegado en dev. Lo que aún no existe está en [Etapa 2](#etapa-2).
+**Estados.** Lo que no lleva marca está **Implementado** y desplegado en dev (dev = `db9a4456`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz)). Todo lo que está en `main` `db9a4456` está desplegado en dev. Lo que aún no existe está en [Etapa 2](#etapa-2).
 
 ## Para quién es y qué responde
 

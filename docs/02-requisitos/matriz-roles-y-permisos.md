@@ -14,7 +14,7 @@
 
 ## Para quién es y qué responde
 
-Este documento es para quien administra un ecosistema, para revisores que necesitan saber quién puede leer qué, y para quien desarrolle. Responde: qué roles existen en Ecosistemas de Conocimiento (EDC), cómo se ordenan, qué permiso otorga cada uno, qué capacidades dependen de otra cosa que no es un permiso, cómo decide el menú qué mostrar y qué ve cada rol en cada pantalla. Todo lo que dice se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10 y con `main` `f971d54c` el 2026-11-12, salvo donde se indica otra procedencia. Estado de dev = `f971d54c`, desplegado el 2026-11-12 (citado del coordinador del cierre; no verificado en este documento): todo lo que está en `main` `f971d54c` está desplegado en dev.
+Este documento es para quien administra un ecosistema, para revisores que necesitan saber quién puede leer qué, y para quien desarrolle. Responde: qué roles existen en Ecosistemas de Conocimiento (EDC), cómo se ordenan, qué permiso otorga cada uno, qué capacidades dependen de otra cosa que no es un permiso, cómo decide el menú qué mostrar y qué ve cada rol en cada pantalla. Todo lo que dice se leyó en el código de `main` el 2026-10-30 y se volvió a contrastar con `main` (b7dc944f) el 2026-11-10 y con `main` `f971d54c` el 2026-11-12, salvo donde se indica otra procedencia. Estado de dev = `db9a4456`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz): todo lo que está en `main` `db9a4456` está desplegado en dev; `db9a4456` agrega a `f971d54c` el consentimiento por recurso.
 
 ## Dos niveles de rol
 

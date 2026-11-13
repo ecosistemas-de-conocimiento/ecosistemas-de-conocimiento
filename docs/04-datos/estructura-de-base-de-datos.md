@@ -3,7 +3,7 @@
 - **Versión:** 1.4
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** `apps/backend/src/migrations/` (25 migraciones en `main`, `index.ts`, `README.md`, snapshot `20261110_181621_consent_held_reviews_keep.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29, revisada contra `main` en `b7dc944f` el 2026-11-10, en `687ff21e` el 2026-11-11 y en `f971d54c` el 2026-11-12. Estado de dev: `f971d54c`, desplegado el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), sin migración nueva; `payload_migrations` 25, último lote 17.
+- **Fuentes:** `apps/backend/src/migrations/` (26 migraciones en `main`, `index.ts`, `README.md`, snapshot `20261113_015634_consent_receipts.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29, revisada contra `main` en `b7dc944f` el 2026-11-10, en `687ff21e` el 2026-11-11 y en `f971d54c` el 2026-11-12. Estado de dev: `db9a4456`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz), con la migración `20261113_015634_consent_receipts` aplicada a las 03:21:15 UTC; `payload_migrations` 26, último lote 18.
 
 ## Para quién es y qué responde
 
@@ -38,7 +38,7 @@ flowchart LR
 
 ## 2. `edc_backend`: la base de Payload
 
-Payload genera el esquema a partir de la configuración de las colecciones. Los nombres de tabla y columna pasan a minúsculas con guion bajo: la colección `graphEntities` vive en `graph_entities` y el campo `uploadedBy` en `uploaded_by_id`. La fuente de esta sección es el último snapshot, `apps/backend/src/migrations/20261110_181621_consent_held_reviews_keep.json`, más el SQL escrito a mano dentro de las migraciones.
+Payload genera el esquema a partir de la configuración de las colecciones. Los nombres de tabla y columna pasan a minúsculas con guion bajo: la colección `graphEntities` vive en `graph_entities` y el campo `uploadedBy` en `uploaded_by_id`. La fuente de esta sección es el snapshot `apps/backend/src/migrations/20261110_181621_consent_held_reviews_keep.json` y, para `consent_receipts`, el último, `20261113_015634_consent_receipts.json`, más el SQL escrito a mano dentro de las migraciones.
 
 ### 2.1 Tablas de negocio
 
@@ -56,6 +56,7 @@ Payload genera el esquema a partir de la configuración de las colecciones. Los 
 | `ratings` | `ratings` | Valoraciones de respuestas |
 | `anonymisation_reviews` | `anonymisation-reviews` | Bitácora de decisiones humanas sobre textos retenidos |
 | `anonymisation_setting_changes` | `anonymisation-setting-changes` | Bitácora de cambios de los interruptores de anonimización y del respaldo del detector |
+| `consent_receipts` | `consent-receipts` | Recibo de la casilla de consentimiento de cada subida; sin columnas de texto |
 | `graph_entities` | `graphEntities` | Entidades del grafo |
 | `graph_mentions` | `graphMentions` | Menciones de entidades en documentos |
 | `graph_relations` | `graphRelations` | Aristas del grafo |
@@ -152,6 +153,7 @@ Payload genera toda llave foránea con `ON DELETE set null`. Varias se reescribi
 | `documents` | `revision_of_id` | `20261028_231948_documents_note_revisions` |
 | `eval_items`, `eval_runs` | `organization_id` | `20261029_060304_evals` |
 | `anonymisation_setting_changes` | `organization_id` (`document_id` y `actor_id` quedan en `set null`) | `20261108_001902_documents_anonymise_switches` |
+| `consent_receipts` | `organization_id` (`document_id` y `actor_id` en `set null`; `document_id_snapshot` guarda el id). Borrar un ecosistema borra sus recibos: limitación conocida | `20261113_015634_consent_receipts` |
 
 Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
@@ -172,7 +174,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
 ### 2.7 Migraciones
 
-Hay 25 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído en `main` `b7dc944f` el 2026-11-10; sin cambio en `687ff21e`, 2026-11-11, ni en `f971d54c`, 2026-11-12). `payload_migrations` pasó de 23 a 24 el 2026-11-10 a las 18:33 UTC (citado, `edc-1.md` §4zzzzzzzz) y a 25 con el despliegue de `c4f53632` a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). Los tres despliegues del 2026-11-12 (`a6026876`, `6c0f65ad`, `f971d54c`) no trajeron migración: siguen 25 (measured por el agente de despliegue, `edc-1.md` §4zzzzzzzzz a §4zzzzzzzzzzz). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
+Hay 26 migraciones registradas en `apps/backend/src/migrations/index.ts` (contadas en `main` `db9a4456` el 2026-11-12; la 26 es `20261113_015634_consent_receipts`; hasta `f971d54c` eran 25). `payload_migrations` pasó de 23 a 24 el 2026-11-10 a las 18:33 UTC (citado, `edc-1.md` §4zzzzzzzz) y a 25 con el despliegue de `c4f53632` a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). Los tres despliegues del 2026-11-12 (`a6026876`, `6c0f65ad`, `f971d54c`) no trajeron migración: siguen 25 (measured por el agente de despliegue, `edc-1.md` §4zzzzzzzzz a §4zzzzzzzzzzz). El del 2026-11-13 a las 03:21 UTC (`db9a4456`) aplicó `consent_receipts`: 26, último lote 18 (measured por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
 
 | # | Migración | Fecha | Propósito |
 |---|---|---|---|

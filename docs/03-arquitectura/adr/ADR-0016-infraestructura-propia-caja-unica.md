@@ -67,7 +67,7 @@ RustFS entró en local y dev el 2026-08-14. El 2026-10-17 se fijó como regla pa
 
 ## Estado al 2026-11-12
 
-- **Dev.** Corre `f971d54c`, desplegado el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz). Ese día hubo tres despliegues sin migración: `a6026876` (02:22 UTC), `6c0f65ad` (15:31 UTC) y `f971d54c` (citado de `infra/fleet/edc-1.md`, §4zzzzzzzzz a §4zzzzzzzzzzz).
+- **Dev.** Corre `db9a4456`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz), con una migración (`consent_receipts`). El 2026-11-12 hubo tres despliegues sin migración: `a6026876` (02:22 UTC), `6c0f65ad` (15:31 UTC) y `f971d54c` (19:42 UTC) (citado de `infra/fleet/edc-1.md`, §4zzzzzzzzz a §4zzzzzzzzzzz).
 - **Volcados.** Dev conserva 7: `20261029T0643Z`, `20261110T0538Z`, `20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z` y `20261112T1934Z` (citado de `infra/fleet/edc-1.md`, §4zzzzzzzzzzz).
 
 ## Referencias
