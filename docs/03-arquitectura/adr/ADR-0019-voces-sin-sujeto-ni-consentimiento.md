@@ -73,7 +73,7 @@ El razonamiento, escrito en `apps/backend/src/collections/Documents.ts`:
 - **Qué cambia:** cada subida guarda un recibo en `consent-receipts` (documento, organización, quien sube, versión del texto, tipo de material y fecha) y entrega una constancia con folio `EDC-AAAA-NNNNNN` en `/documentos/<id>/constancia`. El recibo registra la declaración de consentimiento **de quien sube**: que leyó el aviso y, en un testimonio, que la persona que habla dio su consentimiento informado fuera del sistema (`apps/web/src/lib/uploadConsent.ts`).
 - **Qué no cambia:** el recibo **nunca dice de quién son las palabras**. No hay campo `subject` ni nivel de consentimiento; el folio no contiene datos de la persona. Sigue la regla «voces sin sujeto»: el consentimiento de la persona que habla queda fuera del sistema, en el formato del [aviso y consentimiento](../../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md#d-consentimiento-informado-para-quien-aporta-un-testimonio).
 - **Quién lee el recibo:** quien subió y la administración de plataforma. Revisión (`holds:review`) no: uniría a quien subió con un documento retenido, y eso ayuda a reidentificar a quien habla (`apps/backend/src/collections/ConsentReceipts.ts:44`).
-- **Código:** `main` `db9a4456` (2026-11-12 21:07 -0600); migración `20261113_015634_consent_receipts`; en dev desde el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz).
+- **Código:** `main` `29c54854` (2026-11-12 21:07 -0600); migración `20261113_015634_consent_receipts`; en dev desde el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz).
 
 ## Estado al 2026-11-10
 

@@ -3,7 +3,7 @@
 - **Versión:** 1.4
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** `TESTING.md`, notas de contexto del equipo (Etapa 1), `package.json` (raíz), `apps/web/package.json`, `apps/backend/package.json`, `apps/web/vite.config.ts`, `apps/web/playwright.config.ts`, `apps/web/e2e/`, `apps/web/e2e/evidencia/`, `apps/backend/e2e/`, `apps/backend/src/eval/RESULTS.md`, `services/ai-service/.github/workflows/`, `plan/mapa-historias.md`, `plan/orchestration/auditoria-2026-11-10/revision-ola4.md` (fuera del repositorio). Conteos de archivos medidos con `find` y `ls` sobre `main` en `b7dc944f` el 2026-11-10.
+- **Fuentes:** `TESTING.md`, notas de contexto del equipo (Etapa 1), `package.json` (raíz), `apps/web/package.json`, `apps/backend/package.json`, `apps/web/vite.config.ts`, `apps/web/playwright.config.ts`, `apps/web/e2e/`, `apps/web/e2e/evidencia/`, `apps/backend/e2e/`, `apps/backend/src/eval/RESULTS.md`, `services/ai-service/.github/workflows/`, `plan/mapa-historias.md`, `plan/orchestration/auditoria-2026-11-10/revision-ola4.md` (fuera del repositorio). Conteos de archivos medidos con `find` y `ls` sobre `main` en `00b943f3` el 2026-11-10.
 
 ## Para quién es y qué responde
 
@@ -125,7 +125,7 @@ Peor que el fallo es el caso contrario: `apps/web` pasa `typecheck` contra un `d
 | E2E backend | `pnpm --filter @edc/backend test:e2e` | Stack levantado |
 | E2E web | `pnpm --filter @edc/web test:e2e` | Stack levantado; `test:e2e:headed` abre el navegador |
 | Evidencia en video | `apps/web/e2e/evidencia/correr.sh <v1\|v2\|v3> [rol]` | Contra dev, con las credenciales de los archivos `.env` de evidencia |
-| Lint del backend | `pnpm --filter @edc/backend lint` | Incluye la regla `edc/no-raw-error-log`: ninguna línea de log lleva el texto crudo de un error (`780f614d`) |
+| Lint del backend | `pnpm --filter @edc/backend lint` | Incluye la regla `edc/no-raw-error-log`: ninguna línea de log lleva el texto crudo de un error (`30fe10d3`) |
 | Lint de ai-service | `pnpm --filter @edc/ai-service lint` | eslint más la revisión de vocabulario de dominio. Obligatorio al tocar ai-service |
 
 ### 2.4 E2E contra el stack local
@@ -202,13 +202,13 @@ Estas reglas salen de incidentes reales. Cada una está anclada a su fuente.
 
 ## 5. Conteos de pruebas
 
-Último conteo, sobre `main` en la integración del 2026-11-12 (línea de corte f971d54c): `apps/backend` 6 525 pruebas y 4 omitidas, `apps/web` 3 133, `services/ai-service` 2 176 unitarias y 383 de integración (citado del registro de esa integración; máquina y carga no constan aquí). El conteo anterior, de la integración del 2026-11-11, fue de unas 6 195, 3 093 y 2 164 más 383 (citado).
+Último conteo, sobre `main` en la integración del 2026-11-12 (línea de corte eb5625f5): `apps/backend` 6 525 pruebas y 4 omitidas, `apps/web` 3 133, `services/ai-service` 2 176 unitarias y 383 de integración (citado del registro de esa integración; máquina y carga no constan aquí). El conteo anterior, de la integración del 2026-11-11, fue de unas 6 195, 3 093 y 2 164 más 383 (citado).
 
 Auditorías independientes por rama: las 9 ramas de correcciones integradas el 2026-11-11 y 2026-11-12 (`checkouts-anidados`, `grafo-retencion-carrera`, `publicacion-tardia`, `enmascarado-regla`, `filas-viejas` y las cuatro `escritura-vieja-*`) tuvieron cada una su auditoría independiente; todas terminaron CONFIRMED tras sus correcciones (citado del handoff del coordinador, fuera del repositorio; detalle en [Cronología e hitos](../01-proyecto/cronologia-e-hitos.md) §4.1).
 
 ### 5.1 Medición del 2026-11-10
 
-Medido el 2026-11-10 entre las 22:00 y las 22:06 UTC en la estación de trabajo del equipo de desarrollo (16 núcleos), sobre `main` en `b7dc944f`, en una copia de trabajo nueva: `pnpm install --prefer-offline`, los tres paquetes compilados, y luego `pnpm -C apps/backend test` y `pnpm -C apps/web test` (Node 24.1.0, pnpm 9.15.4). La máquina tenía otras sesiones trabajando: carga promedio de 7.2 al arrancar el backend y de 40.5 al terminar.
+Medido el 2026-11-10 entre las 22:00 y las 22:06 UTC en la estación de trabajo del equipo de desarrollo (16 núcleos), sobre `main` en `00b943f3`, en una copia de trabajo nueva: `pnpm install --prefer-offline`, los tres paquetes compilados, y luego `pnpm -C apps/backend test` y `pnpm -C apps/web test` (Node 24.1.0, pnpm 9.15.4). La máquina tenía otras sesiones trabajando: carga promedio de 7.2 al arrancar el backend y de 40.5 al terminar.
 
 | Paquete | Archivos | Pruebas | Resultado | Duración |
 |---|---:|---:|---|---|
@@ -235,7 +235,7 @@ Medición de una sola corrida en una máquina cargada. Sirve para citar el orden
 | `packages/ai-client` | 55 (citado del 2026-08-29) | 68 |
 | `packages/identity-client` | 50 (citado del 2026-08-29) | no aparece |
 
-Durante la ola 4, el 2026-11-10, el commit `512dcc1f` registra la suite completa del backend con 5 444 pruebas pasando y 1 saltada, medida en su copia de trabajo (citado del mensaje de commit). La diferencia con las 5 733 de §5.1 son las pruebas que entraron a `main` después.
+Durante la ola 4, el 2026-11-10, el commit `0bb9b0de` registra la suite completa del backend con 5 444 pruebas pasando y 1 saltada, medida en su copia de trabajo (citado del mensaje de commit). La diferencia con las 5 733 de §5.1 son las pruebas que entraron a `main` después.
 
 ## 6. Último resultado e2e registrado
 

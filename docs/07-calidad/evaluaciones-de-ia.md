@@ -309,11 +309,11 @@ Medido en la estación de trabajo del equipo de desarrollo (16 núcleos), el 202
 
 | Corrida | Base contra nueva | Casos | `leak-at-head` | Más redactado | Texto distinto |
 |---|---|---:|---:|---:|---:|
-| Ola 2, 01:35 | `a84baacf` contra `6ca9c92c` | 26 516 | 2 | 0 | 2 |
-| Ola 4, carril F, 11:56 | `6a880e01` contra la rama del carril | 26 516 | 0 | 1 | 1 |
-| Ola 4, 12:36 | `367c2698` (dev) contra `58078b7f` | 26 516 | 0 | 1 | 1 |
-| Ola 4, 13:11 y 13:28 | `f764ee7f` contra `2dda9a8b` y contra `ccce6281` | 26 516 cada una | 0 | 1 | 1 |
-| Ola 4, 13:42 | `0bfe8ceb` contra `0400099a` | 26 516 | 0 | 1 | 1 |
+| Ola 2, 01:35 | `fa3775a0` contra `9c2a545f` | 26 516 | 2 | 0 | 2 |
+| Ola 4, carril F, 11:56 | `36dfab6d` contra la rama del carril | 26 516 | 0 | 1 | 1 |
+| Ola 4, 12:36 | `44787730` (dev) contra `6ed7eeff` | 26 516 | 0 | 1 | 1 |
+| Ola 4, 13:11 y 13:28 | `58b58f11` contra `c149bf43` y contra `496a38c8` | 26 516 cada una | 0 | 1 | 1 |
+| Ola 4, 13:42 | `ea0c6ec5` contra `251e0ac7` | 26 516 | 0 | 1 | 1 |
 
 Lectura:
 

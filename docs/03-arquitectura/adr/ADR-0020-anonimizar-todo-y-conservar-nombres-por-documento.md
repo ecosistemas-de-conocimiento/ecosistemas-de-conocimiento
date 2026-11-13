@@ -3,7 +3,7 @@
 - **Versión:** 1.1
 - **Fecha del documento:** 2026-11-10
 - **Estado del documento:** vigente
-- **Estado de la decisión:** aceptada; implementada (commits 491841fb y 98619590 del 2026-11-07, 887fae32 del 2026-11-10) y desplegada en dev (c4f53632, 2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11), con lo de "Estado al 2026-11-10". Huecos **Pendientes**: el caso A3 sin cambio de interruptor, y el reintento automático de una copia publicada retirada cuyo borrado falló
+- **Estado de la decisión:** aceptada; implementada (commits 6cd3a472 y 150f090d del 2026-11-07, b9d899aa del 2026-11-10) y desplegada en dev (9463c79c, 2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11), con lo de "Estado al 2026-11-10". Huecos **Pendientes**: el caso A3 sin cambio de interruptor, y el reintento automático de una copia publicada retirada cuyo borrado falló
 - **Fecha de la decisión:** 2026-11-07
 - **Quién decidió:** responsable de desarrollo
 - **Enmienda:** [ADR-0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md). Un testimonio ya no es anónimo sin excepción: quien puede cambiar los interruptores de un documento puede conservar dos tipos de nombre en él. ADR-0019 sigue vigente en lo demás: no hay campo `subject`, ni nivel de consentimiento, ni mapa entre seudónimos y nombres
@@ -72,15 +72,15 @@ Reglas:
 
 La decisión no cambia. Cambió cómo se aplica; donde el texto de arriba y el código difieren, rige esto:
 
-- **Falla al borrar las copias viejas (regla 5).** Ya no se descarta el cambio. El interruptor se guarda, la falla queda marcada (`anonymisationReport.regate.failedAt`), la respuesta es 502 y dice qué cambió, y la vista ofrece "Reintentar" (`retryable`). Reintentar es `POST /api/documents/:id/anonimizacion/reintentar`, sin otro `PATCH`. Por ecosistema hay `GET` y `POST /api/organizations/:id/anonimizacion[/reintentar]` (commit 887fae32, desplegado en dev).
+- **Falla al borrar las copias viejas (regla 5).** Ya no se descarta el cambio. El interruptor se guarda, la falla queda marcada (`anonymisationReport.regate.failedAt`), la respuesta es 502 y dice qué cambió, y la vista ofrece "Reintentar" (`retryable`). Reintentar es `POST /api/documents/:id/anonimizacion/reintentar`, sin otro `PATCH`. Por ecosistema hay `GET` y `POST /api/organizations/:id/anonimizacion[/reintentar]` (commit b9d899aa, desplegado en dev).
 - **Residual: copia publicada retirada y sin borrar.** Ya no queda en silencio: la fila marcada cuenta como pendiente en su vista y en la del ecosistema, y "Reintentar" la vuelve a intentar. Sigue sin haber un reintento automático (desplegado en dev).
-- **Caso A3 y cambio en el ecosistema.** `pendingRegate` y `regateInheritors` están desplegados en dev desde el 2026-11-10. Un borrador que la nueva anonimización no despublicó no es del ecosistema: ni su trabajo ni su "Reintentar" lo tocan; solo un cambio explícito sobre ese documento (commit 6a880e01, desplegado en dev).
-- **`keepPublicFigures`.** Hay un tercer interruptor, conservar figuras públicas, por ecosistema y por documento. Solo lo cambia la administración de plataforma y solo aplica a un `documento` (commit 887fae32, desplegado en dev). La vista dice qué interruptor puede cambiar cada quien (`editable`; commit 50bde2ae, desplegado).
-- **Reglas 2 y 3.** Que quien revisa solo entre a filas retenidas o publicadas (A-07) y que el investigador ya no guarde Ajustes están desplegados (commit 50bde2ae).
-- **Publicar.** No se publica un documento cuya nueva anonimización falló o sigue pendiente: 409 (`publishBlocker`; commit 512dcc1f, desplegado).
+- **Caso A3 y cambio en el ecosistema.** `pendingRegate` y `regateInheritors` están desplegados en dev desde el 2026-11-10. Un borrador que la nueva anonimización no despublicó no es del ecosistema: ni su trabajo ni su "Reintentar" lo tocan; solo un cambio explícito sobre ese documento (commit 36dfab6d, desplegado en dev).
+- **`keepPublicFigures`.** Hay un tercer interruptor, conservar figuras públicas, por ecosistema y por documento. Solo lo cambia la administración de plataforma y solo aplica a un `documento` (commit b9d899aa, desplegado en dev). La vista dice qué interruptor puede cambiar cada quien (`editable`; commit ac16b2a0, desplegado).
+- **Reglas 2 y 3.** Que quien revisa solo entre a filas retenidas o publicadas (A-07) y que el investigador ya no guarde Ajustes están desplegados (commit ac16b2a0).
+- **Publicar.** No se publica un documento cuya nueva anonimización falló o sigue pendiente: 409 (`publishBlocker`; commit 0bb9b0de, desplegado).
 - **Retenido por consentimiento.** Los controles de un documento retenido responden 409 y no cuentan como pendientes ([ADR-0022](ADR-0022-retencion-por-consentimiento.md); desplegado).
-- **Título de un `documento` con compuerta.** Lo que Consecuencias marca como "Implementado (2026-11-10)" está desplegado. Desde entonces la regla de filtros pasó de una lista de rutas prohibidas a una lista de permitidos (`GATED_FILTERABLE_PATHS`, commit b7dc944f), una columna `anonymise` NULL o ausente da título con compuerta, y los títulos viejos en el servicio de IA se corrigen sin volver a ingerir (`scripts/refresh-ai-titles.ts`). La decisión del título tiene ADR propio: [ADR-0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md).
-- **Casilla "Anonimizar" encendida por omisión.** Desplegado (commit aa73e01f).
+- **Título de un `documento` con compuerta.** Lo que Consecuencias marca como "Implementado (2026-11-10)" está desplegado. Desde entonces la regla de filtros pasó de una lista de rutas prohibidas a una lista de permitidos (`GATED_FILTERABLE_PATHS`, commit 00b943f3), una columna `anonymise` NULL o ausente da título con compuerta, y los títulos viejos en el servicio de IA se corrigen sin volver a ingerir (`scripts/refresh-ai-titles.ts`). La decisión del título tiene ADR propio: [ADR-0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md).
+- **Casilla "Anonimizar" encendida por omisión.** Desplegado (commit 8206828a).
 
 ## Referencias
 

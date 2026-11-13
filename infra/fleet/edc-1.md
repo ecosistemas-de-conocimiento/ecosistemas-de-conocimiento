@@ -1,6 +1,6 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` at `db9a4456` (per-resource upload consent with
+**Status:** live since 2026-10-17. Dev runs `main` at `29c54854` (per-resource upload consent with
 `consent_receipts`, the constancia page, a public `/privacidad`; migration `20261113_015634_consent_receipts` applied
 on start), deployed 2026-11-13 03:21 UTC — see §4zzzzzzzzzzzzzz. Before that, the deploys and dev data fixes of
 2026-10-29 to 2026-11-12 — §4zz to §4zzzzzzzzzzzzz. Before that (`[[wikilink]]` graph seeds, student
@@ -2791,8 +2791,8 @@ minutes. It needs a staging deploy first.
 
 Measured by the deploy agent from the owner's laptop and on edc-1. Box clock read 2026-11-10 UTC (2026-11-09 in
 Mexico). Staging untouched: web and backend "Up 3 weeks", ai-service "Up 3 days", image tag `97d5316a` (`docker ps`
-after). Range `11b0aa25` (the 2026-10-29 06:45 build) -> `3f14306b`: OpenRouter Zero Data Retention (`9b755298`),
-per-document anonymise switches (`3360cfcf`), invented names for the Semiosis demo students (`3f14306b`).
+after). Range `11b0aa25` (the 2026-10-29 06:45 build) -> `62cf5222`: OpenRouter Zero Data Retention (`1e35bf0f`),
+per-document anonymise switches (`be71cf46`), invented names for the Semiosis demo students (`62cf5222`).
 
 **ZDR, real calls before the deploy** (dev's `OPENROUTER_API_KEY`, same value as the owner's `OPENROUTER_KEY`, compared
 without printing). Request shape read in `services/ai-service/src/services/ai/router/adapters/openrouter.ts`: every
@@ -2832,7 +2832,7 @@ Backup `/root/backups/20261110T0538Z/` (`edc_ai` 299 MB, `edc_backend` 18 MB, pl
 (59ms), `Done.`, "Ready in 858ms". `payload_migrations` 21 -> 23, batch 15. `documents.authors_kept` jsonb,
 `cited_authors_kept` jsonb, `keep_document_author` boolean, `keep_cited_authors` boolean, table
 `anonymisation_setting_changes` exist. `edc_ai` `__drizzle_migrations` unchanged at 6. After: 9 dev containers up,
-web, backend and ai-service on tag `3f14306b`, healthy; 0 `error`/`fatal` lines in 8 of 9 (postgres: 1, the deploy
+web, backend and ai-service on tag `62cf5222`, healthy; 0 `error`/`fatal` lines in 8 of 9 (postgres: 1, the deploy
 agent's own bad query).
 
 **Smoke**
@@ -2864,7 +2864,7 @@ No image cleanup; the earlier images stay for rollback. **Disk**, `df -h /` free
 ### 4zzzzzzzz. Done 2026-11-10 18:24-18:45 UTC: dev only - one Payload migration on start; wave 2 privacy, access and upload fixes
 
 Measured by the deploy agent from the owner's laptop and on edc-1. Staging untouched: web and backend "Up 3 weeks",
-ai-service "Up 3 days", tag `97d5316a` (`docker ps` after). Range `3f14306b` (§4zzzzzzz) -> `367c2698`, 28 commits:
+ai-service "Up 3 days", tag `97d5316a` (`docker ps` after). Range `62cf5222` (§4zzzzzzz) -> `44787730`, 28 commits:
 re-gate retry and pending states, deactivated accounts stay out, per-(IP, email) and per-IP login limits, 8 MiB cap
 on JSON bodies and multipart fields, gate count and identifier-date fixes (D1, D2), query parameters kept out of DB
 error logs. `infra/docker-compose.yml` unchanged in the range, so no variable check (§4 footgun 1).
@@ -2886,7 +2886,7 @@ Backup `/root/backups/20261110T1825Z/` under `umask 077` (§7 step 6): `edc_ai` 
 `{documento,ecosistema,plataforma}`; `enum_anonymisation_setting_changes_key` =
 `{keepDocumentAuthor,keepCitedAuthors,keepPublicFigures,detectorFallback}`; `anonymisation_setting_changes.organization_id`
 nullable (`information_schema`). `edc_ai` `__drizzle_migrations` unchanged at 6. After: 9 dev containers up, web,
-backend and ai-service on tag `367c2698`, 7 with a healthcheck all healthy; 0 `error`/`fatal` lines in the first
+backend and ai-service on tag `44787730`, 7 with a healthcheck all healthy; 0 `error`/`fatal` lines in the first
 10 minutes of any of the 9.
 
 **Smoke**
@@ -2907,7 +2907,7 @@ Spend: `usage_logs` since 18:20 UTC, all `edc-eco-6` and all from this run: 2 `d
 $0.005182, 2 `baai/bge-m3` rows $0.000002.
 
 **Cleanup** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): no dev image older than
-`3f14306b` was on the box, so no `docker rmi`; the `3f14306b` images stay for rollback. `docker builder prune -af`
+`62cf5222` was on the box, so no `docker rmi`; the `62cf5222` images stay for rollback. `docker builder prune -af`
 (14.94 GB). **Disk**, `df -h /` free: 51 GB before, 36 GB after the build, 49 GB after the prune.
 
 ---
@@ -2916,13 +2916,13 @@ $0.005182, 2 `baai/bge-m3` rows $0.000002.
 
 Measured by the deploy agent from the owner's laptop and on edc-1 (box clock 2026-11-12 UTC, 2026-11-11 in Mexico).
 Staging untouched: web and backend "Up 3 weeks", ai-service "Up 5 days", tag `97d5316a` (`docker ps` after). Range
-`c4f53632` (the 2026-11-10 22:57 build, backup `20261110T2256Z`; it has no entry here) -> `a6026876`, 43 commits:
+`9463c79c` (the 2026-11-10 22:57 build, backup `20261110T2256Z`; it has no entry here) -> `2e74037d`, 43 commits:
 waves 10-11 (filters and sorts only reach readable rows and fields, bounded relation filters and new conversations
 per account, consent gaps, raw errors kept out of every logger) and docs. No file under `apps/backend/src/migrations`
 and no `infra/docker-compose.yml` change in the range, so no variable check (§4 footgun 1).
 
-Pre-check: `docker ps` web, backend and ai-service on `c4f53632`; `GET /api/v1/deployments` empty; GitHub `main` =
-`a6026876` (`git ls-remote`); 0 active queries on `edc_backend`; `payload_migrations` 25; 15 users, 1106 documents;
+Pre-check: `docker ps` web, backend and ai-service on `9463c79c`; `GET /api/v1/deployments` empty; GitHub `main` =
+`2e74037d` (`git ls-remote`); 0 active queries on `edc_backend`; `payload_migrations` 25; 15 users, 1106 documents;
 last document write 2026-11-07 00:37; 0 rows with `consent_held`.
 
 Backup `/root/backups/20261112T0214Z/` under `umask 077`: `edc_ai` 313 MB, `edc_backend` 19 MB, plus `documents`,
@@ -2936,7 +2936,7 @@ now holds 9 stamps on each side.
 | first | `oasz1bbobuf3ongfycrneh0q` | 02:16:40 -> 02:22:48 |
 
 **No migration** at start, 02:22:52: "Reading migration files", `Done.`, "Ready in 811ms". `payload_migrations` 25,
-last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `a6026876`, healthy (postgres, redis and
+last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `2e74037d`, healthy (postgres, redis and
 rustfs were recreated too, same volumes); 0 `error`/`fatal` lines in 8 of 9 after 02:22; postgres 2, one from the
 deploy agent's own bad query and one from a read-only query of stored error columns run by another session at 02:28.
 
@@ -2958,13 +2958,13 @@ deploy agent's own bad query and one from a read-only query of stored error colu
 | `backfill-provenance-titles.ts`, `PROVENANCE_ORG` 1, 3, 6, 7, 8 | scanned 17 / 3 / 9 / 7 / 9 messages; 0 stale citations in every org; org 8: 1 message skipped as `consentHeld`; `missingDocument` 12 (org 6) and 14 (org 7) | no: nothing to write |
 | `clear-legacy-held-text.ts`, all | 2 rows would be cleared (docs 1039, 1129) | no: no expected count, and its `held_text_hash` handling is still being changed on an unlanded branch |
 
-`clean-stored-errors.ts` is not in `a6026876` (it is on `fix/filas-viejas-2026-11-11`): not run.
+`clean-stored-errors.ts` is not in `2e74037d` (it is on `fix/filas-viejas-2026-11-11`): not run.
 
 Spend: `usage_logs` since 02:14 UTC, all from this run: 2 `edc-eco-8` `router.route` `deepseek/deepseek-chat-v3.1`
 rows, $0.002384. The scripts made no model call.
 
 **Cleanup** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): `docker rmi` of dev's
-`367c2698` and `3f14306b` images (backend, ai-service, web); the `c4f53632` images stay for rollback.
+`44787730` and `62cf5222` images (backend, ai-service, web); the `9463c79c` images stay for rollback.
 `docker builder prune -af` (14.97 GB). **Disk**, `df -h /` free: 50 GB before, 34 GB after the build, 50 GB after
 the cleanup.
 
@@ -2972,15 +2972,15 @@ the cleanup.
 
 ### 4zzzzzzzzzz. Done 2026-11-12 15:22-15:40 UTC: dev only - no migration; legacy held text cleared, stored errors already clean
 
-Measured by the deploy agent from the owner's laptop and on edc-1. Staging not touched. Range `a6026876`
-(§4zzzzzzzzz) -> `6c0f65ad`, 32 commits: consent holds that land mid-run in publish, graph and notes re-index,
+Measured by the deploy agent from the owner's laptop and on edc-1. Staging not touched. Range `2e74037d`
+(§4zzzzzzzzz) -> `8fdcd258`, 32 commits: consent holds that land mid-run in publish, graph and notes re-index,
 whole-row updates never write `consent_held` or gate columns back, stored reasons and log guards withhold every
 Postgres message that quotes its input (backend and ai-service), `clear-legacy-held-text.ts` keeps
 `held_text_hash`. No file under `apps/backend/src/migrations` and no `infra/docker-compose.yml` change in the range,
 so no variable check (§4 footgun 1).
 
-Pre-check: `docker ps` web, backend and ai-service on `a6026876`; `GET /api/v1/deployments` empty; GitHub `main` =
-`6c0f65ad` (`git ls-remote`); 0 active queries on `edc_backend`; `payload_migrations` 25; 15 users, 1106 documents;
+Pre-check: `docker ps` web, backend and ai-service on `2e74037d`; `GET /api/v1/deployments` empty; GitHub `main` =
+`8fdcd258` (`git ls-remote`); 0 active queries on `edc_backend`; `payload_migrations` 25; 15 users, 1106 documents;
 184 rows with `consent_held`.
 
 Backup `/root/backups/20261112T1523Z/` under `umask 077`: `edc_ai` 313 MB, `edc_backend` 19 MB, plus `documents`,
@@ -2993,7 +2993,7 @@ under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
 | first | `sdxkgvtdyleewihtbq1scq5i` | 15:25:01 -> 15:31:18 |
 
 **No migration** at start, 15:31:22: "Reading migration files", `Done.`, "Ready in 864ms". `payload_migrations` 25,
-last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `6c0f65ad`, 7 with a healthcheck all
+last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `8fdcd258`, 7 with a healthcheck all
 healthy; 0 `error`/`fatal` lines from 15:31:00 to 15:33:50 in 8 of 9; postgres 1, the deploy agent's own bad query
 (a wrong column name on `usage_logs`) at 15:32:36.
 
@@ -3016,7 +3016,7 @@ Spend: `usage_logs` since 15:20 UTC, all from this run: 2 `edc-eco-8` `router.ro
 rows, $0.002447. The scripts made no model call.
 
 **Cleanup** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): `docker rmi` of dev's
-`c4f53632` images (backend, ai-service, web); the `a6026876` images stay for rollback. `docker builder prune -af`
+`9463c79c` images (backend, ai-service, web); the `2e74037d` images stay for rollback. `docker builder prune -af`
 (14.97 GB). **Disk**, `df -h /` free: 50 GB before, 35 GB after the build, 50 GB after the cleanup.
 
 **Retention** (§7 step 7), dev only: with the new stamp dev held 10; `20261028T1717Z`, `20261029T0016Z` and
@@ -3029,13 +3029,13 @@ and `20261112T1523Z`, `sha256sum -c` OK on both sides after; staging's 7 unchang
 ### 4zzzzzzzzzzz. Done 2026-11-12 19:34-19:50 UTC: dev only - no migration; stale whole-row writes never put back a documents field
 
 Measured by the deploy agent from the owner's laptop and on edc-1. Staging not touched (no read either). Range
-`6c0f65ad` (§4zzzzzzzzzz) -> `f971d54c`, 8 commits: a stale whole-row write never puts back any `documents`
+`8fdcd258` (§4zzzzzzzzzz) -> `eb5625f5`, 8 commits: a stale whole-row write never puts back any `documents`
 field (gate verdicts, keep switches, titles, ingest ids, `ingestStatus`), a text edit's status reset is deferred to
 the guarded write, and docs. No file under `apps/backend/src/migrations` and no `infra/docker-compose.yml` change in
 the range, so no variable check (§4 footgun 1).
 
-Pre-check: `docker ps` web, backend and ai-service on `6c0f65ad`; `GET /api/v1/deployments` empty (before the backup
-and again right before the deploy); GitHub `main` = `f971d54c` (`git ls-remote`); 0 active queries on
+Pre-check: `docker ps` web, backend and ai-service on `8fdcd258`; `GET /api/v1/deployments` empty (before the backup
+and again right before the deploy); GitHub `main` = `eb5625f5` (`git ls-remote`); 0 active queries on
 `edc_backend`; `payload_migrations` 25, last batch 17; 15 users, 1106 documents; 184 rows with `consent_held`.
 
 Backup `/root/backups/20261112T1934Z/` under `umask 077`: `edc_ai` 313 MB, `edc_backend` 19 MB, plus `documents`,
@@ -3048,7 +3048,7 @@ under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
 | first | `x3o9j5ymeozbz8hrlvvcmrz1` | 19:36:15 -> 19:42:24 |
 
 **No migration** at start, 19:42:28: "Reading migration files", `Done.`, "Ready in 808ms". `payload_migrations` 25,
-last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `f971d54c`, 7 with a healthcheck all
+last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `eb5625f5`, 7 with a healthcheck all
 healthy; 0 `error`/`fatal` lines in all 9 from 19:42:00 to 19:46:05.
 
 **Smoke**
@@ -3064,7 +3064,7 @@ Spend: `usage_logs` since 19:34 UTC, all from this run: 2 `edc-eco-8` `router.ro
 rows, $0.002382. The renames made no model call.
 
 **Cleanup** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): `docker rmi` of dev's
-`a6026876` images (backend, ai-service, web); the `6c0f65ad` images stay for rollback. `docker builder prune -af`
+`2e74037d` images (backend, ai-service, web); the `8fdcd258` images stay for rollback. `docker builder prune -af`
 (14.97 GB). **Disk**, `df -h /` free: 51 GB before, 36 GB after the build, 51 GB after the cleanup.
 
 **Retention** (§7 step 7), dev only: with the new stamp dev held 8; `20261029T0439Z` deleted in `/root/backups/` and
@@ -3076,7 +3076,7 @@ both sides after; staging's 7 unchanged.
 
 ### 4zzzzzzzzzzzz. Done 2026-11-12 20:29-20:32 UTC: dev only - no deploy; 3 test drafts deleted, 2 Dengue documentos gated
 
-Measured from the owner's laptop over ssh, on `f971d54c`; staging not touched; no backup (owner, disposable data).
+Measured from the owner's laptop over ssh, on `eb5625f5`; staging not touched; no backup (owner, disposable data).
 R26: docs 823, 824 (markdown, gate n/a) and 1425 (audio, gate rejected), all org 8 drafts, consent_held f (psql);
 `DELETE /api/documents/<id>` as the seed admin, 200 x3 at 20:29:56-58. After: 0 of those ids; documents 1106 -> 1103.
 R27: docs 375 (CSD pdf) and 377 (Res CSDengue docx), org 6, published, anonymise f, gate n/a, uploader user 1 (owner).
@@ -3095,14 +3095,14 @@ Doc 375 not touched (still `held`/`draft`, waiting for Revisión). 0 `error`/`fa
 ### 4zzzzzzzzzzzzzz. Done 2026-11-13 03:11-03:26 UTC: dev only - one migration; per-resource upload consent
 
 Measured by the deploy agent from the owner's laptop and on edc-1. Staging not touched (no read either). Range
-`f971d54c` (§4zzzzzzzzzzz) -> `db9a4456`, 20 commits (15 without merges): per-resource upload consent (a ticked
+`eb5625f5` (§4zzzzzzzzzzz) -> `29c54854`, 20 commits (15 without merges): per-resource upload consent (a ticked
 checkbox in the five upload entries, the backend refuses a create without `uploadConsentVersion`, one
 `consent_receipts` row per upload), the printable constancia `/documentos/<id>/constancia`, a public `/privacidad`,
 and the Etapa 1 closing docs. One backend migration, `20261113_015634_consent_receipts`. Under `infra/` only this file
-changed (`git diff --name-only f971d54c..db9a4456 -- infra/`), so no variable check (§4 footgun 1).
+changed (`git diff --name-only eb5625f5..29c54854 -- infra/`), so no variable check (§4 footgun 1).
 
-Pre-check: `docker ps` web, backend and ai-service on `f971d54c`; `GET /api/v1/deployments` empty (before the backup
-and again right before the deploy); GitHub `main` = `db9a4456` (`git ls-remote`); 0 active queries on
+Pre-check: `docker ps` web, backend and ai-service on `eb5625f5`; `GET /api/v1/deployments` empty (before the backup
+and again right before the deploy); GitHub `main` = `29c54854` (`git ls-remote`); 0 active queries on
 `edc_backend`; `payload_migrations` 25, last batch 17; `consent_receipts` absent (`to_regclass`); 15 users, 1103
 documents; 184 rows with `consent_held`.
 
@@ -3118,7 +3118,7 @@ plus `documents`, `organizations`, `platform_settings` and `anonymisation_settin
 **Migration** at start (backend log): 03:21:15 "Migrating: 20261113_015634_consent_receipts", "Migrated (87ms)",
 `Done.`, "Ready in 859ms". `payload_migrations` 26 (+1), last batch 18; `consent_receipts` exists with 10 columns
 (ids, `document_id_snapshot`, `organization_id`, `actor_id`, two enums, `consent_version`, timestamps; no text
-column), 0 rows before the smoke. After: 9 dev containers up, web, backend and ai-service on tag `db9a4456` (`docker
+column), 0 rows before the smoke. After: 9 dev containers up, web, backend and ai-service on tag `29c54854` (`docker
 ps`), 7 with a healthcheck all healthy.
 
 **Smoke**, 03:21-03:24, through `https://dev.ecosistemasdeconocimiento.com` with an `Origin` header; uploader
@@ -3146,7 +3146,7 @@ and 1 `budget-reset` row, $0.000000. No chat was run.
 the laptop.
 
 **Images and disk** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): `docker rmi` of
-dev's `6c0f65ad` images (backend, ai-service, web); the `f971d54c` images stay for rollback. `docker builder prune
+dev's `8fdcd258` images (backend, ai-service, web); the `eb5625f5` images stay for rollback. `docker builder prune
 -af` (14.88 GB). `df -h /` free: 51 GB before, 37 GB after the build, 51 GB after the cleanup.
 
 **Retention** (§7 step 7), dev only: with the new stamp dev held 8; `20261029T0643Z` (dev files only) deleted in

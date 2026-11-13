@@ -3,7 +3,7 @@
 - **Versión:** 1.4
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (§3, §4, §4b a §4zzzzzzzzzzz, §6, §7, §8, §9), `infra/fleet/runbook.md` (§3, §4, §5, §6, §7, §8), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `apps/backend/scripts/migrate.sh`, `apps/backend/Dockerfile`, `services/ai-service/Dockerfile`, `services/ai-service/.github/workflows/ci.yml`, `TESTING.md`, `package.json` (raíz), `.git/hooks/reference-transaction`, `apps/backend/scripts/hold-for-consent.ts`, `apps/backend/scripts/reextract-published-graph.ts`, `apps/backend/src/lib/consentHold.ts`. Código de `main` en `687ff21e` (2026-11-11).
+- **Fuentes:** `infra/fleet/edc-1.md` (§3, §4, §4b a §4zzzzzzzzzzz, §6, §7, §8, §9), `infra/fleet/runbook.md` (§3, §4, §5, §6, §7, §8), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `apps/backend/scripts/migrate.sh`, `apps/backend/Dockerfile`, `services/ai-service/Dockerfile`, `services/ai-service/.github/workflows/ci.yml`, `TESTING.md`, `package.json` (raíz), `.git/hooks/reference-transaction`, `apps/backend/scripts/hold-for-consent.ts`, `apps/backend/scripts/reextract-published-graph.ts`, `apps/backend/src/lib/consentHold.ts`. Código de `main` en `ac8fbf7c` (2026-11-11).
 
 ## Para quién es y qué responde
 
@@ -44,16 +44,16 @@ sequenceDiagram
 
 Desde el 2026-11-10 hay dos líneas: `main` solo recibe correcciones, y la funcionalidad nueva va a la rama `etapa-2` (decisión del 2026-11-10). Dev despliega `main`.
 
-**Estado de dev al 2026-11-13.** Dev corre `db9a4456`, el código de `main` (los commits posteriores solo cambian `docs/` e `infra/fleet/`), desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz), con una migración: `20261113_015634_consent_receipts` (`payload_migrations` 26, último lote 18). El 2026-11-12 hubo tres despliegues sin migración (`payload_migrations` 25, último lote 17). Cada uno, con respaldo previo y prueba de humo:
+**Estado de dev al 2026-11-13.** Dev corre `29c54854`, el código de `main` (los commits posteriores solo cambian `docs/` e `infra/fleet/`), desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz), con una migración: `20261113_015634_consent_receipts` (`payload_migrations` 26, último lote 18). El 2026-11-12 hubo tres despliegues sin migración (`payload_migrations` 25, último lote 17). Cada uno, con respaldo previo y prueba de humo:
 
 | Hora (UTC) | Versión | Scripts aplicados después | Fuente |
 |---|---|---|---|
-| 02:16-02:22 | `a6026876` | `hold-for-consent.ts`: 184 filas del taller; `refresh-ai-titles.ts`: 52 documentos (104 escrituras); `backfill-provenance-titles.ts`: 0 pendientes | `edc-1.md` §4zzzzzzzzz |
-| 15:25-15:31 | `6c0f65ad` | `clear-legacy-held-text.ts`: 2 filas; `clean-stored-errors.ts`: 0 filas | `edc-1.md` §4zzzzzzzzzz |
-| 19:36-19:42 | `f971d54c` | ninguno; la prueba de humo renombró dos documentos y comprobó con `psql` que ninguna otra columna cambió | `edc-1.md` §4zzzzzzzzzzz |
-| 2026-11-13 03:14-03:21 | `db9a4456` | ninguno; la prueba de humo: alta sin `uploadConsentVersion` 400 y 0 documentos, con versión 1 documento y 1 recibo, constancia 200 para quien subió y 404 para otra cuenta, `/privacidad` 200 sin sesión | `edc-1.md` §4zzzzzzzzzzzzzz |
+| 02:16-02:22 | `2e74037d` | `hold-for-consent.ts`: 184 filas del taller; `refresh-ai-titles.ts`: 52 documentos (104 escrituras); `backfill-provenance-titles.ts`: 0 pendientes | `edc-1.md` §4zzzzzzzzz |
+| 15:25-15:31 | `8fdcd258` | `clear-legacy-held-text.ts`: 2 filas; `clean-stored-errors.ts`: 0 filas | `edc-1.md` §4zzzzzzzzzz |
+| 19:36-19:42 | `eb5625f5` | ninguno; la prueba de humo renombró dos documentos y comprobó con `psql` que ninguna otra columna cambió | `edc-1.md` §4zzzzzzzzzzz |
+| 2026-11-13 03:14-03:21 | `29c54854` | ninguno; la prueba de humo: alta sin `uploadConsentVersion` 400 y 0 documentos, con versión 1 documento y 1 recibo, constancia 200 para quien subió y 404 para otra cuenta, `/privacidad` 200 sin sesión | `edc-1.md` §4zzzzzzzzzzzzzz |
 
-Antes, dev corría `c4f53632` (2026-11-10 23:03 UTC). Todo lo que estos documentos marcan como Implementado está en dev.
+Antes, dev corría `9463c79c` (2026-11-10 23:03 UTC). Todo lo que estos documentos marcan como Implementado está en dev.
 
 **2. Revisión previa.** Es práctica registrada desde `edc-1.md` §4zzz (2026-10-29):
 
@@ -330,7 +330,7 @@ docker exec -i "$C" psql -U edc -d edc_ai -v ON_ERROR_STOP=1 -v from_org=demo -v
 - Ruido del grafo: `apps/backend/scripts/purge-graph-noise.ts`. Filas con texto sin limpiar: `apps/backend/scripts/purge-unscrubbed-graph-rows.ts`.
 - Reconstrucción o relleno: `payload run src/lib/graph/backfill.cli.ts` y `src/lib/graph/policy.cli.ts`, con los argumentos `GRAPH_BACKFILL_*` y `GRAPH_POLICY_*` solo en la línea de comando, nunca en Coolify (citado, `env-manifests.md` §2f).
 - El relleno corre dentro del contenedor del backend: un redespliegue lo mata. A ritmo de una extracción por minuto, un relleno de 200 documentos tarda de 3 a 4 horas (inferido en `edc-1.md` §4p a partir de 14 extracciones en 16 minutos).
-- El relleno solo extrae documentos publicados y nunca los retenidos por consentimiento (`feae7e18`, `ccce6281`; Implementado). Un trabajo del grafo se detiene si la fila quedó retenida mientras corría (`17a5d985`, `c12a0ab5`, `1ac2669e`, `ca5cf2b4`; Implementado).
+- El relleno solo extrae documentos publicados y nunca los retenidos por consentimiento (`6085491d`, `496a38c8`; Implementado). Un trabajo del grafo se detiene si la fila quedó retenida mientras corría (`3b2ba66e`, `13e107c2`, `a35415f0`, `0d48c8f6`; Implementado).
 - Entidades huérfanas: una tarea diaria del backend borra las entidades que ya no menciona ningún documento (`apps/backend/src/lib/graph/orphanJanitor.ts`, `GRAPH_ORPHAN_JANITOR_*`; Implementado). Ya no hace falta correr el relleno a mano para eso.
 - Re-extracción completa: ver §6.21.
 
@@ -353,7 +353,7 @@ Scripts en `apps/backend/scripts/` (leído el 2026-10-30), todos de un solo uso 
 | `clean-stored-errors.ts` | Cambia por un texto fijo los mensajes de base de datos guardados en las 7 columnas de error. Implementado; en dev el 2026-11-12 encontró 0 filas |
 | `check-turn-corpus.ts` | Revisa turnos de chat en ai-service sin fila en `messages`. Solo lectura por defecto |
 
-Los scripts de re-gate (`regate-documents-by-id.ts`, `regate-member-documentos.ts`) rechazan o saltan las filas retenidas por consentimiento (`28d84f03`; Implementado). Los rellenos de títulos y de lengua, `regate-place-holds.ts` y la semilla del corpus también las saltan (`17a5d985`; Implementado).
+Los scripts de re-gate (`regate-documents-by-id.ts`, `regate-member-documentos.ts`) rechazan o saltan las filas retenidas por consentimiento (`ba3ea99a`; Implementado). Los rellenos de títulos y de lengua, `regate-place-holds.ts` y la semilla del corpus también las saltan (`3b2ba66e`; Implementado).
 
 El uso exacto de cada uno está en el encabezado del archivo y en las secciones de `edc-1.md` desde §4q. Desde el 2026-10-29 el gate rechaza reintentar sobre el mismo texto retenido (hash `heldTextHash`), así que un repaso solo cambia el resultado si cambió el texto o la regla.
 
@@ -421,7 +421,7 @@ Crear o borrar `/data/coolify/proxy/dynamic/edc-apex-redirect.yaml` en el servid
 
 ### 6.20 Retener documentos por consentimiento
 
-Implementado: el código (`512dcc1f`, `7987c171`) y la migración `20261110_181621_consent_held_reviews_keep`, que crea `documents.consent_held`, están en dev desde el despliegue de `c4f53632`. Que la revisión de una fila retenida también quede retenida es de `b29c72ba` (Implementado). El script se aplicó en dev el 2026-11-12: 184 filas del taller (measured por el agente de despliegue, `edc-1.md` §4zzzzzzzzz).
+Implementado: el código (`0bb9b0de`, `ad43981c`) y la migración `20261110_181621_consent_held_reviews_keep`, que crea `documents.consent_held`, están en dev desde el despliegue de `9463c79c`. Que la revisión de una fila retenida también quede retenida es de `321afa7f` (Implementado). El script se aplicó en dev el 2026-11-12: 184 filas del taller (measured por el agente de despliegue, `edc-1.md` §4zzzzzzzzz).
 
 Un documento retenido por consentimiento (`consentHeld`) no se vuelve a extraer, ingerir, pasar por la compuerta, graficar ni publicar. No se borra nada: la fila y lo que ya exista quedan como están. Ninguna API escribe la columna; solo el script. No hay camino de liberación en el código: levantar una retención es decisión del responsable y un `UPDATE` a mano (`apps/backend/src/lib/consentHold.ts`).
 
@@ -438,13 +438,13 @@ docker exec -w /repo/apps/backend -e CONSENT_ORG=8 -e CONSENT_IDS_FILE=/tmp/cons
 - `CONSENT_IDS_FILE`: archivo separado por tabuladores (`id<TAB>origen<TAB>nota`, comentarios con `#`). Las líneas marcadas `EXTRA-NO-TALLER` se omiten. Se lee tal cual; los ids no se copian a mano. Hay que copiarlo al contenedor antes (`docker cp`).
 - En lugar del archivo: `CONSENT_IDS` (lista separada por comas) o filtros (`CONSENT_STATUS`, `CONSENT_UPLOADED_BY`, `CONSENT_HAS_FILE=1`, `CONSENT_ID_FROM` y `CONSENT_ID_TO`).
 - No despublica. Las filas que siguen compartidas aparecen en la salida como `notDraft`; se despublican después. Una fila retenida solo se retira, sin volver a calcular vectores.
-- Con la lista del taller de Semiosis del 2026-11-10 da 184 ids, sin 823, 824 ni 1425 (medido por la prueba de `7987c171`). Ver [Corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md) §4.4.
+- Con la lista del taller de Semiosis del 2026-11-10 da 184 ids, sin 823, 824 ni 1425 (medido por la prueba de `ad43981c`). Ver [Corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md) §4.4.
 
 Orden en dev: respaldar como siempre, correr en seco, revisar el conteo, aplicar.
 
 ### 6.21 Re-extraer el grafo de los publicados
 
-Preparado y **sin correr** en dev (`feae7e18`, `apps/backend/scripts/reextract-published-graph.ts`; Implementado).
+Preparado y **sin correr** en dev (`6085491d`, `apps/backend/scripts/reextract-published-graph.ts`; Implementado).
 
 - En seco por omisión: lista cada documento que enviaría, con su ecosistema, el largo del texto y un costo estimado. No llama a ningún modelo ni escribe. Aplica con `GRAPH_REEXTRACT_APPLY=1`. `GRAPH_REEXTRACT_ORG` y `GRAPH_REEXTRACT_LIMIT` acotan la corrida.
 - Nunca toca un borrador, una fila retenida por consentimiento ni una fila con compuerta sin texto aprobado.
@@ -478,7 +478,7 @@ Preparado y **sin correr** en dev (`feae7e18`, `apps/backend/scripts/reextract-p
 4. **Respaldos manuales y no siempre tomados** (§1.2, paso 3). Sin simulacro de restauración. La retención de 7 por entorno también es manual.
 5. **Spark prestado sin arranque automático ni supervisión.** Si se reinicia de noche, dev pierde audio y micrófono en vivo, y el detector cae a hospedado sin que nadie se entere.
 6. **Staging desactualizado** desde el 2026-10-17: ya no sirve para reproducir problemas de dev ni para ensayar migraciones.
-7. **Rollback lento**: el botón de Coolify no es fiable. Desde el 2026-11-10 se conservan las imágenes del despliegue anterior (`3f14306b`) para revertir (citado, `edc-1.md` §4zzzzzzzz), pero la limpieza de disco las borra; sin ellas, cada reversión cuesta un build.
+7. **Rollback lento**: el botón de Coolify no es fiable. Desde el 2026-11-10 se conservan las imágenes del despliegue anterior (`62cf5222`) para revertir (citado, `edc-1.md` §4zzzzzzzz), pero la limpieza de disco las borra; sin ellas, cada reversión cuesta un build.
 8. **Cambio incompatible pendiente en el stack de IA**: `ai-client` 0.32 trae verificación estricta de capacidades (§4).
 9. **Documentación desactualizada**: varios documentos de `infra/fleet/` describen una flota de cuatro cajas que no existe. El procedimiento del Spark está en `edc-1.md` §4y.
 

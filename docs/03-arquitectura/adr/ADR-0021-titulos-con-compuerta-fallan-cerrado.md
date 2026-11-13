@@ -3,12 +3,12 @@
 - **Versión:** 1.0
 - **Fecha del documento:** 2026-11-11
 - **Estado del documento:** propuesto
-- **Estado de la decisión:** aceptada; implementada y desplegada en dev (`c4f53632`, 2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11)
+- **Estado de la decisión:** aceptada; implementada y desplegada en dev (`9463c79c`, 2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11)
 - **Fecha de la decisión:** 2026-11-10
 - **Quién decidió:** responsable de desarrollo (decisión del 2026-11-10, a partir del hallazgo P-13 de la auditoría de privacidad del mismo día). La regla de que una columna `anonymise` NULL cuenta como con compuerta para el título salió de la coordinación de la revisión del 2026-11-10
 - **Reemplaza:** la regla del 2026-10-26 por la que "un `documento` marcado para anonimizar conserva su propio título"
 - **Enmienda:** [ADR-0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md), en lo que dice del título
-- **Fuentes:** `apps/backend/src/lib/contentKind.ts` (`titleFor`, `titleIsGated`, `documentTitleFor`, `GATED_DOCUMENT_TITLE`); `apps/backend/src/lib/anonymise/gate.ts` (`redactTitle`); `apps/backend/src/collections/Documents.ts` (`mayReadGatedOriginal`, `constrainGatedQueriesAt`, `GATED_FILTERABLE_PATHS`); `apps/backend/src/lib/rejectPublished.ts`; `apps/backend/src/lib/provenanceTitles.ts`; `apps/backend/src/lib/refreshAiTitles.ts`; commits b2a51aed, 2dda9a8b, 84364f58, a2ba0e19, 2f21e91b, 0bfe8ceb, 67aec160, ed35b605, a0f806ac, d72094e5 y b7dc944f; auditoría de privacidad del 2026-11-10 (P-13)
+- **Fuentes:** `apps/backend/src/lib/contentKind.ts` (`titleFor`, `titleIsGated`, `documentTitleFor`, `GATED_DOCUMENT_TITLE`); `apps/backend/src/lib/anonymise/gate.ts` (`redactTitle`); `apps/backend/src/collections/Documents.ts` (`mayReadGatedOriginal`, `constrainGatedQueriesAt`, `GATED_FILTERABLE_PATHS`); `apps/backend/src/lib/rejectPublished.ts`; `apps/backend/src/lib/provenanceTitles.ts`; `apps/backend/src/lib/refreshAiTitles.ts`; commits 8d309398, c149bf43, b6c51a1a, 6d53f5ce, b65bba1d, ea0c6ec5, fd3bfec7, 76c9f147, f58f59f8, adfca830 y 00b943f3; auditoría de privacidad del 2026-11-10 (P-13)
 
 **Para quién es y qué responde.** Para quien toque cualquier superficie que muestre o envíe el nombre de un documento: REST, ingesta, citas, biblioteca, chat, grafo, vista de estudiante o vista de anonimización. Responde qué título lleva un `documento` con compuerta, quién ve el nombre del archivo y qué pasa cuando no se sabe si el documento tiene compuerta.
 
@@ -20,7 +20,7 @@ Pesaron tres hechos:
 
 1. **El nombre de archivo es texto libre.** Puede nombrar a quien habla, igual que el cuerpo.
 2. **No todas las lecturas traen la columna `anonymise`.** Un `select` parcial, una fila armada en código o una consulta que la olvida dejaban el título abierto. Medido el 2026-11-10: la lectura parcial de un colega devolvió el nombre de archivo crudo (citado del comentario de `titleIsGated` en `lib/contentKind.ts`).
-3. **Filtrar también filtra.** Un `where` o un `sort` sobre el nombre deja adivinar el nombre sin leerlo. Una lista de rutas prohibidas dejó pasar las que no nombraba: `mediaFile.filename` y `document.revisionOf.name` en las bitácoras de revisión (hallazgos D1 y D2, citados del commit b7dc944f).
+3. **Filtrar también filtra.** Un `where` o un `sort` sobre el nombre deja adivinar el nombre sin leerlo. Una lista de rutas prohibidas dejó pasar las que no nombraba: `mediaFile.filename` y `document.revisionOf.name` en las bitácoras de revisión (hallazgos D1 y D2, citados del commit 00b943f3).
 
 ## Decisión
 
@@ -48,7 +48,7 @@ Pesaron tres hechos:
 - Un nombre que el cuerpo deja visible (por un interruptor de ADR-0020) se redacta en el título: sobre-redacción, del lado seguro. El título no tiene ronda de verificación ni restituciones.
 - Un `documento` con compuerta que el gate no ha titulado (subido antes del 2026-11-10, o con un título que no se pudo redactar) se muestra como "Documento". Varios pueden verse iguales en una lista.
 - Toda superficie nueva que muestre un título debe pasar por `documentTitleFor` y leer `anonymise`. Si no la lee, el título sale neutro: el error es visible y seguro.
-- En dev, el 2026-11-10 a las 20:15 UTC, 52 `documento` publicados con compuerta tenían el título viejo en el corpus compartido y en las copias borrador (citado del commit d72094e5). `refresh-ai-titles` los corrigió en dev el 2026-11-12: 52 documentos, 104 escrituras contando las dos copias (measured por el agente de despliegue, `infra/fleet/edc-1.md` §4zzzzzzzzz).
+- En dev, el 2026-11-10 a las 20:15 UTC, 52 `documento` publicados con compuerta tenían el título viejo en el corpus compartido y en las copias borrador (citado del commit adfca830). `refresh-ai-titles` los corrigió en dev el 2026-11-12: 52 documentos, 104 escrituras contando las dos copias (measured por el agente de despliegue, `infra/fleet/edc-1.md` §4zzzzzzzzz).
 
 ## Referencias
 

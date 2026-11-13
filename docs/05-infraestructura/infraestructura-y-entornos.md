@@ -3,7 +3,7 @@
 - **Versión:** 1.4
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (bitácora del servidor, hasta §4zzzzzzzzzzz, 2026-11-12), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/fleet/backups.md`, `infra/fleet/runbook.md`, `infra/fleet/topology.md`, `plan/spark-ai-adopcion.md`, `plan/servidor-desarrollo.md`, `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, notas de contexto del equipo, `TESTING.md`, código de `main` en `b7dc944f` (2026-11-10).
+- **Fuentes:** `infra/fleet/edc-1.md` (bitácora del servidor, hasta §4zzzzzzzzzzz, 2026-11-12), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/fleet/backups.md`, `infra/fleet/runbook.md`, `infra/fleet/topology.md`, `plan/spark-ai-adopcion.md`, `plan/servidor-desarrollo.md`, `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, notas de contexto del equipo, `TESTING.md`, código de `main` en `00b943f3` (2026-11-10).
 
 ## Para quién es y qué responde
 
@@ -122,7 +122,7 @@ Notas del diagrama:
 - El rerank de dev va al Spark desde el 2026-10-21: `RERANK_PROVIDER=rerank-api` hacia `/v1/rerank` del proxy, y el registro del proxy muestra `POST /v1/rerank` con 200 (measured por el agente de despliegue, `edc-1.md` §4y). Staging sigue con el rerank en DeepInfra. Ver [Pila de IA](../03-arquitectura/pila-de-ia.md).
 - Staging no usa el Spark ni tiene audio (citado, `edc-1.md` §3 y §4zzzz).
 - El respaldo de embeddings de dev es DeepInfra desde el 2026-11-06, no OpenRouter (citado, `edc-1.md` §4zzzzzz). Staging sigue con OpenRouter para embeddings.
-- Toda llamada de chat de ai-service a OpenRouter lleva `provider: {zdr: true}` (retención cero de datos): OpenRouter solo enruta a proveedores que no guardan la petición, o responde 404 (código `9b755298`, en dev desde el 2026-11-10; llamadas reales medidas en `edc-1.md` §4zzzzzzz). DeepInfra no lleva esa marca.
+- Toda llamada de chat de ai-service a OpenRouter lleva `provider: {zdr: true}` (retención cero de datos): OpenRouter solo enruta a proveedores que no guardan la petición, o responde 404 (código `1e35bf0f`, en dev desde el 2026-11-10; llamadas reales medidas en `edc-1.md` §4zzzzzzz). DeepInfra no lleva esa marca.
 
 ### 2.5 Vista local con Docker Compose
 
@@ -225,7 +225,7 @@ Costo medido de una caída: si el Spark se cuelga (no responde, pero tampoco rec
 | IA | OpenRouter con ZDR para chat, condensación, expansión y grafo. Spark para embeddings, detector, transcripción y rerank (desde el 2026-10-21). Respaldo de embeddings en DeepInfra; respaldo del detector hospedado vía OpenRouter con ZDR | OpenRouter, más DeepInfra para rerank. Sin Spark ni audio | OpenRouter con llave local, o el proveedor falso `fake-provider` (perfil `fake`). Rerank apagado |
 | Ecosistemas | ids 1, 3, 6, 7 y 8 (citado, `edc-1.md` §4x y §4zp) | organización `Montaje` (id 1), creada a mano el 2026-10-17 | los del seed de `corpus-generativo` |
 | Usuarios demo (solo roles) | admin de plataforma; participante (rol `member`); `investigador`; dos `estudiante`; investigador de Semiosis; investigador de Dengue (citado, `edc-1.md` §4w y §4zq) | admin de plataforma; usuario de humo con rol `owner` de `Montaje` (citado, `edc-1.md` §3) | admin creado por el seed |
-| Versión desplegada | `db9a4456` (el código de `main`; los commits posteriores solo cambian `docs/` e `infra/fleet/`), desplegada el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México), con 26 migraciones de Payload (measured con `docker ps` y `payload_migrations` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz). El 2026-11-12 hubo tres despliegues sin migración: `a6026876` (02:22 UTC), `6c0f65ad` (15:31 UTC) y `f971d54c` (19:42 UTC); antes, `c4f53632` (2026-11-10 23:03 UTC) | web y backend de la versión del 2026-10-17 ("Up 3 weeks"); ai-service "Up 5 days", etiqueta `97d5316a` (measured el 2026-11-12, `edc-1.md` §4zzzzzzzzz) | lo que haya en el árbol de trabajo |
+| Versión desplegada | `29c54854` (el código de `main`; los commits posteriores solo cambian `docs/` e `infra/fleet/`), desplegada el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México), con 26 migraciones de Payload (measured con `docker ps` y `payload_migrations` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz). El 2026-11-12 hubo tres despliegues sin migración: `2e74037d` (02:22 UTC), `8fdcd258` (15:31 UTC) y `eb5625f5` (19:42 UTC); antes, `9463c79c` (2026-11-10 23:03 UTC) | web y backend de la versión del 2026-10-17 ("Up 3 weeks"); ai-service "Up 5 days", etiqueta `97d5316a` (measured el 2026-11-12, `edc-1.md` §4zzzzzzzzz) | lo que haya en el árbol de trabajo |
 | Propósito | Iteración y demostración. Los datos son desechables por decisión del responsable | Copia congelada para pruebas de aceptación | Desarrollo individual |
 | Quién despliega | Quien opera el despliegue, por la API o el panel de Coolify. "Auto-deploy" está encendido en Coolify, pero no existe webhook de GitHub, así que en la práctica es manual (citado, `edc-1.md` §3) | Igual; auto-deploy apagado | Cada desarrollador con `docker compose` |
 
@@ -327,21 +327,21 @@ Hallazgo abierto: `infra/docker-compose.yml:918` todavía da a `AUDIO_SERVICE_AD
 
 ### 6.8 Límites, retención y tareas del backend
 
-Ninguna es secreta. Ninguna está en el compose ni en Coolify salvo que se indique: valen los del código. La columna "En dev" sigue la regla de [Despliegue y runbook](despliegue-y-runbook.md) §1.2: desplegado en `f971d54c` o no.
+Ninguna es secreta. Ninguna está en el compose ni en Coolify salvo que se indique: valen los del código. La columna "En dev" sigue la regla de [Despliegue y runbook](despliegue-y-runbook.md) §1.2: desplegado en `eb5625f5` o no.
 
 | Variable | Valor por omisión | Qué hace | Código | En dev |
 |---|---|---|---|---|
 | `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_MAX`, `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_EMAIL_WINDOW_S`, `IDENTITY_RATELIMIT_LOGIN_FAIL_IP_MAX` | 4, 3600 s, 100 por hora | Inicios de sesión fallidos por correo e IP y por IP. 4 queda uno por debajo del bloqueo de Payload (5 intentos, 10 min) | `apps/backend/src/lib/rateLimit.ts`, `apps/web/src/lib/server/loginRateLimit.ts` | Implementado |
-| `API_BODY_IDLE_TIMEOUT_MS`, `API_BODY_TOTAL_TIMEOUT_MS` | 30 000, 120 000 | Un cuerpo `/api/*` que no es subida y no manda nada, o tarda demasiado, recibe 408. El tope de 8 MiB (`API_BODY_MAX_BYTES`) es constante, no variable | `apps/backend/src/lib/bodyCap.ts` | Tope de 8 MiB: Implementado (medido con 413 en `edc-1.md` §4zzzzzzzz). Tiempos: Implementado, `780f614d` |
-| `UPLOAD_MAX_CONCURRENT_PER_USER` | 2 | Subidas simultáneas por cuenta y proceso; la siguiente recibe 429 con `Retry-After: 5`. El archivo tiene tope de 200 MiB (`MAX_MEDIA_UPLOAD_BYTES`, constante) | `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/payload.config.ts` | Implementado, `780f614d` |
-| `CALLBACK_RETENTION_JANITOR_ENABLED`, `CALLBACK_RETENTION_JANITOR_INTERVAL_MIN`, `CALLBACK_RETENTION_DAYS` | encendida, 1440 min, 30 días | Tarea diaria que vacía `ai_service_callbacks.raw_body` a los 30 días; la fila queda porque es la llave contra duplicados | `apps/backend/src/lib/callbackRetention.ts`, arrancada en `payload.config.ts` | Implementado, `f8294d65` |
+| `API_BODY_IDLE_TIMEOUT_MS`, `API_BODY_TOTAL_TIMEOUT_MS` | 30 000, 120 000 | Un cuerpo `/api/*` que no es subida y no manda nada, o tarda demasiado, recibe 408. El tope de 8 MiB (`API_BODY_MAX_BYTES`) es constante, no variable | `apps/backend/src/lib/bodyCap.ts` | Tope de 8 MiB: Implementado (medido con 413 en `edc-1.md` §4zzzzzzzz). Tiempos: Implementado, `30fe10d3` |
+| `UPLOAD_MAX_CONCURRENT_PER_USER` | 2 | Subidas simultáneas por cuenta y proceso; la siguiente recibe 429 con `Retry-After: 5`. El archivo tiene tope de 200 MiB (`MAX_MEDIA_UPLOAD_BYTES`, constante) | `apps/backend/src/lib/uploadSlots.ts`, `apps/backend/src/payload.config.ts` | Implementado, `30fe10d3` |
+| `CALLBACK_RETENTION_JANITOR_ENABLED`, `CALLBACK_RETENTION_JANITOR_INTERVAL_MIN`, `CALLBACK_RETENTION_DAYS` | encendida, 1440 min, 30 días | Tarea diaria que vacía `ai_service_callbacks.raw_body` a los 30 días; la fila queda porque es la llave contra duplicados | `apps/backend/src/lib/callbackRetention.ts`, arrancada en `payload.config.ts` | Implementado, `4471dcba` |
 | `GRAPH_ORPHAN_JANITOR_ENABLED`, `GRAPH_ORPHAN_JANITOR_INTERVAL_MIN` | encendida, 1440 min | Barrido diario de entidades del grafo que ya no menciona ningún documento | `apps/backend/src/lib/graph/orphanJanitor.ts`, arrancada en `payload.config.ts` | Implementado |
-| `CONSENT_IDS_FILE` | sin valor | Solo del script `scripts/hold-for-consent.ts`: archivo de ids por retener. Nunca en Coolify | `apps/backend/scripts/hold-for-consent.ts` | Implementado, `7987c171` |
-| `QUERY_RELATION_MAX_TERMS`, `QUERY_RELATION_MAX_IDS` | 5, 5000 | Tope por petición de un filtro a través de una relación; pasado, 400 | `apps/backend/src/access/relationFilters.ts` | Implementado, `36bf6cf5` |
-| `QUERY_RELATION_MAX_CONCURRENT_PER_USER`, `QUERY_RELATION_RATELIMIT_USER_MAX` | 2, 30 por minuto | Peticiones así por persona a la vez y por minuto; pasado, 429 con `Retry-After` | `apps/backend/src/access/relationFilters.ts`, `apps/backend/src/lib/rateLimit.ts` | Implementado, `490de211` |
-| `SESSION_RATELIMIT_CREATE_USER_MAX` | 60 por hora | Conversaciones nuevas por cuenta; la siguiente, 429 con `Retry-After` | `apps/backend/src/lib/rateLimit.ts` | Implementado, `36bf6cf5` |
-| `MIEMBROS_RATELIMIT_ADD_USER_MAX` | 50 por hora | Altas por `/miembros` de una misma persona; la siguiente, 429 con `Retry-After` | `apps/backend/src/endpoints/miembros.ts`, `apps/backend/src/lib/rateLimit.ts` | Implementado, `0c639102` |
-| `JANITOR_FIRST_SWEEP_MIN` | 2 | Minutos desde el arranque hasta el primer barrido de cada tarea programada, salvo el conserje de sesiones | `apps/backend/src/lib/janitorScheduler.ts` | Implementado, `bb8852f1` |
+| `CONSENT_IDS_FILE` | sin valor | Solo del script `scripts/hold-for-consent.ts`: archivo de ids por retener. Nunca en Coolify | `apps/backend/scripts/hold-for-consent.ts` | Implementado, `ad43981c` |
+| `QUERY_RELATION_MAX_TERMS`, `QUERY_RELATION_MAX_IDS` | 5, 5000 | Tope por petición de un filtro a través de una relación; pasado, 400 | `apps/backend/src/access/relationFilters.ts` | Implementado, `9baf60e3` |
+| `QUERY_RELATION_MAX_CONCURRENT_PER_USER`, `QUERY_RELATION_RATELIMIT_USER_MAX` | 2, 30 por minuto | Peticiones así por persona a la vez y por minuto; pasado, 429 con `Retry-After` | `apps/backend/src/access/relationFilters.ts`, `apps/backend/src/lib/rateLimit.ts` | Implementado, `f35e0657` |
+| `SESSION_RATELIMIT_CREATE_USER_MAX` | 60 por hora | Conversaciones nuevas por cuenta; la siguiente, 429 con `Retry-After` | `apps/backend/src/lib/rateLimit.ts` | Implementado, `9baf60e3` |
+| `MIEMBROS_RATELIMIT_ADD_USER_MAX` | 50 por hora | Altas por `/miembros` de una misma persona; la siguiente, 429 con `Retry-After` | `apps/backend/src/endpoints/miembros.ts`, `apps/backend/src/lib/rateLimit.ts` | Implementado, `e646736c` |
+| `JANITOR_FIRST_SWEEP_MIN` | 2 | Minutos desde el arranque hasta el primer barrido de cada tarea programada, salvo el conserje de sesiones | `apps/backend/src/lib/janitorScheduler.ts` | Implementado, `b4f324da` |
 
 `env-manifests.md` documenta todas salvo `GRAPH_ORPHAN_JANITOR_*`, `ANONYMISE_REGATE_*` y `CONSENT_IDS_FILE` (leído el 2026-11-11).
 

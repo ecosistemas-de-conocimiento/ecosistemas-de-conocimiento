@@ -3,11 +3,11 @@
 - **Versión:** 1.0
 - **Fecha del documento:** 2026-11-11
 - **Estado del documento:** propuesto
-- **Estado de la decisión:** aceptada; implementada y desplegada en dev (`c4f53632`, 2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11), con la migración `20261110_181621_consent_held_reviews_keep`
+- **Estado de la decisión:** aceptada; implementada y desplegada en dev (`9463c79c`, 2026-11-10, 23:03 UTC, medido con `docker ps` en edc-1 el 2026-11-11), con la migración `20261110_181621_consent_held_reviews_keep`
 - **Fecha de la decisión:** 2026-11-10
 - **Quién decidió:** responsable de desarrollo (decisión del 2026-11-10)
 - **Relación con [ADR-0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md):** no lo contradice. ADR-0019 descarta guardar un nivel de consentimiento de la persona que habla. Esta marca no dice quién consintió ni a qué: solo detiene el procesamiento de un documento mientras sus autores no consienten
-- **Fuentes:** `apps/backend/src/lib/consentHold.ts`; `apps/backend/scripts/hold-for-consent.ts`; `apps/backend/src/collections/Documents.ts`; `apps/backend/src/lib/publishDocument.ts` (`publishBlocker`); `apps/backend/src/lib/anonymisationControls.ts`; `apps/backend/src/lib/graph/backfill.ts`; commits 512dcc1f, 7987c171, 28d84f03, ccce6281 y feae7e18; informe del taller del 2026-11-10
+- **Fuentes:** `apps/backend/src/lib/consentHold.ts`; `apps/backend/scripts/hold-for-consent.ts`; `apps/backend/src/collections/Documents.ts`; `apps/backend/src/lib/publishDocument.ts` (`publishBlocker`); `apps/backend/src/lib/anonymisationControls.ts`; `apps/backend/src/lib/graph/backfill.ts`; commits 0bb9b0de, ad43981c, ba3ea99a, 496a38c8 y 6085491d; informe del taller del 2026-11-10
 
 **Para quién es y qué responde.** Para quien escriba un barrido, un script de mantenimiento o una ruta que procese documentos. Responde qué es un documento retenido por consentimiento, qué no se le puede hacer y cómo se marca.
 
@@ -43,17 +43,17 @@ Los materiales del taller del ecosistema Semiosis práctica quedaron en borrador
 
 La decisión no cambia. Desplegado en dev:
 
-- **Una revisión hereda la retención.** Una fila de "Publicar cambios" (`revisionOf`) está retenida si lo está su original, o si el original no se puede leer. La marca se escribe solo en el original, así que levantarla sigue siendo un `UPDATE` (commits b29c72ba y c12a0ab5).
-- **Más caminos guardados.** "Publicar cambios" de una nota retenida responde 409 antes de la compuerta; el trabajo del grafo y una ingesta en curso se detienen si la fila quedó retenida; los backfills de títulos y lengua, `regatePlaceHolds` y el seed del corpus la saltan (commits 17a5d985 y c12a0ab5).
-- **Borrar una conversación** que se lleva un documento retenido ya no borra las filas de revisión de otras personas: solo las de quien borra (commit 17a3ee49).
+- **Una revisión hereda la retención.** Una fila de "Publicar cambios" (`revisionOf`) está retenida si lo está su original, o si el original no se puede leer. La marca se escribe solo en el original, así que levantarla sigue siendo un `UPDATE` (commits 321afa7f y 13e107c2).
+- **Más caminos guardados.** "Publicar cambios" de una nota retenida responde 409 antes de la compuerta; el trabajo del grafo y una ingesta en curso se detienen si la fila quedó retenida; los backfills de títulos y lengua, `regatePlaceHolds` y el seed del corpus la saltan (commits 3b2ba66e y 13e107c2).
+- **Borrar una conversación** que se lleva un documento retenido ya no borra las filas de revisión de otras personas: solo las de quien borra (commit c2f19412).
 
 ## Estado al 2026-11-12
 
-La decisión no cambia. Desplegado en dev (`db9a4456`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz)):
+La decisión no cambia. Desplegado en dev (`29c54854`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz)):
 
-- **Retenciones a medio camino.** Una retención que llega mientras corre el modelo del grafo lo termina `skipped` y conserva las filas anteriores (commits 1ac2669e, ca5cf2b4). "Publicar cambios" de una nota revisa la retención bajo bloqueo de fila justo antes del cambio, y un re-índice que aterriza después se retira (commits 0d3f2de6, d97271fb, 6a9a3e45).
-- **Publicación tardía.** Una primera publicación que aterriza después de una retención o un retiro se retira, y una fila retenida nunca pasa a publicada (commit 3f5f2a29). Si el retiro falla, el aviso responde 500 y ai-service lo reenvía (commit dd7b7bce).
-- **La marca no vuelve por una escritura vieja.** `consentHeld` nunca va en una actualización de Payload (commit 4a6c77dc).
+- **Retenciones a medio camino.** Una retención que llega mientras corre el modelo del grafo lo termina `skipped` y conserva las filas anteriores (commits a35415f0, 0d48c8f6). "Publicar cambios" de una nota revisa la retención bajo bloqueo de fila justo antes del cambio, y un re-índice que aterriza después se retira (commits 53af9cd2, 4b1c59e1, e10288d3).
+- **Publicación tardía.** Una primera publicación que aterriza después de una retención o un retiro se retira, y una fila retenida nunca pasa a publicada (commit 7b48bb4d). Si el retiro falla, el aviso responde 500 y ai-service lo reenvía (commit b6a82121).
+- **La marca no vuelve por una escritura vieja.** `consentHeld` nunca va en una actualización de Payload (commit 52d9c325).
 - **Limitaciones conocidas.** Dos casos pueden dejar viva una copia compartida; ninguno ocurre hoy y su arreglo va a la Etapa 2 ([seguridad](../../06-privacidad-y-seguridad/seguridad.md#21-limitaciones-conocidas)).
 
 ## Referencias

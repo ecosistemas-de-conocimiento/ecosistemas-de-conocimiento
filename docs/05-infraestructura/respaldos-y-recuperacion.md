@@ -3,7 +3,7 @@
 - **Versión:** 1.5
 - **Fecha:** 2026-11-12
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (§1, §2, §4b, §4c, §4p, §4x, §4zn, §4zs, §4zzz, §4zzzz, §4zzzzzzz, §4zzzzzzzz, §4zzzzzzzzz a §4zzzzzzzzzzz, §6, §7), `infra/fleet/backups.md` (diseño, no construido), `infra/fleet/runbook.md` (§3, §4, §8), `infra/fleet/env-manifests.md` (§1, §3), `infra/docker-compose.yml`, `plan/spark-ai-adopcion.md` (§5), `plan/auditoria-codigo-2026-10-28.md`, listado local de la carpeta de respaldos fuera de la caja (medido el 2026-10-30), commits `6a1f645b` (regla de retención) y `3ce0e07d` (primera purga).
+- **Fuentes:** `infra/fleet/edc-1.md` (§1, §2, §4b, §4c, §4p, §4x, §4zn, §4zs, §4zzz, §4zzzz, §4zzzzzzz, §4zzzzzzzz, §4zzzzzzzzz a §4zzzzzzzzzzz, §6, §7), `infra/fleet/backups.md` (diseño, no construido), `infra/fleet/runbook.md` (§3, §4, §8), `infra/fleet/env-manifests.md` (§1, §3), `infra/docker-compose.yml`, `plan/spark-ai-adopcion.md` (§5), `plan/auditoria-codigo-2026-10-28.md`, listado local de la carpeta de respaldos fuera de la caja (medido el 2026-10-30), commits `8057038a` (regla de retención) y `859e0d47` (primera purga).
 
 ## Para quién es y qué responde
 
@@ -21,7 +21,7 @@ Contexto que pesa en todas las decisiones de este documento: al 2026-10-30 EDC n
 | Pregunta | Respuesta hoy | Procedencia |
 |---|---|---|
 | ¿Hay respaldo automático? | Sí, uno: la imagen diaria del disco completo que hace Hetzner, 7 rotativas | citado, `edc-1.md` §1 |
-| ¿Hay respaldo lógico de las bases? | Sí, pero **manual**: un `pg_dump` antes de cada despliegue con migración, cuando se acuerda; los tres despliegues sin migración del 2026-11-12 también lo hicieron. El último, `20261113T0312Z`, antes del despliegue de `db9a4456` (con migración): `edc_ai` 299 MB, `edc_backend` 18 MB, con `SHA256SUMS` y copia fuera del servidor verificada con `sha256sum -c` | citado, `edc-1.md` §4b, §4zzzz, §4zzzzzzzz, §4zzzzzzzzzzz y §4zzzzzzzzzzzzzz (measured por el agente de despliegue) |
+| ¿Hay respaldo lógico de las bases? | Sí, pero **manual**: un `pg_dump` antes de cada despliegue con migración, cuando se acuerda; los tres despliegues sin migración del 2026-11-12 también lo hicieron. El último, `20261113T0312Z`, antes del despliegue de `29c54854` (con migración): `edc_ai` 299 MB, `edc_backend` 18 MB, con `SHA256SUMS` y copia fuera del servidor verificada con `sha256sum -c` | citado, `edc-1.md` §4b, §4zzzz, §4zzzzzzzz, §4zzzzzzzzzzz y §4zzzzzzzzzzzzzz (measured por el agente de despliegue) |
 | ¿Hay copia fuera de Hetzner? | Solo de los dumps: copia fuera del servidor, en equipo del equipo de desarrollo, sin cifrar. Desde el 2026-11-10 se escribe con `umask 077` (archivos 600, carpetas 700) | medido el 2026-10-30 (permisos `-rw-r--r--`, sin paso de cifrado); el 2026-11-10, `stat` sobre `20261110T1825Z` (citado, `edc-1.md` §4zzzzzzzz) |
 | ¿Se respaldan los archivos subidos? | Solo dentro de la imagen de Hetzner | inferido: no hay otro mecanismo |
 | ¿Se ha probado una restauración completa? | **Nunca** | citado, `backups.md` §6 es solo propuesta |

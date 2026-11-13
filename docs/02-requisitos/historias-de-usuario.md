@@ -28,7 +28,7 @@ Este documento es para el equipo del proyecto, para revisores institucionales y 
 
 El rol de ecosistema `admin` (en pantalla, "administra") no aparece en el mapa. Tiene los permisos de revisión, miembros y subida de testimonios, pero no Ajustes ni Administración. Ver [matriz de roles y permisos](matriz-roles-y-permisos.md).
 
-**Estado.** Todas las historias del mapa están implementadas en `main` del 2026-10-29. La versión 1.2 revisa los criterios contra `main` (b7dc944f) el 2026-11-10; la 1.4, contra `main` `f971d54c` el 2026-11-12. Estado de dev = `db9a4456`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz): todo lo que está en `main` `db9a4456` está desplegado en dev; `db9a4456` agrega a `f971d54c` el consentimiento por recurso. Se distinguen dos estados:
+**Estado.** Todas las historias del mapa están implementadas en `main` del 2026-10-29. La versión 1.2 revisa los criterios contra `main` (00b943f3) el 2026-11-10; la 1.4, contra `main` `eb5625f5` el 2026-11-12. Estado de dev = `29c54854`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz): todo lo que está en `main` `29c54854` está desplegado en dev; `29c54854` agrega a `eb5625f5` el consentimiento por recurso. Se distinguen dos estados:
 - **implementada**: al menos una prueba automatizada (unitaria, contra Postgres, e2e o spec de evidencia con aserción) comprueba el resultado.
 - **implementada sin prueba automatizada**: la historia existe y se graba, pero ninguna prueba comprueba el resultado.
 
@@ -173,7 +173,7 @@ flowchart LR
   1. Dado una conversación, cuando escribe y pulsa enviar, entonces aparece una respuesta nueva con su grupo de estrellas "Valora esta respuesta" en menos de 180 s.
   2. Dado la primera pregunta de la conversación, cuando llega la respuesta, entonces la pregunta se ve y el título de la conversación cambia.
   3. Dado una respuesta en curso, cuando pulsa Esc en el campo de escritura, entonces la respuesta se detiene.
-  4. Dado que el modelo devuelve una respuesta vacía, cuando termina el turno, entonces el turno se marca como fallido con «Reintentar» y no se guarda un mensaje vacío (desde el 2026-11-10, commit c867ff43; desplegado).
+  4. Dado que el modelo devuelve una respuesta vacía, cuando termina el turno, entonces el turno se marca como fallido con «Reintentar» y no se guarda un mensaje vacío (desde el 2026-11-10, commit e0686cc6; desplegado).
 - **Estado:** implementada.
 - **Evidencia:** `ev/comun.ts`; `e2e/journey.spec.ts`; `web/routes/api/generate/server.test.ts`; `web/lib/api.turn.test.ts`; `web/lib/api.stream.test.ts`.
 - **Nota:** las primeras palabras tardan de 8 a 14 s y a veces hasta 39 s (citado de `plan/ux-demo-backlog.md` #9). Ver [requisitos no funcionales](requisitos-no-funcionales.md).
@@ -306,7 +306,7 @@ flowchart LR
 - **Precondición:** función `liveMic` encendida y la variable de entorno de la web `PUBLIC_AUDIO_UPLOAD_ENABLED=1`. Solo en dev: staging no tiene transcripción.
 - **Criterios de aceptación:**
   1. Dado el micrófono disponible, cuando pulsa iniciar y habla, entonces aparece el reloj de grabación y el texto en vivo muestra palabras en menos de 30 s.
-  2. Dado que pulsa detener, cuando termina, entonces el texto en vivo desaparece. Desde el 2026-11-10 el texto en vivo solo se ve mientras graba y no pasa al campo de escritura (auditoría C-13, commit aa73e01f; desplegado).
+  2. Dado que pulsa detener, cuando termina, entonces el texto en vivo desaparece. Desde el 2026-11-10 el texto en vivo solo se ve mientras graba y no pasa al campo de escritura (auditoría C-13, commit 8206828a; desplegado).
   3. Dado la grabación terminada, cuando se procesa, entonces el audio (`audio/webm`) se sube como documento de la conversación y pasa por la compuerta de anonimización.
   4. Dado `liveMic` apagado, cuando se llama a `/api/live`, entonces el backend responde 403.
 - **Estado:** implementada.
@@ -398,7 +398,7 @@ flowchart LR
 - **Roles:** Inv., Resp., Admin, `admin` de ecosistema.
 - **Precondición:** permiso `voces:upload`.
 - **Criterios de aceptación:**
-  1. Dado el tipo "Documento", cuando deja marcada "Anonimizar" y sube, entonces el documento pasa por la compuerta de anonimización. Desde el 2026-11-10 la casilla arranca marcada (commits aa73e01f y 2dda9a8b; desplegado).
+  1. Dado el tipo "Documento", cuando deja marcada "Anonimizar" y sube, entonces el documento pasa por la compuerta de anonimización. Desde el 2026-11-10 la casilla arranca marcada (commits 8206828a y c149bf43; desplegado).
   2. Dado el tipo "Voz / testimonio", cuando sube, entonces siempre pasa por la compuerta, sin casilla.
   3. Dado que la compuerta duda, cuando termina, entonces el documento queda "en revisión" (F1).
 - **Estado:** implementada. Sin escena en los specs de evidencia.
@@ -475,7 +475,7 @@ flowchart LR
 - **Criterios de aceptación:**
   1. Dado un documento propio, cuando pulsa eliminar y acepta la confirmación, entonces `DELETE /api/documents/<id>` responde OK.
   2. Dado el borrado, cuando recarga, entonces la fila ya no aparece.
-  3. Dado un documento propio ya publicado, cuando lo borra, entonces el servidor exige que tenga una membresía activa con `documents:write` en su ecosistema; su propio borrador lo puede borrar siempre (desde el 2026-11-10, commit 512dcc1f; desplegado).
+  3. Dado un documento propio ya publicado, cuando lo borra, entonces el servidor exige que tenga una membresía activa con `documents:write` en su ecosistema; su propio borrador lo puede borrar siempre (desde el 2026-11-10, commit 0bb9b0de; desplegado).
 - **Estado:** implementada.
 - **Evidencia:** `ev/comun.ts`; `web/lib/stores/app.deleteDoc.test.ts`.
 - **Nota:** en dev se observó que la fila puede quedar en pantalla hasta recargar, aunque el servidor ya respondió 200 (citado de la revisión de flujos web, 2026-10-30).
@@ -490,8 +490,8 @@ flowchart LR
   1. Dado un borrador listo, cuando pulsa "Publicar en mi ecosistema", entonces aparece la confirmación «Vas a compartir "…" con todo tu ecosistema. ¿Continuar?».
   2. Dado que acepta, cuando el servidor recibe la orden, entonces responde 202.
   3. Dado la publicación en curso, cuando termina, entonces la placa pasa de "Borrador · solo tú" a "Publicando…" y luego a "Publicado", y el botón desaparece.
-  4. Dado alguien sin membresía activa con `documents:write` en el ecosistema del documento, cuando intenta publicar, entonces se rechaza (desde el 2026-11-10, A-02, commit ce46db7b; desplegado).
-  5. Dado un documento con compuerta cuyo re-gate falló o está pendiente, o un documento retenido por consentimiento, cuando intenta publicar, entonces el servidor responde 409 (desde el 2026-11-10, commit 512dcc1f; desplegado).
+  4. Dado alguien sin membresía activa con `documents:write` en el ecosistema del documento, cuando intenta publicar, entonces se rechaza (desde el 2026-11-10, A-02, commit 871f25f8; desplegado).
+  5. Dado un documento con compuerta cuyo re-gate falló o está pendiente, o un documento retenido por consentimiento, cuando intenta publicar, entonces el servidor responde 409 (desde el 2026-11-10, commit 0bb9b0de; desplegado).
 - **Estado:** implementada.
 - **Evidencia:** `e2e/journey.spec.ts` (publica de verdad); `web/lib/publication.test.ts`; `web/routes/api/documents/[id]/publish/server.test.ts`; `be-e2e/publish.e2e.ts` (sin resultado registrado en `TESTING.md`).
 
@@ -528,8 +528,8 @@ flowchart LR
 - **Criterios de aceptación:**
   1. Dado la Biblioteca, cuando escribe en el buscador y pulsa Enter, entonces la lista se filtra por título.
   2. Dado un borrador, cuando busca su título, entonces no aparece.
-  3. Dado un testimonio, cuando busca el título que la Biblioteca muestra, entonces lo encuentra (commit 00326d1d; desplegado).
-  4. Dado un `documento` con compuerta, cuando alguien que no lo subió busca por su nombre de archivo, entonces no lo encuentra: la lista y la búsqueda usan el título redactado (desde el 2026-11-10, P-13; commits 84364f58 y b7dc944f; desplegado).
+  3. Dado un testimonio, cuando busca el título que la Biblioteca muestra, entonces lo encuentra (commit b2836ec5; desplegado).
+  4. Dado un `documento` con compuerta, cuando alguien que no lo subió busca por su nombre de archivo, entonces no lo encuentra: la lista y la búsqueda usan el título redactado (desde el 2026-11-10, P-13; commits b6c51a1a y 00b943f3; desplegado).
 - **Estado:** implementada. El spec de evidencia no comprueba resultados; lo hacen las pruebas unitarias.
 - **Evidencia:** `ev/comun.ts`; `web/routes/api/biblioteca/server.test.ts`; `web/lib/biblioteca.test.ts`.
 
@@ -663,7 +663,7 @@ flowchart LR
 - **Criterios de aceptación:**
   1. Dado la pestaña Compañeros, cuando abre un compañero, entonces ve su nombre y sus temas.
   2. Dado un compañero sin consentimiento, cuando se pide su página, entonces la ruta responde 404.
-  3. Dado un compañero sin `shareWithPeers`, cuando el estudiante lee las membresías del ecosistema por la API, entonces esa fila no aparece; sí aparecen la suya y las del personal (decisión del 2026-11-10, commit f685923d; desplegado).
+  3. Dado un compañero sin `shareWithPeers`, cuando el estudiante lee las membresías del ecosistema por la API, entonces esa fila no aparece; sí aparecen la suya y las del personal (decisión del 2026-11-10, commit 55183149; desplegado).
 - **Estado:** implementada.
 - **Evidencia:** `ev/estudiante.v3.spec.ts`; `web/routes/estudiante/companero/[id]/page.server.test.ts`; `be/endpoints/estudiante.companero.pg.test.ts`; `be/collections/Memberships.studentRoster.pg.test.ts`.
 
@@ -775,7 +775,7 @@ flowchart LR
   2. Dado la aprobación, cuando se revisa la base de datos, entonces el estado es `approved`, el texto anonimizado es el corregido, el texto retenido queda vacío y hay un registro de auditoría.
   3. Dado que pulsa rechazar, cuando confirma "Esto no se puede deshacer.", entonces se borra el texto retenido.
   4. Dado un documento ya decidido, cuando se vuelve a abrir, entonces responde 404 "No encontramos este documento retenido.".
-  5. Dado una retención en la etapa de contenido, cuando intenta aprobarla sin cambiar el texto, entonces no puede; una retención cuyo modelo nunca corrió no muestra texto y solo se rechaza (auditoría P-01, commit 14e958e2; desplegado). Una retención cuya verificación no terminó exige editar las palabras antes de aprobar (commit 346b380d; desplegado).
+  5. Dado una retención en la etapa de contenido, cuando intenta aprobarla sin cambiar el texto, entonces no puede; una retención cuyo modelo nunca corrió no muestra texto y solo se rechaza (auditoría P-01, commit 21acebd3; desplegado). Una retención cuya verificación no terminó exige editar las palabras antes de aprobar (commit 183eb339; desplegado).
 - **Estado:** implementada.
 - **Evidencia:** `e2e/revision.spec.ts`.
 
@@ -809,7 +809,7 @@ flowchart LR
   1. Dado el formulario, cuando llena correo, nombre y rol y envía, entonces ve una sola vez la contraseña temporal.
   2. Dado un correo que ya existe, cuando lo da de alta, entonces recibe la misma forma de respuesta con una contraseña señuelo, para no revelar quién está en la plataforma.
   3. Dado la contraseña temporal, cuando se revisa la base de datos y los logs, entonces no aparece en claro.
-  4. Dado 50 altas de la misma persona en una hora, cuando da de alta otra, entonces recibe 429 con `Retry-After`; un alta que falla no cuenta y la administración de plataforma no tiene tope (`MIEMBROS_RATELIMIT_ADD_USER_MAX` en `apps/backend/src/lib/rateLimit.ts`; commit 0c639102; desplegado en dev).
+  4. Dado 50 altas de la misma persona en una hora, cuando da de alta otra, entonces recibe 429 con `Retry-After`; un alta que falla no cuenta y la administración de plataforma no tiene tope (`MIEMBROS_RATELIMIT_ADD_USER_MAX` en `apps/backend/src/lib/rateLimit.ts`; commit e646736c; desplegado en dev).
 - **Estado:** implementada. No hay e2e web del alta; la prueba es de backend contra Postgres.
 - **Evidencia:** `ev/comun.ts` (llena y borra); `be/endpoints/miembros.pg.test.ts`; `web/lib/miembros.test.ts`.
 
@@ -828,13 +828,13 @@ flowchart LR
 
 #### F3.1 · Activar o desactivar funciones
 - **Historia:** Como responsable quiero encender o apagar funciones de mi ecosistema para adaptarlo a mi comunidad.
-- **Roles:** Resp., Admin (`organization:manage`). Hasta el 2026-11-10 también Inv.; el cambio (commit 50bde2ae) está desplegado. Solo pantalla en el video.
+- **Roles:** Resp., Admin (`organization:manage`). Hasta el 2026-11-10 también Inv.; el cambio (commit ac16b2a0) está desplegado. Solo pantalla en el video.
 - **Precondición:** permiso `organization:manage` o administrador de plataforma.
 - **Criterios de aceptación:**
   1. Dado Ajustes (`/ajustes`), cuando elige una pestaña (Conversación, Grafo, Publicación, Estudiantes), entonces esa pestaña queda con `aria-selected=true`.
   2. Dado un interruptor padre apagado, cuando se dibuja la pestaña, entonces sus hijos se ocultan sin borrarse.
   3. Dado alguien que no es administrador de plataforma, cuando ve `keepPublicFigures` o `studentTestimonios`, entonces esos interruptores salen bloqueados y el backend rechaza el cambio.
-  4. Dado un cambio de `keepDocumentAuthor`, `keepCitedAuthors` o `keepPublicFigures`, cuando se guarda, entonces queda una fila en `anonymisation-setting-changes` y se re-anonimiza lo que conservó un nombre bajo el valor anterior; si el borrado falla, la pantalla lo muestra como pendiente y ofrece «Reintentar» (commits 491841fb, 887fae32 y 8107d0ff; desplegado).
+  4. Dado un cambio de `keepDocumentAuthor`, `keepCitedAuthors` o `keepPublicFigures`, cuando se guarda, entonces queda una fila en `anonymisation-setting-changes` y se re-anonimiza lo que conservó un nombre bajo el valor anterior; si el borrado falla, la pantalla lo muestra como pendiente y ofrece «Reintentar» (commits 6cd3a472, b9d899aa y a3cf968b; desplegado).
   5. Dado un investigador, cuando abre `/ajustes`, entonces recibe 403 «Esta sección es para quien es responsable de un ecosistema.» (desplegado).
 - **Estado:** implementada.
 - **Evidencia:** `ev/admin.v3.spec.ts`; `ev/comun.ts`; `web/routes/ajustes/page.server.test.ts`; `web/routes/ajustes/secciones.test.ts`; `be/endpoints/funciones.pg.test.ts`; `be-e2e/featuresLock.e2e.ts`.
@@ -846,8 +846,8 @@ flowchart LR
 - **Criterios de aceptación:**
   1. Dado la sección de plataforma en Ajustes, cuando elige `hosted` o `none` y guarda, entonces el cambio aplica a toda la plataforma (`PATCH /api/plataforma`).
   2. Dado alguien que no es administrador de plataforma, cuando intenta el cambio, entonces se rechaza.
-  3. Dado un cambio, cuando se guarda, entonces queda una fila en `anonymisation-setting-changes` con alcance `plataforma` (commit 887fae32; desplegado).
-  4. Dado `none` y un entorno sin URL del Spark, cuando corre la compuerta, entonces no llama al modelo hospedado y el documento queda retenido (commit 14e958e2; desplegado).
+  3. Dado un cambio, cuando se guarda, entonces queda una fila en `anonymisation-setting-changes` con alcance `plataforma` (commit b9d899aa; desplegado).
+  4. Dado `none` y un entorno sin URL del Spark, cuando corre la compuerta, entonces no llama al modelo hospedado y el documento queda retenido (commit 21acebd3; desplegado).
 - **Estado:** implementada.
 - **Evidencia:** `ev/admin.v3.spec.ts`; `web/routes/ajustes/page.server.test.ts`.
 
@@ -914,7 +914,7 @@ Estas capacidades existen en el código (leído el 2026-10-30) pero no están en
 | X.4 | Como integrante quiero reintentar la lectura de un documento que falló para no tener que subirlo otra vez. | quien subió el documento | ingesta fallida | Dado un documento con ingesta fallida, cuando pulsa "Reintentar", entonces se vuelve a encolar (`/api/documents/[id]/retry`). Exige membresía activa con `documents:write` (A-02; desplegado). Un documento retenido por consentimiento no se reencola (desplegado). | implementada | `web/routes/api/documents/[id]/retry/server.test.ts` |
 | X.5 | Como integrante quiero reconstruir las conexiones de un documento para que aparezca en el mapa si la extracción falló. | quien subió el documento | extracción del grafo fallida | Dado el documento, cuando pulsa "Reconstruir grafo", entonces la extracción se vuelve a programar (`/api/documents/[id]/graph-retry`); nadie más que quien subió puede hacerlo. Exige membresía activa con `documents:write` (desplegado); un documento retenido por consentimiento no se reprograma (desplegado). | implementada | `web/routes/api/documents/[id]/graph-retry/server.test.ts` |
 | X.6 | Como integrante quiero reintentar una respuesta que falló para no reescribir la pregunta. | todos | una respuesta con error | Dado una respuesta fallida, cuando pulsa reintentar, entonces se vuelve a pedir la respuesta. | implementada (no verificado que una prueba cubra el botón) | `web/lib/api.turn.test.ts` (prueba el reintento síncrono del mismo turno) |
-| X.7 | Como quien subió un documento con compuerta quiero decidir si conserva mi nombre y los autores que cita para que el texto publicado diga lo que corresponde. | quien subió el documento; quien tiene `holds:review` (solo sobre filas retenidas o publicadas, A-07, desplegado); admin de plataforma | documento con compuerta | Dado `/documentos/<id>/anonimizacion`, cuando cambia «Conservar al autor» o «Conservar autores citados», entonces queda una fila en `anonymisation-setting-changes` y, si el veredicto ya no aplica, el documento se retira, se borran sus copias y sus filas del grafo, y vuelve a pasar por la compuerta. Dado alguien que no es admin de plataforma, cuando envía `keepPublicFigures`, entonces recibe 403. Dado un documento retenido por consentimiento, cuando cambia un interruptor, entonces no se re-anonimiza (desplegado). La vista nunca muestra un nombre quitado. | implementada (desplegado desde el 2026-11-10, commits 491841fb y 887fae32) | `be/lib/anonymisationControls.pg.test.ts`; `web/lib/anonimizacion.test.ts`; [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) |
+| X.7 | Como quien subió un documento con compuerta quiero decidir si conserva mi nombre y los autores que cita para que el texto publicado diga lo que corresponde. | quien subió el documento; quien tiene `holds:review` (solo sobre filas retenidas o publicadas, A-07, desplegado); admin de plataforma | documento con compuerta | Dado `/documentos/<id>/anonimizacion`, cuando cambia «Conservar al autor» o «Conservar autores citados», entonces queda una fila en `anonymisation-setting-changes` y, si el veredicto ya no aplica, el documento se retira, se borran sus copias y sus filas del grafo, y vuelve a pasar por la compuerta. Dado alguien que no es admin de plataforma, cuando envía `keepPublicFigures`, entonces recibe 403. Dado un documento retenido por consentimiento, cuando cambia un interruptor, entonces no se re-anonimiza (desplegado). La vista nunca muestra un nombre quitado. | implementada (desplegado desde el 2026-11-10, commits 6cd3a472 y b9d899aa) | `be/lib/anonymisationControls.pg.test.ts`; `web/lib/anonimizacion.test.ts`; [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) |
 
 ## Historias del brief no implementadas
 
@@ -935,7 +935,7 @@ Historias que la revisión del 2026-11-10 dejó como funcionalidad nueva, para l
 | Id | Historia | Hallazgo |
 |---|---|---|
 | E2-1 | Como persona dada de alta en Miembros quiero cambiar la contraseña temporal en mi primer acceso, desde la web, para que solo yo la conozca. Hoy la contraseña temporal no caduca y la web no ofrece cambiarla. | A-04 |
-| E2-2 | Como integrante quiero cambiar mi correo y confirmarlo desde el correo nuevo. Hoy solo el administrador de plataforma cambia un correo (commit ce46db7b). | A-03 |
+| E2-2 | Como integrante quiero cambiar mi correo y confirmarlo desde el correo nuevo. Hoy solo el administrador de plataforma cambia un correo (commit 871f25f8). | A-03 |
 
 ## Referencias
 

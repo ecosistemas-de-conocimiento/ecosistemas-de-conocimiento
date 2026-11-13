@@ -62,12 +62,12 @@ RustFS entró en local y dev el 2026-08-14. El 2026-10-17 se fijó como regla pa
 ## Estado al 2026-11-10
 
 - **Staging.** El registro de la caja no tiene ningún despliegue de staging posterior al 2026-10-17: todas las entradas desde entonces dicen "dev only" (citado de `infra/fleet/edc-1.md`, §4). La versión anterior de este ADR decía "sin actualizar desde el 2026-10-25"; esa fecha no tiene respaldo en el registro.
-- **Dev.** Corre c4f53632, desplegado el 2026-11-10 a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). El despliegue anterior, 367c2698, fue el mismo día a las 18:33 UTC (citado de `infra/fleet/edc-1.md`, entrada 4zzzzzzzz).
+- **Dev.** Corre 9463c79c, desplegado el 2026-11-10 a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11). El despliegue anterior, 44787730, fue el mismo día a las 18:33 UTC (citado de `infra/fleet/edc-1.md`, entrada 4zzzzzzzz).
 - **Volcados.** Se conservan los 7 más recientes de cada entorno, en `/root/backups/` y en la copia fuera del servidor. Es un paso manual del procedimiento de despliegue, no una tarea programada. La primera purga, el 2026-11-10, borró 52 volcados de dev y liberó 1231.3 MB en cada lado (medido con `du -sb`; citado de `infra/fleet/edc-1.md`, §7 paso 7).
 
 ## Estado al 2026-11-12
 
-- **Dev.** Corre `db9a4456`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz), con una migración (`consent_receipts`). El 2026-11-12 hubo tres despliegues sin migración: `a6026876` (02:22 UTC), `6c0f65ad` (15:31 UTC) y `f971d54c` (19:42 UTC) (citado de `infra/fleet/edc-1.md`, §4zzzzzzzzz a §4zzzzzzzzzzz).
+- **Dev.** Corre `29c54854`, desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz), con una migración (`consent_receipts`). El 2026-11-12 hubo tres despliegues sin migración: `2e74037d` (02:22 UTC), `8fdcd258` (15:31 UTC) y `eb5625f5` (19:42 UTC) (citado de `infra/fleet/edc-1.md`, §4zzzzzzzzz a §4zzzzzzzzzzz).
 - **Volcados.** Dev conserva 7: `20261029T0643Z`, `20261110T0538Z`, `20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z` y `20261112T1934Z` (citado de `infra/fleet/edc-1.md`, §4zzzzzzzzzzz).
 
 ## Referencias
