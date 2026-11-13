@@ -2,20 +2,20 @@
 
 - **Versión:** 1.5
 - **Fecha:** 2026-11-12
-- **Estado:** plantillas en borrador, sin validación jurídica y aún no publicadas en la interfaz
-- **Fuentes:** `apps/web/src/lib/consent.ts`, `apps/web/src/lib/estudiante.ts`, `apps/backend/src/lib/student/testimonioConsent.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/conversationTurnErasure.ts`, brief v1 del proyecto («Repositorio de Voces y Resonancias», documento externo al repo), `plan/anonimizacion-y-voces.md`, `infra/fleet/edc-1.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)
+- **Estado:** el aviso está publicado en `/privacidad` como «Borrador sin validación jurídica»; la casilla de consentimiento por recurso y la constancia con folio están implementadas; las plantillas de este documento siguen en borrador
+- **Fuentes:** `apps/web/src/lib/privacyNotice.ts`, `apps/web/src/lib/uploadConsent.ts`, `apps/web/src/routes/documentos/[id]/constancia/`, `apps/web/src/lib/consent.ts`, `apps/web/src/lib/estudiante.ts`, `apps/backend/src/lib/student/testimonioConsent.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/conversationTurnErasure.ts`, brief v1 del proyecto («Repositorio de Voces y Resonancias», documento externo al repo), `plan/anonimizacion-y-voces.md`, `infra/fleet/edc-1.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)
 
 > **Aviso.** El sistema aún no recibe testimonios reales de participantes en producción: no existe entorno de producción, y en desarrollo (dev) sí hay documentos reales del proyecto, con nombres reales en sus textos originales, incluidos materiales de participantes del taller de Semiosis, en borrador hasta tener el consentimiento de sus autores (ver [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)).
 
-**Para quién es y qué responde.** Este documento reúne los textos que Ecosistemas de Conocimiento (EDC) propone presentar a las personas titulares de datos. Salvo los consentimientos del estudiante, hoy no se presenta ninguno. Incluye el aviso de privacidad integral, el aviso simplificado de la interfaz, el consentimiento de quien aporta un testimonio, los consentimientos del estudiante y el procedimiento para ejercer derechos y retirar una contribución. Abre con una nota de marco legal para el área jurídica. Es para la unidad de transparencia y el área jurídica del CIDE, para las personas facilitadoras que levantan testimonios y para quien mantenga la interfaz. Los textos entre corchetes, como `[domicilio]`, los llena el área jurídica. Las notas que empiezan con "Antes de publicar" son para quien prepare la versión final y no forman parte del texto para el público.
+**Para quién es y qué responde.** Este documento reúne los textos que Ecosistemas de Conocimiento (EDC) propone presentar a las personas titulares de datos. Hoy se presentan el aviso en `/privacidad`, la casilla de consentimiento al subir, su constancia y los consentimientos del estudiante. Incluye el aviso de privacidad integral, el aviso simplificado de la interfaz, el consentimiento de quien aporta un testimonio, los consentimientos del estudiante y el procedimiento para ejercer derechos y retirar una contribución. Abre con una nota de marco legal para el área jurídica. Es para la unidad de transparencia y el área jurídica del CIDE, para las personas facilitadoras que levantan testimonios y para quien mantenga la interfaz. Los textos entre corchetes, como `[domicilio]`, los llena el área jurídica. Las notas que empiezan con "Antes de publicar" son para quien prepare la versión final y no forman parte del texto para el público.
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. Staging sigue en su imagen del 2026-10-17, y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Los interruptores de nombres siguen [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md). Lo diferido está en [Etapa 2](#etapa-2).
+Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. El consentimiento por recurso, la constancia con folio y `/privacidad` entraron después, en el commit [HECHO PENDIENTE: SHA integrado en main], desplegado en dev el [HECHO PENDIENTE: fecha y hora del deploy en dev, measured]. Staging sigue en su imagen del 2026-10-17, y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Los interruptores de nombres siguen [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md). Lo diferido está en [Etapa 2](#etapa-2).
 
 | Control o procedimiento | Estado | Evidencia o nota |
 |---|---|---|
-| El aviso declara a quien sube documentos o testimonios que por omisión se quitan todos los nombres, qué nombres puede elegir conservar y quién más puede elegirlo (cláusulas 2 y 4; los interruptores están **Implementados** y corren en dev desde el 2026-11-10; el aviso sigue sin publicarse) | **Planeado** | `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts` |
+| El aviso declara a quien sube documentos o testimonios que por omisión se quitan todos los nombres, qué nombres puede elegir conservar y quién más puede elegirlo (finalidad 3 del aviso en `/privacidad`; los interruptores corren en dev desde el 2026-11-10) | **Implementado** | `apps/web/src/lib/privacyNotice.ts`; `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts` |
 | Quien sube un documento o un testimonio ve y cambia qué nombres se conservan en él, en la pantalla de anonimización del documento | **Implementado** | `PATCH /api/documents/:id/anonimizacion` |
 | Los valores por omisión del ecosistema los cambian solo el responsable y la administración de plataforma; quien revisa cambia un documento solo si está retenido o publicado | **Implementado** | `lib/permissions.ts`; `lib/anonymisationControls.ts`; commit `50bde2ae` |
 | Un material cuyos autores no han dado su consentimiento queda retenido: no se vuelve a anonimizar, ingerir, extraer al grafo ni publicar | **Implementado** | `lib/consentHold.ts`; `scripts/hold-for-consent.ts`. En dev, 184 filas del taller quedaron retenidas el 2026-11-12 (measured por el agente de despliegue, `infra/fleet/edc-1.md` §4zzzzzzzzz). Una revisión de un material retenido también queda retenida, y publicar sus cambios responde 409 (commits `17a5d985`, `b29c72ba`, `c12a0ab5`). Dos casos límite conocidos, que hoy no ocurren, están en [protección de datos](proteccion-de-datos.md#limitaciones-conocidas) |
@@ -26,21 +26,22 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 | Anonimización antes de compartir, con revisión humana de lo dudoso | **Implementado** | `lib/anonymise/gate.ts`; `lib/holdReview.ts` |
 | Grabación de testimonio no compartida | **Implementado** | `collections/Media.ts` |
 | Cookies técnicas `chat_auth` y `eco_selected`, sin cookies publicitarias en el código | **Implementado** | `apps/web/src/lib/server/auth.ts`; `apps/web/src/lib/server/ecosystem.ts` |
-| Aviso de privacidad integral | **Planeado** | Plantilla en la sección b; sin publicar en `apps/web/src` |
-| Aviso simplificado y aviso de que las conversaciones alimentan el acervo | **Planeado** | Plantilla en la sección c; sin publicar |
-| Consentimiento para quien aporta un testimonio | **Planeado** | Plantilla en la sección d; sin validar ni usar |
+| Aviso de privacidad integral (art. 21) y simplificado (art. 22), con la finalidad 5: las conversaciones, anonimizadas, alimentan el acervo | **Implementado** | `/privacidad`, pública, con el encabezado «Borrador sin validación jurídica» y los huecos marcados `[POR DEFINIR]` (`apps/web/src/lib/privacyNotice.ts`). Enlazada desde el inicio de sesión y la barra lateral |
+| Casilla de consentimiento por recurso al subir: quien sube declara que leyó el aviso y, en un testimonio, que la persona que lo da dio su consentimiento informado | **Implementado** | Texto y versión (1) en `apps/web/src/lib/uploadConsent.ts`. Pantallas: [HECHO PENDIENTE: pantallas exactas de la casilla]. Registra la declaración de quien sube, nunca de quién son las palabras ([ADR-0019](../03-arquitectura/adr/ADR-0019-voces-sin-sujeto-ni-consentimiento.md), enmienda del 2026-11-12) |
+| Formato para recabar el consentimiento de la persona que da un testimonio, fuera de la plataforma | **Planeado** | Plantilla en la sección d; sin validar |
 | Respaldo del detector por OpenRouter con retención cero (`hosted`), por decisión del responsable técnico del 2026-11-09, confirmada el 2026-11-10 | **Implementado** | Interruptor en `lib/platformSettings.ts`; dev usa `hosted` desde el 2026-11-10 y staging siempre usa OpenRouter. `none`, condición para decir que el texto con nombres no sale a Estados Unidos, sigue disponible |
 | Conserje de sesiones a 90 días | **Planeado** | `lib/sessionJanitor.ts`, apagado |
 | Retención cero (ZDR) en toda llamada a OpenRouter, que falla cerrada sin ella | **Implementado** | `services/ai-service/src/services/ai/router/adapters/openrouter.ts`; en dev desde el 2026-11-10. Staging no lo tiene (inferido de su imagen del 2026-10-17) |
 | Retención cero con DeepInfra | **Pendiente** | Sin parámetro de retención ni contrato documentado (P-06); etapa 2 |
 | Migración a inferencia albergada de forma independiente | **Planeado** | Sin contratos documentados |
-| Comprobante ético con folio, PDF y archivo de consentimientos | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) | Plantilla de consentimiento en borrador; folio y PDF sin código ni procedimiento; no hay biblioteca para generar PDF en `apps/*/package.json` |
+| Comprobante ético con folio | **Implementado** | Recibo en la colección `consent-receipts` (migración [HECHO PENDIENTE: nombre de la migración]); constancia en `/documentos/<id>/constancia` con folio `EDC-AAAA-NNNNNN`, derivado del id del recibo, versión del texto, tipo de material, ecosistema y fecha. «Descargar» abre la impresión del navegador, que la guarda como PDF. La leen solo quien subió y la administración de plataforma |
+| Archivo de los formatos firmados fuera de la plataforma | **Pendiente** | No existe |
 | Formatos accesibles del aviso y del consentimiento | **Pendiente** | No existen |
-| Correo institucional y canal ARCO | **Pendiente** | No existen |
+| Canal ARCO | **Implementado** | La Unidad de Transparencia del CIDE (`unidad.enlace@cide.edu`, Plataforma Nacional de Transparencia o por escrito), descrita en «Tus derechos» de `/privacidad`. Sin formulario propio |
 | Exportación de datos de una cuenta | **Pendiente** | No existe |
 | Cancelación de cuenta | **Pendiente** | Sin ruta; la base rechaza borrar un usuario con conversación o membresía (`Ratings.deletePaths.pg.test.ts`) |
 | Oposición a orientar respuestas | **Pendiente** | Sin mecanismo técnico más que borrar las conversaciones |
-| Retiro de un testimonio por folio | **Pendiente** | Depende del comprobante |
+| Retiro de un testimonio por folio | **Implementado** | El folio lleva al recibo y el recibo al documento (`consent-receipts`); el borrado lo hace la administración de plataforma (sección f.5) |
 | Fecha y versión de los consentimientos 1 y 2 del estudiante | **Pendiente** | Solo `shareTestimonios` guarda fecha y versión |
 | Política de retención y destrucción de originales al cierre | **Pendiente** | Sin aprobar; sin plan de destino final |
 | Política sobre menores: tutor y asentimiento | **Pendiente** | No existe; el sistema no registra edad |
@@ -51,11 +52,10 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 
 > **Advertencia.** Esta sección es conocimiento general de la redacción, no un dictamen. La reforma de 2025 cambió leyes, autoridades y numeración de artículos. El área jurídica del CIDE debe validarla antes de publicar el aviso.
 
-**Qué ley aplica.** En marzo de 2025 se publicaron una nueva Ley Federal de Protección de Datos Personales en Posesión de los Particulares (LFPDPPP) y una nueva Ley General de Protección de Datos Personales en Posesión de Sujetos Obligados (LGPDPPSO). El INAI se extinguió y sus funciones pasaron a otras autoridades.
+**Qué ley aplica.** La Ley General de Protección de Datos Personales en Posesión de Sujetos Obligados (LGPDPPSO; DOF 20-03-2025, última reforma DOF 14-11-2025, citado de `privacyNotice.ts`:73). El INAI se extinguió y sus funciones pasaron a otras autoridades.
 
-- El CIDE es un centro público de investigación. Como entidad de la administración pública, probablemente es **sujeto obligado de la LGPDPPSO** y no de la LFPDPPP.
-- Si el responsable formal del tratamiento fuera un particular (por ejemplo, un contratista), aplicaría la LFPDPPP.
-- La ley aplicable define quién es el responsable, quién es encargado y ante qué autoridad se presenta una queja.
+- El CIDE es un centro público de investigación y **sujeto obligado de la LGPDPPSO**; el aviso de `/privacidad` se funda en ella.
+- **Autoridad:** el recurso de revisión se interpone ante la Secretaría Anticorrupción y Buen Gobierno (SABG) o ante la Unidad de Transparencia del CIDE, dentro de 15 días desde la notificación de la respuesta (arts. 50 y 86; `privacyNotice.ts`:206 y :369).
 
 **Qué exige, en general.**
 
@@ -63,7 +63,17 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 - **Consentimiento expreso y por escrito** para datos sensibles (salud, discapacidad, origen étnico o lengua, opiniones), con firma autógrafa o electrónica.
 - **Medidas de seguridad** administrativas, técnicas y físicas, y un documento de seguridad.
 - Una **evaluación de impacto** para tratamientos intensivos o relevantes; EDC califica por los datos sensibles, el uso de IA y los encargados en el extranjero. Ver [la evaluación de impacto](evaluacion-de-impacto-privacidad.md).
-- **Plazos ARCO** típicos: 20 días hábiles para responder y 15 para hacer efectiva la respuesta.
+- **Plazos ARCO**, en días, como los cuenta la ley (citado de `privacyNotice.ts`:340-350):
+
+| Paso | Plazo | Art. |
+|---|---|---|
+| Prevención por un requisito faltante, una sola vez | 5 días desde la presentación | 46 |
+| La persona completa la información | 10 días desde la notificación | 46 |
+| Aviso de un trámite específico | 5 días | 48 |
+| Respuesta | 20 días desde el día siguiente a la recepción | 45 |
+| Ampliación | Una sola vez, hasta 10 días, justificada y notificada dentro de los 20 | 45 |
+| Hacer efectivo el derecho | 15 días desde el día siguiente a la notificación de la respuesta | 45 |
+| Improcedencia | Dentro de los 20 días | 49 |
 
 **Ética en investigación.**
 
@@ -73,7 +83,7 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 
 ## b. Aviso de privacidad integral
 
-> **Plantilla en borrador, sin validación jurídica y aún no publicada en la interfaz.**
+> **Plantilla de origen.** La versión en la interfaz es `/privacidad` (`apps/web/src/lib/privacyNotice.ts`), «Borrador sin validación jurídica». Si difieren, manda la de la interfaz.
 
 **Aviso de privacidad integral de la plataforma Ecosistemas de Conocimiento**
 
@@ -86,7 +96,7 @@ Versión 1 · Fecha de última actualización: `[fecha de publicación]`
 - De las personas usuarias con cuenta: correo electrónico, nombre que eliges mostrar, imagen de perfil si la subes, idioma de la interfaz, contraseña (guardada solo como hash, es decir, una huella que no permite recuperarla), los ecosistemas a los que perteneces, tu rol en cada uno y el nombre con el que figuras en cada uno, que define quien administra los miembros de ese ecosistema.
 - Lo que aportas: documentos, testimonios en texto o audio, notas, valoraciones de las respuestas con comentario opcional y tus conversaciones con el asistente.
 - De estudiantes, además: tus elecciones de privacidad, con fecha y versión del texto que aceptaste, y el reporte de tu actividad (documentos, temas, número de conversaciones).
-- De las personas que dan un testimonio sin cuenta: su relato o su voz. No recabamos su nombre en la plataforma. Su consentimiento queda en el comprobante ético con un folio que no está ligado al texto. *Antes de publicar: el comprobante es Planeado (folio y PDF sin código).*
+- De las personas que dan un testimonio sin cuenta: su relato o su voz. No recabamos su nombre en la plataforma. Quien sube su relato declara que la persona dio su consentimiento informado; la constancia de esa declaración lleva un folio que no contiene datos de la persona.
 
 **3. Datos personales sensibles.** Por la naturaleza de la investigación, los testimonios y conversaciones pueden contener datos sensibles: estado de salud, discapacidad, lengua u origen étnico, opiniones y creencias. La grabación de tu voz también puede identificarte. Tratamos estos datos solo con tu consentimiento expreso y por escrito.
 
@@ -132,19 +142,19 @@ No vendemos ni cedemos tus datos. No realizamos transferencias que requieran tu 
 - borrar tus documentos, testimonios y conversaciones desde la plataforma; el borrado alcanza las copias en el acervo;
 - escribir a `[correo institucional de datos personales]` o acudir a la Unidad de Transparencia del CIDE en `[domicilio]`, con el formato y los requisitos de la sección f de este documento.
 
-Respondemos en un plazo máximo de `[plazo legal que valide jurídica]`. *Antes de publicar: el correo, el canal, la exportación y la cancelación de cuenta son Pendientes.*
+Respondemos en un plazo máximo de 20 días, desde el día siguiente a la recepción (art. 45). *Antes de publicar: la exportación y la cancelación de cuenta son Pendientes. En `/privacidad`, el canal es la Unidad de Transparencia del CIDE y la respuesta llega en 20 días (art. 45).*
 
-**9. Cómo revocar tu consentimiento.** Puedes revocar tu consentimiento por los mismos medios del punto 8. Si eres estudiante, apaga el interruptor correspondiente. La revocación no afecta los tratamientos ya realizados. Si diste un testimonio, puedes retirarlo con el folio de tu comprobante (*antes de publicar: el folio es Pendiente*); si ya se usó de forma anonimizada en análisis publicados, esos análisis no se pueden deshacer.
+**9. Cómo revocar tu consentimiento.** Puedes revocar tu consentimiento por los mismos medios del punto 8. Si eres estudiante, apaga el interruptor correspondiente. La revocación no afecta los tratamientos ya realizados. Si diste un testimonio, puedes retirarlo con el folio de su constancia; si ya se usó de forma anonimizada en análisis publicados, esos análisis no se pueden deshacer.
 
 **10. Uso de cookies.** La plataforma usa dos cookies técnicas: `chat_auth`, para mantenerte dentro de tu cuenta, con vigencia de 7 días, y `eco_selected`, para recordar el ecosistema que elegiste. No usamos cookies de publicidad ni de rastreo.
 
-**11. Cambios a este aviso.** Cualquier cambio se publica en la plataforma con su fecha y número de versión. Si el cambio afecta finalidades o datos sensibles, te pedimos de nuevo tu consentimiento. *Antes de publicar: hoy la plataforma solo guarda la versión aceptada del consentimiento de testimonios del estudiante, no la de este aviso.*
+**11. Cambios a este aviso.** Cualquier cambio se publica en la plataforma con su fecha y número de versión. Si el cambio afecta finalidades o datos sensibles, te pedimos de nuevo tu consentimiento. *Antes de publicar: hoy la plataforma guarda la versión aceptada del consentimiento de testimonios del estudiante y la del texto de la casilla de subida (`consentVersion`), no la de este aviso.*
 
-**12. Autoridad.** Si consideras que tu derecho a la protección de datos fue vulnerado, puedes acudir a `[autoridad garante competente según la ley aplicable]`.
+**12. Autoridad.** Si consideras que tu derecho a la protección de datos fue vulnerado, puedes interponer un recurso de revisión ante la Secretaría Anticorrupción y Buen Gobierno (SABG) o ante la Unidad de Transparencia del CIDE (arts. 50 y 86).
 
 ## c. Aviso simplificado para la interfaz
 
-> **Plantilla en borrador, sin validación jurídica y aún no publicada en la interfaz.**
+> **Plantilla de origen.** La versión en la interfaz es el aviso simplificado de `/privacidad` (art. 22), «Borrador sin validación jurídica». Si difieren, manda la de la interfaz.
 
 Texto para mostrar al crear una cuenta, en el pie de la aplicación y al abrir la primera conversación. Lenguaje claro, frases cortas.
 
@@ -170,17 +180,15 @@ Texto corto junto al cuadro de conversación (una línea):
 
 ## d. Consentimiento informado para quien aporta un testimonio
 
-> **Plantilla en borrador, sin validación jurídica y aún no publicada en la interfaz.** El comprobante con folio es **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código).
+> **Implementado en la plataforma:** la casilla por recurso y su constancia. **Plantilla en borrador, sin validación jurídica:** el formato de abajo, que recaba fuera de la plataforma el consentimiento de la persona que habla.
 
-Este texto formaría parte del **comprobante ético** que el brief del proyecto exige al cerrar cada contribución: aviso de privacidad, consentimiento informado y folio único, descargable en PDF (brief v1 del proyecto, documento externo al repo). La persona facilitadora lo leería en voz alta o lo entregaría en el formato que la persona prefiera. El comprobante llevaría:
+El **comprobante ético** que el brief del proyecto exige al cerrar cada contribución (aviso de privacidad, consentimiento informado y folio único, descargable en PDF; brief v1 del proyecto, documento externo al repo) es la constancia de la subida:
 
-- **Folio**: un código único, por ejemplo `EDC-2026-000123` (formato propuesto), que no contiene datos de la persona.
-- **Versión del texto**: el número de versión del consentimiento. Si el texto cambia, sube la versión, igual que el consentimiento del estudiante.
-- **Ecosistema** al que se aporta.
-- **Fecha.**
-- **Firma** o marca de la persona, o grabación de su aceptación oral.
+- **Casilla al subir.** En un testimonio dice: «Leí el aviso de privacidad y la persona que da este testimonio dio su consentimiento informado.»; en lo demás: «Leí el aviso de privacidad y acepto que este material se trate como ahí se describe.» (`apps/web/src/lib/uploadConsent.ts`, versión 1). Si el texto cambia, sube la versión.
+- **Recibo** en `consent-receipts`: documento, organización, quien sube, versión del texto, tipo de material y fecha. Registra la declaración de quien sube, nunca de quién son las palabras ([ADR-0019](../03-arquitectura/adr/ADR-0019-voces-sin-sujeto-ni-consentimiento.md), enmienda del 2026-11-12).
+- **Constancia** en `/documentos/<id>/constancia`: folio `EDC-AAAA-NNNNNN`, derivado del id del recibo, sin datos de la persona; versión, ecosistema y fecha. Se imprime o se guarda como PDF desde el navegador.
 
-El folio y la firma se guardarían fuera de la plataforma, en un archivo de consentimientos que aún no existe. La plataforma no guarda quién habló: el folio sería lo único que permite retirar el testimonio después.
+La persona facilitadora lee el formato de abajo en voz alta o lo entrega en el formato que la persona prefiera. La firma o marca de la persona, o la grabación de su aceptación oral, queda fuera de la plataforma, junto al folio. La plataforma no guarda quién habló: el folio es lo único que permite retirar el testimonio después.
 
 **Formatos accesibles: Pendiente.** Se propone ofrecer el consentimiento en letra grande, en lectura en voz alta, en lectura fácil y, cuando la persona lo pida, con interpretación en lengua de señas mexicana o en su lengua. La persona facilitadora confirmaría que la persona entendió antes de firmar.
 
@@ -224,7 +232,7 @@ El folio y la firma se guardarían fuera de la plataforma, en un archivo de cons
 
 ## e. Consentimiento del estudiante
 
-**Implementado.** A diferencia de las secciones b, c y d, esto sí está en la interfaz, aunque sin validación jurídica. La vista de estudiante (`/estudiante`) presenta tres consentimientos como interruptores, apagados por defecto. Los textos son exactamente los que la persona ve hoy.
+**Implementado**, sin validación jurídica. La vista de estudiante (`/estudiante`) presenta tres consentimientos como interruptores, apagados por defecto. Los textos son exactamente los que la persona ve hoy.
 
 | # | Interruptor | Texto exacto | Dónde está el texto | Versión |
 |---|---|---|---|---|
@@ -249,12 +257,12 @@ El folio y la firma se guardarían fuera de la plataforma, en un archivo de cons
 
 ## f. Procedimiento ARCO y de retiro de una contribución
 
-> **Pendiente.** Este procedimiento es una propuesta en borrador. Hoy no existen el canal, la exportación, la cancelación de cuenta, el folio ni la bitácora que describe. Solo funciona lo marcado como Implementado en f.1 y f.4.
+> El canal es la Unidad de Transparencia del CIDE, como lo describe «Tus derechos» en `/privacidad` (**Implementado**). Siguen **Pendientes** la exportación, la cancelación de cuenta y la bitácora del proyecto.
 
 ### f.1 Canales
 
-- Correo (**Pendiente**): `[correo institucional de datos personales]`, atendido por la Unidad de Transparencia del CIDE con apoyo del equipo de desarrollo del proyecto.
-- En persona (**Pendiente**): Unidad de Transparencia del CIDE, `[domicilio]`.
+- Correo (**Implementado**): `unidad.enlace@cide.edu`, de la Unidad de Transparencia del CIDE, con apoyo del equipo de desarrollo del proyecto; también la Plataforma Nacional de Transparencia (`privacyNotice.ts`, «Dónde», arts. 46 y 79).
+- En persona o por escrito (**Implementado**): Unidad de Transparencia del CIDE, con el domicilio de `/privacidad`.
 - Dentro de la plataforma, sin solicitud (**Implementado**): borrar documentos, testimonios propios y conversaciones; apagar consentimientos de estudiante.
 
 ### f.2 Requisitos de la solicitud
@@ -262,7 +270,7 @@ El folio y la firma se guardarían fuera de la plataforma, en un archivo de cons
 1. Nombre de la persona titular y medio para recibir la respuesta.
 2. Documento que acredite la identidad (o la representación, si actúa otra persona).
 3. Qué derecho ejerce: acceso, rectificación, cancelación u oposición, o revocación del consentimiento.
-4. Qué datos: correo de la cuenta, o **folio del comprobante** si se trata de un testimonio.
+4. Qué datos: correo de la cuenta, o **folio de la constancia** (`EDC-AAAA-NNNNNN`) si se trata de un testimonio.
 
 ### f.3 Pasos
 
@@ -270,15 +278,15 @@ El folio y la firma se guardarían fuera de la plataforma, en un archivo de cons
 flowchart TD
   A[Llega la solicitud por correo o en persona] --> B[Unidad de Transparencia registra y acusa recibo]
   B --> C{¿Identidad acreditada?}
-  C -->|no| D[Se pide completar en 10 días hábiles]
+  C -->|no| D[Se previene una vez en 5 días;<br/>la persona completa en 10 días]
   D --> C
   C -->|sí| E{¿Cuenta o testimonio?}
   E -->|cuenta| F[Administración de plataforma localiza la cuenta por correo]
-  E -->|testimonio| G[Equipo localiza el documento por folio<br/>en el archivo de consentimientos]
+  E -->|testimonio| G[Administración de plataforma localiza<br/>el recibo y el documento por folio]
   F --> H[Ejecuta: exportar, corregir, borrar u oponerse]
   G --> H
   H --> I[Anota la acción en la bitácora del proyecto]
-  I --> J[Respuesta a la persona titular<br/>máximo 20 días hábiles]
+  I --> J[Respuesta a la persona titular<br/>en 20 días, ampliable una vez 10]
 ```
 
 ### f.4 Qué hace el equipo en cada derecho
@@ -286,24 +294,26 @@ flowchart TD
 | Derecho | Acción propuesta en la plataforma | Estado |
 |---|---|---|
 | **Acceso** | La administración de plataforma exportaría los datos de la cuenta: perfil, membresías, documentos, conversaciones, valoraciones y consentimientos, en un archivo legible | **Pendiente**: la exportación no existe |
-| **Rectificación** | Corregir el perfil. Si la persona corrige un testimonio, la edición vuelve a pasar por la compuerta de anonimización | **Implementado** en la plataforma; **Pendiente** el canal para pedirlo |
+| **Rectificación** | Corregir el perfil. Si la persona corrige un testimonio, la edición vuelve a pasar por la compuerta de anonimización | **Implementado** |
 | **Cancelación de cuenta** | Borrar conversaciones (sus turnos salen del acervo), documentos propios (salen del acervo y del almacenamiento), valoraciones, perfil de estudiante, membresías y la cuenta. Las sugerencias del estudiante quedarían sin autor | **Pendiente**: no hay ruta y la base rechaza borrar un usuario con conversación o membresía |
 | **Oposición** | Excluir las contribuciones de la persona de las finalidades secundarias; si se opone a que sus conversaciones orienten respuestas, borrarlas | **Pendiente**: el único mecanismo técnico es borrar las conversaciones |
-| **Revocación** | Apagar los consentimientos de estudiante (**Implementado**); retirar testimonios por folio (**Pendiente**) | Mixto |
+| **Revocación** | Apagar los consentimientos de estudiante (**Implementado**); retirar testimonios por folio (**Implementado**, f.5) | **Implementado** |
 
 ### f.5 Retiro de un testimonio por folio
 
-**Pendiente**: el folio no existe. El borrado del paso 3 sí funciona (**Implementado**) y conserva el registro de revisiones del documento, salvo las filas de quien borra.
+**Implementado.** El borrado del paso 3 conserva el registro de revisiones del documento, salvo las filas de quien borra.
 
 1. La persona escribe con su folio.
-2. El equipo localiza en el archivo de consentimientos el ecosistema y la fecha del folio, y con la persona facilitadora identifica el documento.
+2. La administración de plataforma localiza por el folio el recibo en `consent-receipts` y, con él, el documento.
 3. La administración de plataforma borra el documento. El borrado elimina su texto original, su versión anonimizada, sus fragmentos y vectores en el acervo, su grabación y sus entidades en el grafo.
-4. El equipo marca el folio como retirado y responde a la persona.
+4. El equipo responde a la persona. Marcar el folio como retirado: **Pendiente**.
 
 **Límite que se informa a la persona.** Si el testimonio ya se usó, anonimizado, en análisis o publicaciones del proyecto, esos productos no se pueden deshacer. Si la persona no conserva su folio, la plataforma no puede encontrar su testimonio, porque por diseño no sabe quién habló. Esta anonimización es la protección principal de la persona y es también la razón de ese límite.
 
 ## Referencias
 
+- `apps/web/src/lib/privacyNotice.ts`, `apps/web/src/routes/privacidad/+page.svelte`
+- `apps/web/src/lib/uploadConsent.ts`, `apps/web/src/routes/documentos/[id]/constancia/`, colección `consent-receipts`
 - `apps/web/src/lib/consent.ts`, `apps/web/src/lib/estudiante.ts`, `apps/web/src/routes/estudiante/+page.svelte`
 - `apps/backend/src/lib/student/testimonioConsent.ts`, `apps/backend/src/collections/StudentProfiles.ts`
 - `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/conversationTurnErasure.ts`
@@ -320,19 +330,15 @@ flowchart TD
 
 Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 
-1. **Planeado.** Validar y publicar el aviso integral y el aviso simplificado en la interfaz, incluida la frase de que las conversaciones alimentan el acervo.
-2. **Planeado.** Validar el consentimiento para quien aporta un testimonio.
-3. **Planeado.** Activar el conserje de sesiones, tras aprobar el plazo, y reflejarlo en la cláusula 7.
-4. **Planeado.** Migrar a inferencia albergada de forma independiente.
-5. **Pendiente.** Llenar los corchetes: domicilio, correos, autoridad garante, plazos, país y organización del servidor de cómputo.
-6. **Pendiente.** Validar la ley aplicable y el responsable con el área jurídica.
-7. **Planeado.** Crear el comprobante ético con folio, su versión en PDF y el archivo de consentimientos.
-8. **Pendiente.** Preparar los formatos accesibles.
-9. **Pendiente.** Abrir el correo institucional y el canal ARCO, con su bitácora.
-10. **Pendiente.** Crear la exportación de datos, la cancelación de cuenta y un mecanismo de oposición.
-11. **Pendiente.** Guardar fecha y versión de los consentimientos 1 y 2 del estudiante.
-12. **Pendiente.** Aprobar la política de retención y el destino final de los originales.
-13. **Pendiente.** Definir la política sobre menores.
+1. **Planeado.** Activar el conserje de sesiones, tras aprobar el plazo, y reflejarlo en la cláusula 7.
+2. **Planeado.** Migrar a inferencia albergada de forma independiente.
+3. **Pendiente.** Validar con el área jurídica el aviso de `/privacidad`, el texto de la casilla y el formato de la sección d, y llenar los `[POR DEFINIR]` del aviso.
+4. **Pendiente.** Preparar los formatos accesibles.
+5. **Pendiente.** Crear la bitácora del proyecto para las acciones ARCO y el archivo de los formatos firmados.
+6. **Pendiente.** Crear la exportación de datos, la cancelación de cuenta y un mecanismo de oposición.
+7. **Pendiente.** Guardar fecha y versión de los consentimientos 1 y 2 del estudiante.
+8. **Pendiente.** Aprobar la política de retención y el destino final de los originales.
+9. **Pendiente.** Definir la política sobre menores.
 
 ## Etapa 2
 

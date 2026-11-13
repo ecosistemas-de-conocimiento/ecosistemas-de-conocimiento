@@ -66,6 +66,10 @@ erDiagram
   USERS ||--o{ ANONYMISATION_REVIEWS : "revisa"
   ORGANIZATIONS ||--o{ ANONYMISATION_REVIEWS : "acota"
 
+  DOCUMENTS |o--o{ CONSENT_RECEIPTS : "constancia"
+  USERS ||--o{ CONSENT_RECEIPTS : "declara (actor)"
+  ORGANIZATIONS ||--o{ CONSENT_RECEIPTS : "acota"
+
   ORGANIZATIONS ||--o{ GRAPH_ENTITIES : "posee"
   DOCUMENTS ||--o{ GRAPH_MENTIONS : "menciona"
   GRAPH_ENTITIES ||--o{ GRAPH_MENTIONS : "es mencionada"
@@ -236,6 +240,10 @@ Propósito: ajustes de toda la plataforma. Tiene un campo, `detectorFallback` (`
 
 Propósito: registro de solo inserción de cada cambio de `keepDocumentAuthor`, `keepCitedAuthors`, `keepPublicFigures` o del ajuste de plataforma `detectorFallback`, una fila por clave cambiada. Archivo: `apps/backend/src/collections/AnonymisationSettingChanges.ts`. En dev desde el 2026-11-10 (tabla a las 05:47 UTC; claves `keepPublicFigures` y `detectorFallback` y alcance `plataforma` a las 18:33 UTC). Campos: `organization` (vacío en un cambio de plataforma), `document` (vacío en un cambio de ecosistema o de plataforma), `actor` (vacío si fue un script), `scope` (`documento`, `ecosistema` o `plataforma`), `key`, `before` y `after` (verdadero, falso o vacío; vacío significa heredar o sin fijar) y `createdAt`. Nunca guarda texto. Un cambio de documento escribe su fila antes del cambio. Un cambio de ecosistema lo escribe un gancho `afterChange` de `Organizations` en la misma transacción, así que cubre `/api/funciones` y la API directa; si falla la fila, falla el cambio. Borrar el documento deja la fila con `document` vacío; borrar el ecosistema la borra.
 
+### 3.17 `consent-receipts`: recibos de consentimiento
+
+Propósito: el recibo de la casilla de consentimiento que se marca al subir cada recurso. Campos: `document`, `documentIdSnapshot`, `organization`, `actor` (quien sube), `kind`, `consentVersion` (versión del texto de la casilla, `UPLOAD_CONSENT_VERSION` en `apps/web/src/lib/uploadConsent.ts`), `contentKind` y `createdAt`. Registra la declaración de quien sube, nunca de quién son las palabras ([ADR-0019](../03-arquitectura/adr/ADR-0019-voces-sin-sujeto-ni-consentimiento.md), enmienda del 2026-11-12). El folio `EDC-AAAA-NNNNNN` se deriva del id del recibo; no se guarda aparte. La constancia (`GET /api/documents/:id/constancia`, página `/documentos/<id>/constancia`) responde 404 a quien no sea quien subió ni admin. de plataforma. Migración [HECHO PENDIENTE: nombre de la migración]; commit [HECHO PENDIENTE: SHA integrado en main]. Implementado.
+
 ## 4. Reglas de acceso por colección
 
 "Ecosistema" significa los ecosistemas donde la persona tiene membresía activa. "Admin. de plataforma" es `isPlatformAdmin`. Las reglas viven en cada archivo de `apps/backend/src/collections/`.
@@ -259,6 +267,7 @@ Propósito: registro de solo inserción de cada cambio de `keepDocumentAuthor`, 
 | `anonymisation-setting-changes` | Admin. de plataforma o quien tenga `holds:review` en ese ecosistema; las filas de plataforma, solo admin. de plataforma | Nadie por la API | Nadie | Nadie |
 | `eval-items`, `eval-runs` | Admin. de plataforma | Admin. de plataforma | Admin. de plataforma | Admin. de plataforma |
 | `aiServiceCallbacks` | Admin. de plataforma | Nadie por la API | Nadie | Nadie |
+| `consent-receipts` | [HECHO PENDIENTE: regla de lectura de la colección] | [HECHO PENDIENTE: regla de creación] | [HECHO PENDIENTE: regla de actualización] | [HECHO PENDIENTE: regla de borrado] |
 | `platform-settings` (global) | Admin. de plataforma | n/a | Admin. de plataforma | n/a |
 
 Notas sobre la tabla:

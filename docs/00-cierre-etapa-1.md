@@ -30,7 +30,7 @@ Estados: **Implementado** (en la rama `main`, desplegado en dev), **Planeado** (
 | 3 | Resonancia individual | Pestaña **Resonancias** (entrevistadora) y modo «Hazme preguntas» en **Generales** | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/components/ChatWorkspace.svelte`, `apps/web/src/lib/sessionKind.ts` | **Implementado** |
 | 4 | Resonancia de corpus (Uso A) | Chat con citas [n] sobre el acervo, estilo de respuesta por ecosistema y «panorama del corpus» | `/` · [Pila de IA](03-arquitectura/pila-de-ia.md) · `apps/web/src/lib/server/engine/prompt.ts` | **Implementado** |
 | 6 | Categorización por tipo y temática | `contentKind`, `tema`, `lengua` y temas extraídos al grafo | `/biblioteca` · [Modelo de datos](04-datos/modelo-de-datos.md) · `Documents.ts` | **Implementado** |
-| 7 | Comprobante ético (consentimiento, folio, PDF) | — | [Aviso y consentimiento](06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) |
+| 7 | Comprobante ético (consentimiento, folio, PDF) | Casilla de consentimiento por recurso al subir: quien sube declara su consentimiento (y, en un testimonio, que la persona que habla dio el suyo), nunca de quién son las palabras; constancia imprimible con folio `EDC-AAAA-NNNNNN`, que el navegador guarda como PDF; aviso de privacidad en borrador sin validación jurídica; derechos ARCO ante la Unidad de Transparencia del CIDE | `/documentos/<id>/constancia`, `/privacidad` · [Aviso y consentimiento](06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) · `apps/web/src/lib/uploadConsent.ts`, `apps/web/src/lib/privacyNotice.ts`, colección `consent-receipts` | **Implementado** |
 | 9 | Panel del participante con historial | «Mis documentos», lista de conversaciones, vista de estudiante | `/documentos`, `/`, `/estudiante` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/estudiante/` | **Implementado** |
 | 10 | Vista administrativa | Resumen del ecosistema, aportes y documentos con filtros | `/admin` · [Manual de usuario](08-manuales/manual-de-usuario.md) · `apps/web/src/routes/admin/` | **Implementado** |
 | 11 | Multi-ecosistema con roles | Cada ecosistema es una organización aislada, con su acervo en el servicio de IA y cinco roles | `/miembros`, `/ajustes` · [Actores y glosario](01-proyecto/actores-y-glosario.md) · `apps/backend/src/collections/Organizations.ts`, `Memberships.ts`, `apps/backend/src/lib/permissions.ts` | **Implementado** |
@@ -102,12 +102,13 @@ Estados citados de [Protección de datos](06-privacidad-y-seguridad/proteccion-d
 | Borrado de un documento y sus copias | **Implementado**, de mejor esfuerzo (un intento) | Ídem |
 | Retención cero en OpenRouter | **Implementado** | Ídem; Seguridad |
 | Registros y respuestas sin texto de errores | **Implementado** | Ídem; Seguridad |
-| Aviso en la interfaz de que las conversaciones alimentan el acervo | **Planeado** | Protección de datos |
-| Consentimiento informado para testimonios | **Planeado** | Ídem |
+| Aviso en la interfaz de que las conversaciones alimentan el acervo | **Implementado** en `/privacidad` (borrador sin validación jurídica) | Protección de datos |
+| Consentimiento informado para testimonios | **Implementado**: casilla por recurso en que quien sube declara que la persona dio su consentimiento | Ídem |
 | Respaldos cifrados con prueba de restauración | **Planeado** | Ídem; Seguridad |
 | Conserje de sesiones a 90 días | **Planeado** | Ídem |
-| Comprobante ético con folio | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) | Protección de datos |
-| Cancelación de cuenta y canal ARCO | **Pendiente** | Ídem |
+| Comprobante ético con folio | **Implementado**: constancia imprimible con folio en `/documentos/<id>/constancia` | Protección de datos |
+| Canal ARCO (Unidad de Transparencia del CIDE, descrito en `/privacidad`) | **Implementado** | Ídem |
+| Cancelación de cuenta | **Pendiente** | Ídem |
 | Política de retención aprobada; depuración de trazas de ai-service | **Pendiente** | Ídem |
 | Retención cero con DeepInfra | **Pendiente** | Ídem; Seguridad |
 | Separar a quien sube de quien revisa una retención | **Pendiente** | Ídem; Seguridad |
@@ -134,7 +135,7 @@ Limitaciones conocidas de la Etapa 1 con correcciones. Ninguna ocurre hoy; su ar
 1. Si ai-service agota sus 7 intentos (unas 2 h 42 min; citado de `services/ai-service/src/services/callbacks/emit.ts`) justo cuando un documento se retiene o se retira, la copia en el corpus compartido puede quedar viva, porque ningún barrido la retira después.
 2. El script de operador `backfillLengua.ts` re-ingesta en el corpus compartido sin `callbackUrl`. Si un documento queda retenido o se retira mientras ese trabajo está en cola, su copia puede quedar publicada.
 
-Pendiente para la Etapa 2, además del comprobante ético (**Planeado** en §2):
+Pendiente para la Etapa 2:
 
 - Sesión de auditoría comunitaria y veredicto documentado: previstos para la Etapa 2, con la estrategia de talleres ajustada.
 - Mini-formulario de perfil (entregable 5 del brief v1 §4: enrutar a una sub-base por vínculo con el fenómeno) y suscripción a notificaciones (entregable 8).
@@ -149,6 +150,6 @@ Pendiente para la Etapa 2, además del comprobante ético (**Planeado** en §2):
 - Tope total de conversaciones por persona; verificación de correo; renombrar las llaves viejas de los archivos.
 - Adjuntar documentos a la vez en la misma conversación; un formulario viejo del panel de admin.
 - `lengua` al re-archivar un documento como testimonio; `anonymisationError` y el `resave` del seed.
-- Flujo OAuth 2.0 (prioridad muy alta): los anexos técnicos de los prestadores (actividad 6) pedían autenticación bajo OAuth 2.0 / JWT. El estándar implementado es JWT: la sesión de Payload (§2.1, fila 1) y, aparte, un emisor de JWT EdDSA con JWKS propio y vigencia máxima de 900 s, que nada consume todavía (`apps/backend/src/endpoints/token.ts`, `jwks.ts`, `lib/jwt/sign.ts`). Va en paralelo con el comprobante ético (§2.1, fila 7).
+- Flujo OAuth 2.0 (prioridad muy alta): los anexos técnicos de los prestadores (actividad 6) pedían autenticación bajo OAuth 2.0 / JWT. El estándar implementado es JWT: la sesión de Payload (§2.1, fila 1) y, aparte, un emisor de JWT EdDSA con JWKS propio y vigencia máxima de 900 s, que nada consume todavía (`apps/backend/src/endpoints/token.ts`, `jwks.ts`, `lib/jwt/sign.ts`).
 
 El resto está en el [Roadmap](01-proyecto/roadmap.md) (§3 y [Etapa 2](01-proyecto/roadmap.md#etapa-2)) y en el [Registro de riesgos](01-proyecto/registro-de-riesgos.md).

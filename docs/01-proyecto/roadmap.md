@@ -36,7 +36,7 @@ Meta a dos años: al menos la mitad de los ecosistemas nutridos y generando infe
 ```mermaid
 flowchart LR
     subgraph E2["Etapa 2: estudiantes operan la captura"]
-        A["Aviso, consentimiento<br/>y comprobante"] --> B["Miniexperimentos<br/>con 2 y luego 5 estudiantes"]
+        A["Validación jurídica<br/>del aviso y el consentimiento"] --> B["Miniexperimentos<br/>con 2 y luego 5 estudiantes"]
         C["Servidor propio y<br/>GPU para lo privado"] --> A
         D["Uso B:<br/>análisis de patrones"] --> F["Auditoría comunitaria<br/>y devolución"]
     end
@@ -55,8 +55,8 @@ flowchart LR
 | Línea | Qué implica para el software | Depende de | Fuente |
 |---|---|---|---|
 | **Miniexperimentos con estudiantes del CIDE** | Primero 2 y luego 5 estudiantes como operadores de la captura, y uno de mayor escala hacia el final del segundo ciclo. Semiosis práctica funciona como prototipo del ecosistema de estudiantes, con posible grupo de control. La vista de estudiante ya existe | Diseño del primer miniexperimento (Responsable Técnico); aviso y consentimiento | Informe del 21 de octubre §I, §VIII |
-| **Aviso de privacidad, consentimiento y comprobante ético** | Lo que el brief v1 pedía y no se construyó: aviso, consentimiento informado, folio y PDF. Es condición para recibir testimonio real | Decidir cómo registrar el consentimiento sin guardar quién habla | Brief v1 §3 y §4; [Aviso de privacidad y consentimiento](../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) |
-| **Autenticación OAuth 2.0** | Comprometida en los anexos técnicos de los prestadores, actividad 6. Hoy hay correo y contraseña de Payload y un emisor de JWT EdDSA con JWKS (vigencia máxima de 900 s) sin consumidores. Va en paralelo con el comprobante ético | Ninguna técnica previa | Anexos técnicos, actividad 6; [Seguridad](../06-privacidad-y-seguridad/seguridad.md#etapa-2) |
+| **Validación del aviso de privacidad y del consentimiento** | Construidos como corrección de la Etapa 1 el 2026-11-12: casilla por recurso, constancia con folio y `/privacidad` en borrador sin validación jurídica. Validarlos y llenar sus `[POR DEFINIR]` es condición para recibir testimonio real | Área jurídica | Brief v1 §3 y §4; [Aviso de privacidad y consentimiento](../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) |
+| **Autenticación OAuth 2.0** | Comprometida en los anexos técnicos de los prestadores, actividad 6. Hoy hay correo y contraseña de Payload y un emisor de JWT EdDSA con JWKS (vigencia máxima de 900 s) sin consumidores | Ninguna técnica previa | Anexos técnicos, actividad 6; [Seguridad](../06-privacidad-y-seguridad/seguridad.md#etapa-2) |
 | **Operación por voz** | Un servidor MCP (protocolo que permite a un asistente de IA operar herramientas) para usar la plataforma por voz. Las peticiones de campo incluyen dictar una lista de participantes, interfaz en totonaco, versión solo texto, emitir constancias y enviarlas por WhatsApp | Ninguna técnica previa | Informe del 21 de octubre §III |
 | **Uso B: análisis de patrones** | Recurrencias, tensiones y silencios del acervo. El grafo y GraphRAG ya adelantan la base | Más acervo real | Brief v1 §3 |
 | **Auditoría comunitaria y devolución** | El paso del ciclo que faltó en la Etapa 1: llevar resonancias a la comunidad y registrar el veredicto como dato. El mecanismo de devolución «aún no está diseñado» | Uso A o Uso B con acervo suficiente | Informe del 21 de octubre §IV, principio 4 |
@@ -108,6 +108,7 @@ La revisión de `main` del 2026-11-10 y las correcciones que siguieron cerraron 
 | Enmascarado de errores en ai-service y huecos de la regla `edc/no-raw-error-log` | Desplegado | `git log` de `main` |
 | Columnas de error guardadas ocultas al leer, con un patrón único de mensajes de Postgres que citan valores; script `clean-stored-errors.ts` (0 filas en dev, 2026-11-12) | Desplegado | `infra/fleet/edc-1.md` §4zzzzzzzzzz |
 | Una escritura vieja de fila entera ya no revierte ninguna columna de `documents`; editar el texto contra un veredicto concurrente responde 409 | Desplegado | `git log` de `main` |
+| Consentimiento por recurso al subir, constancia con folio `EDC-AAAA-NNNNNN` (PDF desde el navegador) y aviso de privacidad en `/privacidad`, en borrador sin validación jurídica | Desplegado | `git log` de `main` |
 | Scripts de datos en dev: `hold-for-consent` (184 filas), `refresh-ai-titles` (52 documentos), `backfill-provenance-titles` (0 pendientes), `clear-legacy-held-text` (2 filas), `clean-stored-errors` (0 filas) | Hecho en dev el 2026-11-12 (medido por el agente de despliegue) | `infra/fleet/edc-1.md` §4zzzzzzzzz y §4zzzzzzzzzz |
 
 
@@ -117,17 +118,17 @@ Antes de recibir el primer testimonio real conviene cerrar los puntos 2 a 4 de l
 
 | Pendiente | Prioridad | Fuente |
 |---|---|---|
-| Implementar el flujo OAuth 2.0 (ver §2.2), en paralelo con el comprobante ético | **Muy alta** | Anexos técnicos, actividad 6; [Seguridad](../06-privacidad-y-seguridad/seguridad.md#etapa-2) |
+| Implementar el flujo OAuth 2.0 (ver §2.2) | **Muy alta** | Anexos técnicos, actividad 6; [Seguridad](../06-privacidad-y-seguridad/seguridad.md#etapa-2) |
 | Obtener el visto bueno sobre el equipo que aloja el Spark. El respaldo del detector en dev es `hosted`, por OpenRouter con ZDR (`provider.zdr: true`, nunca se reintenta sin esa marca), por decisión del 2026-11-09, confirmada el 2026-11-10. `none` sigue disponible como ajuste y desde el 2026-11-10 frena también el hospedado cuando no hay URL del Spark (desplegado) | **Alta** | `apps/backend/src/lib/anonymise/fallbackGenerator.ts`; `apps/backend/src/lib/anonymise/detector.ts`; `plan/spark-ai-adopcion.md` |
 | Encontrar la causa de la fuga del ecosistema 6 en la primera corrida de evals: un `documento` sintético terminó `ready` con sus 3 nombres privados. Puede ser el detector, la regla de figuras públicas o el comparador de la evaluación | **Alta** | Resultados de evaluación del 2026-10-29 |
-| Construir el aviso de privacidad, el consentimiento y el comprobante (ver §2.2) | **Alta** | Brief v1 §3 y §4 |
+| Validar con el área jurídica el aviso de `/privacidad` y el consentimiento (ver §2.2) | **Alta** | Brief v1 §3 y §4 |
 | Quitar el valor por defecto público de la llave de administración de audio-service y confirmar qué valor usa dev | **Alta** | `infra/docker-compose.yml`; auditoría del 2026-10-28, hallazgo 11 |
 | Puertos publicados solo hacia la interfaz local en `infra/docker-compose.override.yml`. Los límites de tamaño de cuerpo ya existen (ver §3.0) | Media | Auditoría del 2026-10-28 |
 | Comprobar qué hallazgos medios de privacidad (8 a 11) quedaron cubiertos por las correcciones del 2026-10-29 | Media | `plan/auditoria-codigo-2026-10-28.md` |
 | Rastrear qué documentos originan nombres de colonias en el grafo | Media | Bitácora del proyecto (2026-10-28) |
 | Verificar que la cabecera CSP de imágenes existe; el código muestra la imagen como texto, la cabecera no está verificada | Media | Auditoría del 2026-10-28, hallazgo 6 |
 | Conserje de conversaciones, apagado por omisión (`SESSION_JANITOR_ENABLED`). Los cuerpos de los avisos y los volcados ya tienen plazo (ver §3.0); el plazo de `edc_ai.traces` es Etapa 2 | Media | [Registro de riesgos](registro-de-riesgos.md), R-10; `apps/backend/src/lib/sessionJanitorScheduler.ts` |
-| Borrado de cuenta y canal para derechos ARCO | Media | [Registro de riesgos](registro-de-riesgos.md), R-07 |
+| Borrado de cuenta. El canal para derechos ARCO es la Unidad de Transparencia del CIDE, descrito en `/privacidad` | Media | [Registro de riesgos](registro-de-riesgos.md), R-07 |
 | Correr en dev la re-extracción del grafo de los documentos publicados (`scripts/reextract-published-graph.ts`, preparada el 2026-11-10 y sin correr), que reemplaza las filas sacadas antes de que la compuerta quitara autores | Media | `plan/auditoria-ia-2026-10-17.md`, G-2 |
 
 ### 3.2 Infraestructura y operación

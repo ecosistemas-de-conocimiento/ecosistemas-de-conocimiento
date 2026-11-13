@@ -3,7 +3,7 @@
 - **Versión:** 1.5
 - **Fecha:** 2026-11-12
 - **Estado:** descripción del estado actual; cada control está marcado como Implementado, Planeado o Pendiente. Sin validación jurídica
-- **Fuentes:** `apps/backend/src/lib/anonymise/` (en especial `gate.ts`, `pseudonyms.ts`, `fallbackGenerator.ts`, `detector.ts`), `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/AnonymisationReviews.ts`, `apps/backend/src/collections/StudentProfiles.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/conversationTurnErasure.ts`, `apps/backend/src/lib/graph/queries.ts`, `apps/backend/src/lib/graph/types.ts`, `apps/backend/src/lib/student/testimonioConsent.ts`, `apps/backend/src/lib/consentHold.ts`, `apps/backend/src/lib/callbackRetention.ts`, `apps/web/src/lib/consent.ts`, `apps/web/src/lib/estudiante.ts`, `apps/web/src/lib/server/engine/orientation.ts`, `plan/anonimizacion-y-voces.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md), auditoría de código del 2026-10-28, [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) (decisión del 2026-11-07)
+- **Fuentes:** `apps/backend/src/lib/anonymise/` (en especial `gate.ts`, `pseudonyms.ts`, `fallbackGenerator.ts`, `detector.ts`), `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/AnonymisationReviews.ts`, `apps/backend/src/collections/StudentProfiles.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/conversationTurnErasure.ts`, `apps/backend/src/lib/graph/queries.ts`, `apps/backend/src/lib/graph/types.ts`, `apps/backend/src/lib/student/testimonioConsent.ts`, `apps/backend/src/lib/consentHold.ts`, `apps/backend/src/lib/callbackRetention.ts`, `apps/web/src/lib/consent.ts`, `apps/web/src/lib/uploadConsent.ts`, `apps/web/src/lib/privacyNotice.ts`, `apps/web/src/routes/documentos/[id]/constancia/`, `apps/web/src/lib/estudiante.ts`, `apps/web/src/lib/server/engine/orientation.ts`, `plan/anonimizacion-y-voces.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md), auditoría de código del 2026-10-28, [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) (decisión del 2026-11-07)
 
 > **Aviso.** El sistema aún no recibe testimonios reales de participantes en producción: no existe entorno de producción, y en desarrollo (dev) sí hay documentos reales del proyecto, con nombres reales en sus textos originales, incluidos materiales de participantes del taller de Semiosis, en borrador hasta tener el consentimiento de sus autores (ver [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)).
 
@@ -11,7 +11,7 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. Staging sigue en su imagen del 2026-10-17 (etiqueta `97d5316a`, citado de `infra/fleet/edc-1.md` §4zzzzzzzz), y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Lo diferido a la etapa 2 está en la sección [Etapa 2](#etapa-2).
+Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. El consentimiento por recurso, la constancia con folio y `/privacidad` entraron después, en el commit [HECHO PENDIENTE: SHA integrado en main], desplegado en dev el [HECHO PENDIENTE: fecha y hora del deploy en dev, measured]. Staging sigue en su imagen del 2026-10-17 (etiqueta `97d5316a`, citado de `infra/fleet/edc-1.md` §4zzzzzzzz), y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Lo diferido a la etapa 2 está en la sección [Etapa 2](#etapa-2).
 
 | Control | Estado | Evidencia o nota |
 |---|---|---|
@@ -63,14 +63,14 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 | Respaldo del detector por OpenRouter con ZDR (`hosted`), por decisión del responsable técnico del 2026-11-09, confirmada el 2026-11-10 | **Implementado** | Dev usa `hosted` desde el 2026-11-10, con ZDR en OpenRouter; antes, del 2026-11-06 al 2026-11-09, usó `none` (citado de `infra/fleet/edc-1.md` §4zzzzzz y §4zzzzzzz). `none` sigue disponible. Staging no usa el Spark |
 | Conserje de sesiones a 90 días de inactividad | **Planeado** | Código en `lib/sessionJanitor.ts`, apagado por defecto (`SESSION_JANITOR_ENABLED`) |
 | Respaldos cifrados con copia en otro proveedor y prueba de restauración | **Planeado** | Diseño en `infra/fleet/backups.md`; nada construido |
-| Aviso en la interfaz de que las conversaciones alimentan el acervo | **Planeado** | Plantilla en [aviso simplificado](aviso-de-privacidad-y-consentimiento.md#c-aviso-simplificado-para-la-interfaz); ningún texto en `apps/web/src` |
-| Consentimiento informado para quien aporta un testimonio | **Planeado** | Plantilla en borrador en [consentimientos](aviso-de-privacidad-y-consentimiento.md#d-consentimiento-informado-para-quien-aporta-un-testimonio); sin uso real |
+| Aviso en la interfaz de que las conversaciones alimentan el acervo | **Implementado** | Finalidad 5 del aviso en `/privacidad`, pública y con el encabezado «Borrador sin validación jurídica» (`apps/web/src/lib/privacyNotice.ts`); enlazada desde el inicio de sesión y la barra lateral; commit [HECHO PENDIENTE: SHA integrado en main] |
+| Consentimiento informado para quien aporta un testimonio | **Implementado** | Casilla por recurso al subir: quien sube declara que la persona que da el testimonio dio su consentimiento informado fuera del sistema (texto y versión en `apps/web/src/lib/uploadConsent.ts`). Pantallas: [HECHO PENDIENTE: pantallas exactas de la casilla] |
 | Migración a inferencia albergada de forma independiente | **Planeado** | Sin contratos documentados |
 | Retención cero con DeepInfra (embeddings de respaldo en dev, reordenamiento en staging) | **Pendiente** | DeepInfra no recibe parámetro de retención (P-06); etapa 2 |
-| Comprobante ético con folio y archivo de consentimientos | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) | Folio y PDF sin código ni procedimiento escrito |
+| Comprobante ético con folio | **Implementado** | Cada subida guarda un recibo en `consent-receipts` (migración [HECHO PENDIENTE: nombre de la migración]) con la declaración de quien sube, nunca de quién son las palabras ([ADR-0019](../03-arquitectura/adr/ADR-0019-voces-sin-sujeto-ni-consentimiento.md), enmienda del 2026-11-12). Constancia en `/documentos/<id>/constancia` con folio `EDC-AAAA-NNNNNN`, derivado del id del recibo; «Descargar» abre la impresión del navegador para guardarla como PDF. Solo la ven quien subió y la administración de plataforma (`+page.server.ts` de la constancia) |
 | Fecha y versión de `shareWithPeers` y `shareActivity` | **Pendiente** | `StudentProfiles.ts` solo guarda fecha y versión de testimonios |
 | Cancelación de cuenta | **Pendiente** | Sin ruta; la base rechaza borrar un usuario con conversación o membresía (`Ratings.deletePaths.pg.test.ts`) |
-| Canal para derechos de acceso, rectificación, cancelación y oposición (ARCO) | **Pendiente** | Sin correo ni procedimiento activo |
+| Canal para derechos de acceso, rectificación, cancelación y oposición (ARCO) | **Implementado** | La Unidad de Transparencia del CIDE, por su correo, la Plataforma Nacional de Transparencia o por escrito; procedimiento y plazos en `/privacidad`, «Tus derechos» (`privacyNotice.ts`). Sin formulario propio |
 | Política de retención aprobada, con destino final de los originales | **Pendiente** | Plazos sin decidir; sin plan de destino final |
 | Depuración de trazas del servicio de IA | **Pendiente** | Sin purga en `services/ai-service/src`. Las trazas guardan la salida de cada generación, también la del detector hospedado, que es la lista de nombres (`outputPayload` en `router/router.ts`; P-14, etapa 2) |
 | Bitácora de lecturas del original por la administración de plataforma | **Pendiente** | Sin política ni plan técnico |
@@ -267,8 +267,8 @@ Consecuencias de esta decisión:
 - El texto original solo lo leen quien lo subió y la administración de plataforma.
 - La grabación de un testimonio nunca se comparte con el ecosistema, aunque su texto anonimizado esté publicado (`Media.ts`).
 - El grafo nunca crea nodos de persona a partir de un testimonio (sección 6).
-- El consentimiento de quien da el testimonio se registraría fuera del sistema, con un folio no ligado al texto. La plantilla y el comprobante con folio son **Planeado** (folio y PDF sin código) (ver [consentimientos](aviso-de-privacidad-y-consentimiento.md#d-consentimiento-informado-para-quien-aporta-un-testimonio)).
-- La persona que dio el testimonio no puede localizarlo por su nombre, porque el sistema no lo sabe. Sin folio ni canal ARCO, ambos **Pendientes**, hoy no tiene forma de ejercer sus derechos (ver el [procedimiento ARCO](aviso-de-privacidad-y-consentimiento.md#f-procedimiento-arco-y-de-retiro-de-una-contribución)).
+- El consentimiento de quien da el testimonio se recaba fuera del sistema. La plataforma solo guarda la declaración de quien sube, con un folio que no nombra a nadie (**Implementado**; ver [consentimientos](aviso-de-privacidad-y-consentimiento.md#d-consentimiento-informado-para-quien-aporta-un-testimonio)).
+- La persona que dio el testimonio no puede localizarlo por su nombre, porque el sistema no lo sabe. Lo localiza por el folio de la constancia, ante la Unidad de Transparencia (**Implementado**; ver el [procedimiento ARCO](aviso-de-privacidad-y-consentimiento.md#f-procedimiento-arco-y-de-retiro-de-una-contribución)).
 
 ## 5. Conversaciones y acervo
 
@@ -278,7 +278,7 @@ Reglas de uso:
 
 - **Solo orientación.** Los turnos de otras personas entran a la respuesta del asistente en un bloque de orientación aparte. Nunca se citan como fuente (`apps/web/src/lib/server/engine/prompt.ts`).
 - **Alcance de ecosistema.** La orientación se toma solo del ecosistema donde ocurrió la conversación (`CHAT_ORIENT_SCOPE=ecosistema` por defecto, `orientation.ts`).
-- **Aviso al usuario: Planeado.** Hoy la interfaz no informa que las conversaciones, anonimizadas, alimentan el acervo del ecosistema. La plantilla está en el [aviso simplificado](aviso-de-privacidad-y-consentimiento.md#c-aviso-simplificado-para-la-interfaz).
+- **Aviso al usuario: Implementado.** La finalidad 5 del aviso en `/privacidad` dice que las conversaciones, anonimizadas, alimentan el acervo del ecosistema (`apps/web/src/lib/privacyNotice.ts`; borrador sin validación jurídica).
 - **Turnos retenidos.** Un turno que la compuerta retiene no entra al acervo y no pasa a Revisión.
 - **Borrado.** Borrar la conversación borra sus turnos del acervo, no solo los oculta (`lib/conversationTurnErasure.ts`). Si la ingesta de un turno termina después del borrado, ese turno tardío también se borra.
 
@@ -448,6 +448,7 @@ El original de un testimonio lo protege `mayReadGatedOriginal` en `Documents.ts`
 - `apps/backend/src/collections/Documents.ts`, `AnonymisationReviews.ts`, `Media.ts`, `StudentProfiles.ts`, `Users.ts`
 - `apps/backend/src/lib/graph/queries.ts`, `apps/backend/src/lib/graph/types.ts`
 - `apps/backend/src/lib/student/testimonioConsent.ts`, `apps/web/src/lib/consent.ts`, `apps/web/src/lib/estudiante.ts`
+- `apps/web/src/lib/uploadConsent.ts`, `apps/web/src/lib/privacyNotice.ts`, `apps/web/src/routes/documentos/[id]/constancia/`, colección `consent-receipts`
 - `services/ai-service/src/services/ai/pii-egress.ts`
 - `plan/anonimizacion-y-voces.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`
 - Auditoría de código del 2026-10-28
@@ -467,11 +468,11 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente. 
 0. **Pendiente.** Decidir si se corre `scripts/reextract-published-graph.ts`.
 1. **Planeado.** Activar el conserje de sesiones, tras aprobar el plazo.
 2. **Planeado.** Construir los respaldos cifrados de `infra/fleet/backups.md` y probar una restauración.
-3. **Planeado.** Validar y publicar el aviso simplificado y el consentimiento de testimonio.
+3. **Pendiente.** Validar con el área jurídica el aviso de `/privacidad` y el texto de la casilla.
 4. **Planeado.** Migrar a inferencia albergada de forma independiente.
 5. **Pendiente.** Decidir qué tratamiento reciben los documentos reales que ya están en dev.
-6. **Planeado.** Crear el comprobante ético con folio y el archivo de consentimientos.
-7. **Pendiente.** Abrir el canal ARCO y crear la cancelación de cuenta y la exportación de datos.
+6. **Pendiente.** Crear la cancelación de cuenta y la exportación de datos.
+7. **Pendiente.** Llenar los `[POR DEFINIR]` del aviso con lo que decida el área jurídica.
 8. **Pendiente.** Aprobar la política de retención, con destino final de los originales y plazo de trazas.
 9. **Pendiente.** Decidir si una persona revisora puede aprobar su propia subida, y aplicarlo en `decideOnHold`.
 10. **Pendiente.** Definir la política de acceso al original y las bitácoras de lecturas y de cambios de rol y ajustes.

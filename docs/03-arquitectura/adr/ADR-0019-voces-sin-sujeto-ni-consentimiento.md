@@ -1,12 +1,12 @@
 # ADR-0019. Voces sin sujeto ni nivel de consentimiento: los testimonios son siempre anónimos
 
-- **Versión:** 1.3
-- **Fecha del documento:** 2026-11-10
+- **Versión:** 1.4
+- **Fecha del documento:** 2026-11-12
 - **Estado del documento:** vigente
 - **Estado de la decisión:** aceptada con enmienda
 - **Fecha de la decisión:** 2026-08-28. Reglas del gate ampliadas del 2026-10-21 al 2026-10-23
 - **Quién decidió:** responsable de desarrollo, durante la construcción de Voces y el gate
-- **Enmendado por:** [ADR-0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) (2026-11-07): un testimonio puede conservar, por documento, el nombre de quien lo subió y los autores citados
+- **Enmendado por:** [ADR-0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) (2026-11-07): un testimonio puede conservar, por documento, el nombre de quien lo subió y los autores citados; la [enmienda del 2026-11-12](#enmienda-del-2026-11-12) (recibo de consentimiento de quien sube)
 - **Reemplaza:** la propuesta de tres niveles de consentimiento (`plan/anonimizacion-y-voces.md` §3.4) y la decisión "consentimiento por omisión `anónimo`" del ADR del grafo (§1.2.6), retirada en su §0
 - **Fuentes:** `plan/anonimizacion-y-voces.md` (cabecera, §3.2, §3.4 y §7); `plan/adr-corpus-graph.md` §0; `apps/backend/src/collections/Documents.ts`; registro del proyecto del 2026-10-21
 
@@ -49,7 +49,7 @@ El razonamiento, escrito en `apps/backend/src/collections/Documents.ts`:
 
 - Un testimonio no puede atribuirse a su autora o autor aunque esa persona lo quiera. Si el proyecto necesita voces con nombre, será una decisión nueva con su propio diseño.
 - El campo `contentKind` sostiene la regla: un testimonio subido como `documento` no pasa por el gate ([ADR-0002](ADR-0002-contentkind-separado-de-kind.md)).
-- **Abierto:** el marco legal y ético de los testimonios (artefacto de consentimiento y si debe registrarse fuera del sistema) y la retención (`plan/anonimizacion-y-voces.md` §7). El proyecto tiene un formato de consentimiento informado fuera del sistema (citado del informe 07 de investigación, §1).
+- **Abierto:** la retención (`plan/anonimizacion-y-voces.md` §7). El proyecto tiene un formato de consentimiento informado fuera del sistema (citado del informe 07 de investigación, §1). El artefacto de consentimiento dentro del sistema lo resuelve la [enmienda del 2026-11-12](#enmienda-del-2026-11-12).
 - **No confundir** con el consentimiento de estudiantes del 2026-10-28: es el permiso para que su docente vea sus testimonios ya anonimizados, con versión del texto aceptado (migraciones `20261028_054402` y `20261028_083327`). No atribuye ningún testimonio.
 
 ## Decisiones relacionadas
@@ -66,6 +66,13 @@ El razonamiento, escrito en `apps/backend/src/collections/Documents.ts`:
 ## Enmienda del 2026-11-07
 
 [ADR-0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) enmienda la frase "un testimonio es anónimo, siempre". Por omisión un testimonio sigue con todos sus nombres sustituidos. Quien puede cambiar los interruptores de un documento puede encender dos excepciones en un testimonio: conservar el nombre completo de quien lo subió y conservar los autores de citas bibliográficas. Lo demás de este ADR sigue vigente: no hay campo `subject`, ni nivel de consentimiento, ni mapa entre seudónimos y nombres, y los nombres citados de un testimonio nunca son nodos `persona` del grafo.
+
+## Enmienda del 2026-11-12
+
+- **Quién decidió:** el responsable de desarrollo, 2026-11-12 (consentimiento por recurso como corrección de la Etapa 1)
+- **Qué cambia:** cada subida guarda un recibo en `consent-receipts` (documento, organización, quien sube, versión del texto, tipo de material y fecha) y entrega una constancia con folio `EDC-AAAA-NNNNNN` en `/documentos/<id>/constancia`. El recibo registra la declaración de consentimiento **de quien sube**: que leyó el aviso y, en un testimonio, que la persona que habla dio su consentimiento informado fuera del sistema (`apps/web/src/lib/uploadConsent.ts`).
+- **Qué no cambia:** el recibo **nunca dice de quién son las palabras**. No hay campo `subject` ni nivel de consentimiento; el folio no contiene datos de la persona. Sigue la regla «voces sin sujeto»: el consentimiento de la persona que habla queda fuera del sistema, en el formato del [aviso y consentimiento](../../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md#d-consentimiento-informado-para-quien-aporta-un-testimonio).
+- **Código:** commit [HECHO PENDIENTE: SHA integrado en main]; migración [HECHO PENDIENTE: nombre de la migración].
 
 ## Estado al 2026-11-10
 

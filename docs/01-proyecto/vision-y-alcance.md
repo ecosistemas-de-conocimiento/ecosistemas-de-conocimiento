@@ -118,7 +118,7 @@ El brief v1 §4 fija dos entregables «según convenio» y tres criterios de éx
 | 4 | Resonancia de corpus, prueba de concepto del Uso A | **Parcial** | Chat con citas sobre el acervo de un ecosistema, con estilo de respuesta configurable y «panorama del corpus». No hay salida específica para taller |
 | 5 | Mini-formulario de perfil que enruta a sub-base | **No construido** | Ver §7 |
 | 6 | Categorización por tipo de contribución y temática | **Parcial** | `contentKind`, `tema`, `lengua` y extracción automática de temas al grafo. Ver §7 |
-| 7 | Comprobante ético: consentimiento, folio y PDF | **No construido** | Ver §7 |
+| 7 | Comprobante ético: consentimiento, folio y PDF | **Entregado** como corrección del 2026-11-12 | Casilla de consentimiento por recurso al subir; constancia imprimible con folio `EDC-AAAA-NNNNNN` en `/documentos/<id>/constancia`, que el navegador guarda como PDF; aviso de privacidad en `/privacidad`, en borrador sin validación jurídica. Registra la declaración de quien sube, no de quién son las palabras. Ver [Aviso de privacidad y consentimiento](../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) |
 | 8 | Suscripción opcional a notificaciones | **No construido** | Ver §7 |
 | 9 | Panel del participante con historial | **Entregado** | «Mis documentos», lista de conversaciones y la vista de estudiante con sus temas y autores |
 | 10 | Vista administrativa con distribución por categorías y perfil | **Parcial** | `/admin` muestra resumen del ecosistema, quién ha aportado y todos los documentos con filtros; `/admin/evals` mide calidad. No hay distribución por perfil porque no hay perfil |
@@ -147,7 +147,7 @@ Lo que se entregó y el brief no pedía:
 
 | Criterio del brief v1 §4 | Cumplimiento |
 |---|---|
-| Una persona puede contribuir de punta a punta y recibir su comprobante | **Parcial.** La contribución de punta a punta funciona (subir, anonimizar, publicar, consultar). El comprobante no existe |
+| Una persona puede contribuir de punta a punta y recibir su comprobante | **Cumplido** desde el 2026-11-12. La contribución de punta a punta funciona (subir, anonimizar, publicar, consultar) y cada subida tiene su constancia con folio |
 | El acervo queda organizado por temática y por perfil | **Parcial.** Organizado por ecosistema, por tipo (`contentKind`) y por `tema`. No por perfil |
 | Existe al menos un ciclo voz, resonancia, auditoría y veredicto documentado | **No cumplido.** Hay voz y resonancia; falta la auditoría comunitaria |
 
@@ -159,7 +159,7 @@ Cada punto lleva su motivo cuando las fuentes lo registran. Si no consta un moti
 
 | Función del brief v1 | Qué pedía | Situación | Motivo registrado |
 |---|---|---|---|
-| **Comprobante ético con folio y PDF** | Al cerrar una contribución, aviso de privacidad, consentimiento informado y folio único, descargable en PDF (brief v1 §3 y §4; síntesis del kickoff del 2026-05-11, donde se declaró obligatorio) | No hay código, ni folio, ni librería de PDF en `apps/*/package.json` (verificado por búsqueda el 2026-10-30) | No consta una decisión de descartarlo. Una complicación de diseño: EDC decidió no guardar quién habla en un testimonio (sin sujeto, para no crear un mapa de reidentificación), así que un folio tendría que vivir desligado del texto (`plan/anonimizacion-y-voces.md` §7.2) |
+| **Comprobante ético con folio y PDF** | Al cerrar una contribución, aviso de privacidad, consentimiento informado y folio único, descargable en PDF (brief v1 §3 y §4; síntesis del kickoff del 2026-05-11, donde se declaró obligatorio) | Construido el 2026-11-12 como corrección: casilla por recurso, constancia con folio (PDF desde el navegador) y `/privacidad`. Al 2026-10-28 no había código ni folio (verificado por búsqueda el 2026-10-30) | No consta una decisión de descartarlo. Una complicación de diseño: EDC decidió no guardar quién habla en un testimonio (sin sujeto, para no crear un mapa de reidentificación), así que el folio registra la declaración de quien sube y no de quién habla (`plan/anonimizacion-y-voces.md` §7.2; [ADR-0019](../03-arquitectura/adr/ADR-0019-voces-sin-sujeto-ni-consentimiento.md), enmienda del 2026-11-12) |
 | **Capturador como rol** | Subir contribuciones a nombre de terceros registrando que la voz es de la persona real (brief v1 §4 y §7c) | No existe como rol ni como modo. Quien tiene permiso `voces:upload` (investigador, responsable, administra) puede subir un testimonio, pero el sistema no registra a quién pertenece la voz | Coherente con la decisión de «Voces sin sujeto» (2026-08-28): guardar el sujeto sería un mapa de reidentificación |
 | **Mini-formulario de perfil** | Quién eres y cómo te vinculas con el fenómeno, para enrutar a una sub-base | No construido | No consta. La misma tensión con «Voces sin sujeto» aplica |
 | **Suscripción a notificaciones** | Suscripción opcional a avisos del proyecto | No construido; no hay envío de correos ni notificaciones | No consta |
@@ -167,7 +167,7 @@ Cada punto lleva su motivo cuando las fuentes lo registran. Si no consta un moti
 | **Auditoría comunitaria del Uso A** | Una sesión con miembros de un ecosistema (Discapacidad como referente) y la documentación del veredicto | No realizada | La Etapa 1 cerró sin procedimiento de captura probado en territorio (informe del 21 de octubre, síntesis). El mecanismo de devolución «aún no está diseñado» (matriz de Chapultepec, principio 4) |
 | **Imagen** | Captura en cualquier formato que porte una voz | Texto, audio y video (del video, solo su audio) | No consta |
 | **Registro por QR en eventos** | Llegar por QR o liga y registrarse | Registro público cerrado (decisión del 2026-10-21) | Decisión del responsable de desarrollo |
-| **Aviso de que las conversaciones alimentan el acervo** | Implícito en el comprobante ético | No hay texto en la interfaz (búsqueda en `apps/web/src`, informe de privacidad del 2026-10-30) | Pendiente. Ver [Aviso de privacidad y consentimiento](../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) |
+| **Aviso de que las conversaciones alimentan el acervo** | Implícito en el comprobante ético | Construido el 2026-11-12 como corrección: la finalidad 5 del aviso en `/privacidad`. Al 2026-10-28 no había texto en la interfaz (informe de privacidad del 2026-10-30) | Ver [Aviso de privacidad y consentimiento](../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md) |
 
 ## 8. Fases del proyecto
 

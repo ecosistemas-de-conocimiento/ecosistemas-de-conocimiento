@@ -368,7 +368,7 @@ flowchart TD
 
 - El responsable técnico del proyecto informaría a la Unidad de Transparencia del CIDE en cuanto confirme una vulneración de datos personales.
 - La notificación a las personas titulares diría, en lenguaje claro: qué pasó, qué datos se afectaron, qué hizo el proyecto, qué puede hacer la persona y a quién preguntar.
-- Para testimonios, la notificación llegaría por la persona facilitadora y por el folio (**Pendiente**), porque la plataforma no sabe quién habló.
+- Para testimonios, la notificación llegaría por la persona facilitadora y por el folio de la constancia (**Implementado**), porque la plataforma no sabe quién habló.
 - La notificación a la autoridad seguiría la ley aplicable (ver [nota de marco legal](aviso-de-privacidad-y-consentimiento.md#a-nota-de-marco-legal)).
 
 ### 6.4 Herramientas que ayudan
@@ -386,9 +386,9 @@ Cada punto se verifica y se anota con fecha y responsable antes de aceptar el pr
 
 - [ ] El respaldo del detector es `hosted` con retención cero en el entorno, y una prueba con el Spark apagado lo confirma. Un entorno sin detector propio, como staging hoy, no puede recibir testimonios reales.
 - [ ] El acuerdo de uso del Spark está firmado, o el detector corre en un servidor propio.
-- [ ] El aviso de privacidad integral y el simplificado están publicados; la interfaz dice que las conversaciones alimentan el acervo.
-- [ ] El comprobante ético con folio está listo y probado con una persona facilitadora.
-- [ ] El correo institucional para derechos ARCO responde.
+- [ ] El aviso de `/privacidad` y el texto de la casilla de consentimiento tienen validación jurídica (publicados en borrador desde el 2026-11-12).
+- [ ] La constancia con folio está probada con una persona facilitadora.
+- [ ] La Unidad de Transparencia del CIDE atendió una solicitud ARCO de prueba.
 - [ ] La llave de administración de audio-service no tiene valor por defecto, y el entorno define la suya.
 - [ ] Los respaldos programados y cifrados corren, y una restauración de prueba funcionó.
 - [ ] La copia del `APP_KEY` de Coolify está fuera de la caja.

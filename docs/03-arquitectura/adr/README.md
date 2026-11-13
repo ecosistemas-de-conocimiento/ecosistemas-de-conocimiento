@@ -65,7 +65,7 @@ Veintidós ADR, numerados en el orden en que se tomaron las decisiones. Desplega
 | [0016](ADR-0016-infraestructura-propia-caja-unica.md) | Infraestructura propia: caja única Hetzner, dev y staging, RustFS | Aceptada; estado al 2026-11-10 | 2026-10-15 a 2026-10-17 |
 | [0017](ADR-0017-plataforma-de-ia-agnostica-del-dominio.md) | Plataforma de IA agnóstica del dominio | Aceptada | 2026-08-14 |
 | [0018](ADR-0018-lenguaje-llano-en-la-ui.md) | Lenguaje llano en la interfaz | Aceptada | 2026-08-29; 2026-10-21 |
-| [0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md) | Voces sin sujeto ni nivel de consentimiento | Aceptada con enmienda (ADR-0020); relación con ADR-0022 | 2026-08-28; 2026-11-07 |
+| [0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md) | Voces sin sujeto ni nivel de consentimiento | Aceptada con enmiendas (ADR-0020; recibo de consentimiento de quien sube, 2026-11-12); relación con ADR-0022 | 2026-08-28; 2026-11-07; 2026-11-12 |
 | [0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) | Anonimizar todo por omisión y conservar nombres por documento; enmienda ADR-0019 | Aceptada; desplegada en dev | 2026-11-07 |
 | [0021](ADR-0021-titulos-con-compuerta-fallan-cerrado.md) | El título de un `documento` con compuerta pasa por la compuerta y falla cerrado; enmienda ADR-0020 | Propuesto; decisión aceptada, desplegada en dev | 2026-11-10 |
 | [0022](ADR-0022-retencion-por-consentimiento.md) | Retenido por consentimiento: una marca que detiene todo procesamiento | Propuesto; decisión aceptada, desplegada en dev, con agregados del 2026-11-11 y del 2026-11-12 | 2026-11-10 |

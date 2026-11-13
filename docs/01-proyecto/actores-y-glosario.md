@@ -149,7 +149,7 @@ Cada término lleva una definición en lenguaje llano y, cuando aplica, su nombr
 | **Ciclo** | Captura, categorización, resonancia, auditoría y retroalimentación, y vuelta a empezar | Brief v1 §3 |
 | **Capturador** | La persona que registra en campo contribuciones de terceros a nombre de ellos. No existe en la plataforma | Síntesis del kickoff; brief v1 §4 |
 | **Moderador o facilitador** | Figura intermedia, prioritaria para el trabajo de campo. No existe como rol en la plataforma | Kickoff; brief v1 §5 |
-| **Comprobante ético** | La constancia de cada contribución: aviso de privacidad, consentimiento informado y folio único descargable en PDF. No existe en la plataforma | Brief v1 §3; síntesis del kickoff |
+| **Comprobante ético** | La constancia de cada contribución: aviso de privacidad, consentimiento informado y folio único descargable en PDF. En la plataforma, desde el 2026-11-12, es la constancia de cada subida, con folio `EDC-AAAA-NNNNNN` (`/documentos/<id>/constancia`), que el navegador guarda como PDF | Brief v1 §3; síntesis del kickoff |
 | **Operación** | El procedimiento sostenido para capturar voces en territorio. Es la hipótesis central de la Etapa 2 | Informe del 21 de octubre §I |
 | **Ventanilla en territorio** | El punto de captura en campo previsto para la Fase 3 | Informe del 21 de octubre §I |
 | **Justicia epistémica** | El derecho de cualquier persona a generar sentido sobre su realidad y a integrar su voz a un conocimiento compartido | Brief v1 §2; matriz de Chapultepec |

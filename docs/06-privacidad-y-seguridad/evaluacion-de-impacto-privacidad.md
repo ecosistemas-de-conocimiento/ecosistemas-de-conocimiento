@@ -3,7 +3,7 @@
 - **Versión:** 1.5
 - **Fecha:** 2026-11-12
 - **Estado:** borrador. Sin validación jurídica
-- **Fuentes:** `apps/backend/src/lib/anonymise/`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/AnonymisationReviews.ts`, `apps/backend/src/lib/graph/queries.ts`, `services/ai-service/src/services/ai/pii-egress.ts`, `plan/anonimizacion-y-voces.md`, `plan/auditoria-ia-2026-10-17.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md), auditoría de código del 2026-10-28, [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) (decisión del 2026-11-07), plan de adopción del Spark, propuesta de servidor de desarrollo, brief v1 del proyecto («Repositorio de Voces y Resonancias», documento externo al repo)
+- **Fuentes:** `apps/backend/src/lib/anonymise/`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/AnonymisationReviews.ts`, `apps/backend/src/lib/graph/queries.ts`, `services/ai-service/src/services/ai/pii-egress.ts`, `apps/web/src/lib/privacyNotice.ts`, `apps/web/src/lib/uploadConsent.ts`, `plan/anonimizacion-y-voces.md`, `plan/auditoria-ia-2026-10-17.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md), auditoría de código del 2026-10-28, [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) (decisión del 2026-11-07), plan de adopción del Spark, propuesta de servidor de desarrollo, brief v1 del proyecto («Repositorio de Voces y Resonancias», documento externo al repo)
 
 > **Aviso.** El sistema aún no recibe testimonios reales de participantes en producción: no existe entorno de producción, y en desarrollo (dev) sí hay documentos reales del proyecto, con nombres reales en sus textos originales, incluidos materiales de participantes del taller de Semiosis, en borrador hasta tener el consentimiento de sus autores (ver [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)).
 
@@ -11,7 +11,7 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. Staging sigue en su imagen del 2026-10-17 (citado de `infra/fleet/edc-1.md` §4zzzzzzzz), y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Lo diferido está en [Etapa 2](#etapa-2).
+Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión que corre en dev desde el despliegue del 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz), con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído en `main` `f971d54c` el 2026-11-12. El consentimiento por recurso, la constancia con folio y `/privacidad` entraron después, en el commit [HECHO PENDIENTE: SHA integrado en main], desplegado en dev el [HECHO PENDIENTE: fecha y hora del deploy en dev, measured]. Staging sigue en su imagen del 2026-10-17 (citado de `infra/fleet/edc-1.md` §4zzzzzzzz), y por ahora está fuera de alcance: ningún control posterior a esa fecha corre allí. Lo diferido está en [Etapa 2](#etapa-2).
 
 | Control o procedimiento | Estado | Evidencia o nota |
 |---|---|---|
@@ -46,16 +46,17 @@ Definiciones. **Implementado:** está en `main` `f971d54c` o antes, la versión 
 | Respaldo del detector por OpenRouter con ZDR (`hosted`), por decisión del responsable técnico del 2026-11-09, confirmada el 2026-11-10 | **Implementado** | El valor por defecto es `hosted` (`fallbackGenerator.ts`). Dev usa `hosted` desde el 2026-11-10, con ZDR; usó `none` del 2026-11-06 al 2026-11-09 (citado de `infra/fleet/edc-1.md` §4zzzzzz y §4zzzzzzz). `none` sigue disponible. Staging siempre usa OpenRouter |
 | Conserje de sesiones a 90 días | **Planeado** | `lib/sessionJanitor.ts`, apagado |
 | Respaldos cifrados, copia en otro proveedor y prueba de restauración | **Planeado** | Diseño en `infra/fleet/backups.md`. Hoy: volcados manuales sin cifrar, copia en un equipo de desarrollo |
-| Aviso integral y aviso simplificado en la interfaz | **Planeado** | Plantillas en [aviso de privacidad y consentimiento](aviso-de-privacidad-y-consentimiento.md); sin publicar |
-| Consentimiento de quien aporta un testimonio | **Planeado** | Plantilla en borrador; sin validación ni uso |
+| Aviso integral y aviso simplificado en la interfaz | **Implementado** | `/privacidad`, pública, «Borrador sin validación jurídica» (`apps/web/src/lib/privacyNotice.ts`); enlazada desde el inicio de sesión y la barra lateral |
+| Consentimiento de quien aporta un testimonio | **Implementado** | Casilla por recurso al subir: quien sube declara que la persona dio su consentimiento informado fuera del sistema (`apps/web/src/lib/uploadConsent.ts`). El formato para recabarlo fuera de la plataforma sigue en borrador |
 | Servidor propio con tarjeta de video para el detector | **Planeado** | Propuesta de servidor de desarrollo del proyecto; sin compra confirmada en este repositorio |
 | Retención cero (ZDR) en toda llamada a OpenRouter, que falla cerrada sin ella | **Implementado** | `services/ai-service/src/services/ai/router/adapters/openrouter.ts`; en dev desde el 2026-11-10. Staging no lo tiene (inferido de su imagen del 2026-10-17) |
 | Retención cero con DeepInfra | **Pendiente** | DeepInfra no recibe parámetro de retención (P-06); etapa 2 |
 | Migración a inferencia albergada de forma independiente | **Planeado** | Sin contratos documentados |
 | Contratos, acuerdos de tratamiento de datos y términos aceptados con cada encargado | **Pendiente** | Ninguno documentado. Que existan términos aceptados es inferido de que hay cuentas pagadas; no verificado |
 | Acuerdo de uso del Spark y autorización para alojar datos en un equipo ajeno | **Pendiente** | No existe. Ubicación física sin confirmar; no verificado que el equipo no conserve datos |
-| Comprobante ético con folio y archivo de consentimientos | **Planeado** (plantilla de consentimiento en borrador; folio y PDF sin código) | Folio y PDF sin código ni procedimiento |
-| Canal ARCO, exportación de datos y cancelación de cuenta | **Pendiente** | Sin correo, sin ruta; la base rechaza el borrado de un usuario con conversación o membresía |
+| Comprobante ético con folio | **Implementado** | Recibo en `consent-receipts` y constancia en `/documentos/<id>/constancia` con folio `EDC-AAAA-NNNNNN`, que el navegador guarda como PDF; registra la declaración de quien sube, no de quién son las palabras ([ADR-0019](../03-arquitectura/adr/ADR-0019-voces-sin-sujeto-ni-consentimiento.md), enmienda del 2026-11-12) |
+| Canal ARCO | **Implementado** | La Unidad de Transparencia del CIDE, con el procedimiento y los plazos de «Tus derechos» en `/privacidad` |
+| Exportación de datos y cancelación de cuenta | **Pendiente** | Sin ruta; la base rechaza el borrado de un usuario con conversación o membresía |
 | Política de acceso al original y bitácora de lecturas | **Pendiente** | Sin plan técnico |
 | Conservar el registro de revisiones al borrar un documento | **Implementado** | Llave `set null` y `documentIdSnapshot` (`AnonymisationReviews.ts`); solo se van las filas de quien borra. Al borrar una conversación, las filas de otras personas sobre una subida retenida también se quedan (commit `17a3ee49`) |
 | Depuración de trazas del servicio de IA | **Pendiente** | Sin purga en el código. Las trazas guardan la salida del detector hospedado (P-14); etapa 2 |
@@ -105,9 +106,9 @@ Dev sí tiene datos reales. Desde el 2026-10-27 contiene documentos reales del p
 
 ## 3. Base de licitud
 
-- **Consentimiento informado.** Es la base prevista para todos los titulares, con plantillas en borrador (**Planeado**). Para datos sensibles, el consentimiento debe ser expreso y por escrito, con firma autógrafa o electrónica. El comprobante ético con folio y el aviso en la interfaz no existen en código: ambos **Planeado**. Hoy solo funcionan los tres consentimientos del estudiante, y solo el de testimonios guarda fecha y versión.
+- **Consentimiento informado.** Es la base prevista para todos los titulares. Para datos sensibles, el consentimiento debe ser expreso y por escrito, con firma autógrafa o electrónica. Funcionan la casilla por recurso al subir, con su constancia con folio, el aviso en `/privacidad` y los tres consentimientos del estudiante (**Implementado**); la casilla y el de testimonios del estudiante guardan versión y fecha. Ninguno tiene validación jurídica.
 - **Investigación humanística.** El tratamiento se hace dentro de un proyecto de investigación financiado por SECIHTI. Los Principios de Chapultepec (presentados por SECIHTI y la ATDT el 2026-01-29, con matriz de correspondencia en el registro del proyecto del 2026-10-21) son el marco ético adoptado.
-- **Marco legal.** El CIDE es un centro público de investigación y, como tal, probablemente es sujeto obligado de la Ley General de Protección de Datos Personales en Posesión de Sujetos Obligados (LGPDPPSO). La nota de marco legal está en [aviso de privacidad y consentimiento](aviso-de-privacidad-y-consentimiento.md#a-nota-de-marco-legal). Esa nota es conocimiento general y debe validarla el área jurídica.
+- **Marco legal.** El CIDE es un centro público de investigación y sujeto obligado de la Ley General de Protección de Datos Personales en Posesión de Sujetos Obligados (LGPDPPSO), la ley aplicable; la autoridad del recurso de revisión es la Secretaría Anticorrupción y Buen Gobierno (SABG). La nota de marco legal está en [aviso de privacidad y consentimiento](aviso-de-privacidad-y-consentimiento.md#a-nota-de-marco-legal). Esa nota es conocimiento general y debe validarla el área jurídica.
 
 ## 4. Datos sensibles
 
@@ -126,11 +127,11 @@ El sistema recibe, por diseño, datos personales sensibles. La tabla indica dón
 
 | Titular | Relación con el sistema | Qué datos suyos hay | Cómo se le informa |
 |---|---|---|---|
-| **Personas usuarias** (participantes, facilitadoras, investigadoras, responsables de ecosistema) | Tienen cuenta | Cuenta, membresías, conversaciones, documentos, valoraciones | Hoy no se les informa en la interfaz. Aviso integral y simplificado: **Planeado** |
-| **Personas que dan un testimonio** | Pueden no tener cuenta; su relato lo sube una facilitadora | Su relato, su voz si es audio | Comprobante ético con folio: **Planeado** (folio y PDF sin código). Plantilla de consentimiento: **Planeado** |
+| **Personas usuarias** (participantes, facilitadoras, investigadoras, responsables de ecosistema) | Tienen cuenta | Cuenta, membresías, conversaciones, documentos, valoraciones | Aviso integral y simplificado en `/privacidad` (**Implementado**, sin validación jurídica) |
+| **Personas que dan un testimonio** | Pueden no tener cuenta; su relato lo sube una facilitadora | Su relato, su voz si es audio | Quien sube declara su consentimiento y recibe la constancia con folio (**Implementado**). Formato de consentimiento fuera de la plataforma: **Planeado** |
 | **Terceros nombrados** en un testimonio o documento (familiares, personal de salud, vecinos) | No tienen relación con el sistema | Su nombre y detalles dentro del relato | No se les puede informar individualmente; su protección es la anonimización, que sustituye su nombre por un seudónimo. En documentos sin marca de anonimización esa protección no aplica. Con "Conservar autores citados" encendido, un nombre suyo escrito con forma de cita queda visible (R20) |
-| **Estudiantes** | Tienen cuenta con rol `estudiante` | Lo de una persona usuaria, más su reporte de actividad | Tres consentimientos específicos en su vista (**Implementado**). Aviso integral: **Planeado** |
-| **Personas que suben un documento marcado o un testimonio** | Tienen cuenta y membresía | El nombre completo de su membresía (`personName`), visible en ese texto y en el acervo, solo si "Conservar al autor del documento" está encendido | Lo dirá el aviso integral (**Planeado**). No conserva partes del nombre ni aplica a conversaciones. Quien subió puede apagar el interruptor en la pantalla de anonimización de su documento |
+| **Estudiantes** | Tienen cuenta con rol `estudiante` | Lo de una persona usuaria, más su reporte de actividad | Tres consentimientos específicos en su vista y aviso en `/privacidad` (**Implementado**) |
+| **Personas que suben un documento marcado o un testimonio** | Tienen cuenta y membresía | El nombre completo de su membresía (`personName`), visible en ese texto y en el acervo, solo si "Conservar al autor del documento" está encendido | Lo dice la finalidad 3 del aviso en `/privacidad` (**Implementado**). No conserva partes del nombre ni aplica a conversaciones. Quien subió puede apagar el interruptor en la pantalla de anonimización de su documento |
 | **Autores citados** en documentos y testimonios | Ninguna | Su apellido o nombre dentro de una cita bibliográfica o de una sección de referencias | Solo se conservan si "Conservar autores citados" está encendido. No se les informa individualmente |
 | **Figuras públicas** citadas en documentos | Ninguna | Nombre en contexto público | Solo se conservan en documentos de referencia si un administrador de plataforma lo activa; nunca en testimonios |
 
@@ -175,9 +176,9 @@ Escala: **Probabilidad** baja, media, alta. **Gravedad** limitada, significativa
 | R7 | **Trazas con nombres.** Las trazas del servicio de IA guardan la salida de cada generación, también la del detector hospedado, que es la lista de nombres (`outputPayload` en `router/router.ts`, leído el 2026-11-10; P-14) | Terceros nombrados | Media | Significativa | **Implementado:** minimizador de reglas, que no quita nombres. **Pendiente (etapa 2):** no guardar esa salida, depurar las trazas y fijar un plazo | Medio |
 | R8 | **La administración de plataforma lee todo.** Incluido el original de cualquier testimonio | Persona que da testimonio | Baja | Grave | **Pendiente:** política de acceso y bitácora de lecturas, sin plan técnico | Medio |
 | R9 | **Pérdida de la auditoría en cascada.** Borrar un documento borra su registro de revisiones | Todas | Media | Significativa | **Implementado:** el registro sobrevive al borrado (llave `set null` y `documentIdSnapshot`); solo se van las filas de quien borra (`AnonymisationReviews.ts`) | Bajo |
-| R10 | **Conversaciones al acervo sin que la persona lo sepa** | Personas usuarias | Media | Significativa | **Implementado:** anonimización de cada turno; orientación sin cita; alcance de ecosistema; borrado real al borrar la conversación. **Planeado:** aviso integral y simplificado. Hoy la interfaz no lo dice | Medio |
+| R10 | **Conversaciones al acervo sin que la persona lo sepa** | Personas usuarias | Media | Significativa | **Implementado:** anonimización de cada turno; orientación sin cita; alcance de ecosistema; borrado real al borrar la conversación; la finalidad 5 del aviso en `/privacidad` lo dice | Medio |
 | R11 | **Retención excesiva** del original, conversaciones, trazas y transcripciones | Todas | Media | Significativa | **Implementado:** transcripciones a 1 h tras entrega; registro de avisos solo con huella; volcados limitados a los 7 más recientes por entorno; barrido diario de huérfanos del grafo; cuerpo del registro de avisos a 30 días. **Planeado:** conserje de sesiones a 90 días. **Pendiente:** política de retención | Medio |
-| R12 | **Imposibilidad de ejercer derechos** (acceso, cancelación) | Personas usuarias; persona que da testimonio | Media | Significativa | **Implementado:** borrar lo propio desde la plataforma. **Pendiente:** canal ARCO, exportación, cancelación de cuenta, retiro por folio | Alto |
+| R12 | **Imposibilidad de ejercer derechos** (acceso, cancelación) | Personas usuarias; persona que da testimonio | Media | Significativa | **Implementado:** borrar lo propio desde la plataforma. **Implementado:** canal ARCO por la Unidad de Transparencia; retiro de un testimonio por el folio de su constancia. **Pendiente:** exportación, cancelación de cuenta | Alto |
 | R13 | **Acceso indebido a la cuenta** | Personas usuarias | Baja | Significativa | **Implementado:** registro cerrado; bloqueo de la cuenta tras 5 intentos; límite de tasa en login, 4 fallos por hora por (IP, correo) y 100 por hora por IP (valores por defecto en `lib/rateLimit.ts`); cuenta desactivada sin inicio de sesión ni datos; correo que solo cambia la administración de plataforma; cookie `httpOnly` y `secure`; revocación corta el chat y el micrófono. **Pendiente (etapa 2):** límite por correo entre IPs; cambio obligado de la contraseña temporal de `/miembros` (A-04). **Pendiente:** contraseña de ssh sin verificar | Bajo a medio |
 | R14 | **Pérdida o robo de respaldos** | Todas | Baja | Grave | **Planeado:** respaldos cifrados, copia en otro proveedor, prueba de restauración. Hoy: sin cifrar, con `umask 077`, con copia en un equipo de desarrollo y solo los 7 volcados más recientes por entorno (citado de [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md) y de `infra/fleet/edc-1.md` §7) | Medio |
 | R15 | **Turnos que citan un documento retirado** siguen como orientación | Autor del documento | Baja | Limitada | **Implementado:** turnos anonimizados; borrar la conversación los borra. **Pendiente:** retirarlos al retirar el documento | Bajo |
@@ -218,7 +219,7 @@ Las posiciones del cuadrante son una lectura cualitativa del equipo, no una medi
 
 ## 9. Conclusión y plan de acción
 
-**Conclusión del borrador.** El tratamiento es necesario para el fin de investigación. El diseño reduce riesgos principales: la compuerta es cerrada ante la falla del modelo y está medida, el original está restringido, la grabación no se comparte y el borrado alcanza al servicio de IA. Hoy el tratamiento **no** es aceptable para iniciar la captura de testimonios reales: faltan consentimiento, aviso, canal ARCO, acuerdo con los encargados y validación jurídica, y el texto con nombres aún puede ir a un proveedor en Estados Unidos. Los riesgos residuales más altos hoy son R4, R5 y R12, además de la reidentificación por contexto (R1). Los documentos reales ya cargados en dev requieren una decisión aparte.
+**Conclusión del borrador.** El tratamiento es necesario para el fin de investigación. El diseño reduce riesgos principales: la compuerta es cerrada ante la falla del modelo y está medida, el original está restringido, la grabación no se comparte y el borrado alcanza al servicio de IA. Hoy el tratamiento **no** es aceptable para iniciar la captura de testimonios reales: faltan la validación jurídica del aviso y del consentimiento, la exportación y la cancelación de cuenta y el acuerdo con los encargados, y el texto con nombres aún puede ir a un proveedor en Estados Unidos. Los riesgos residuales más altos hoy son R4, R5 y R12, además de la reidentificación por contexto (R1). Los documentos reales ya cargados en dev requieren una decisión aparte.
 
 Las acciones están en [Siguientes pasos](#siguientes-pasos). No llevan fecha porque ninguna está acordada.
 
@@ -245,23 +246,20 @@ Las acciones están en [Siguientes pasos](#siguientes-pasos). No llevan fecha po
 Sin fechas: ninguna está acordada. Deben cumplirse antes del primer testimonio real, salvo el 1, que aplica ya a dev. El responsable es una sugerencia.
 
 1. **Pendiente.** Decidir el tratamiento de los documentos reales ya cargados en dev. Atiende R2 y R4. Responsable técnico.
-2. **Pendiente.** Validar la ley aplicable, la figura de responsable y el texto del aviso integral. Atiende R10 y R12. Área jurídica del CIDE.
+2. **Pendiente.** Validar la figura de responsable y el texto del aviso de `/privacidad` y de la casilla, y llenar sus `[POR DEFINIR]`. Atiende R10 y R12. Área jurídica del CIDE.
 3. **Pendiente.** Formalizar el acuerdo de uso del Spark, confirmar su ubicación y qué conserva. Atiende R5. Responsable técnico.
 4. **Planeado.** Mover el detector a un servidor propio, según la propuesta de servidor de desarrollo. Atiende R5. Responsable técnico.
 5. **Pendiente.** Documentar contratos y condiciones de retención de cada encargado. Atiende R4 y R5. Responsable técnico y área jurídica.
 6. **Planeado.** Migrar a inferencia albergada de forma independiente. Atiende R4. Coordinación de desarrollo.
-7. **Planeado.** Publicar el aviso simplificado en la interfaz, incluida la frase de que las conversaciones alimentan el acervo. Atiende R10. Coordinación de desarrollo.
-8. **Planeado.** Crear el comprobante ético con folio para cada testimonio. Atiende R1 y R12. Coordinación de desarrollo y facilitación.
-9. **Pendiente.** Abrir el correo institucional de datos personales, publicar el procedimiento ARCO y crear exportación y cancelación de cuenta. Atiende R12. Unidad de transparencia y coordinación de desarrollo.
-10. **Planeado.** Activar el conserje de sesiones. Atiende R11. Coordinación de desarrollo.
-11. **Pendiente.** Aprobar la política de retención con destino final, y crear la depuración de trazas. Atiende R7 y R11. Responsable técnico y coordinación de desarrollo.
-12. **Planeado.** Programar respaldos cifrados con copia fuera del servidor y hacer una prueba de restauración. Atiende R14. Coordinación de desarrollo.
-13. **Pendiente.** Definir la política de acceso al original y su bitácora. Atiende R8. Responsable técnico.
-14. **Pendiente.** Definir la política sobre menores. Atiende R16. Responsable técnico.
-15. **Pendiente.** Decidir si una persona revisora puede aprobar su propia subida y aplicarlo. Atiende R17. Responsable técnico.
-16. **Pendiente.** Obtener la revisión de aliados de campo. Atiende R1 y R10. Facilitación.
-17. **Pendiente.** Revisar esta evaluación al cambiar un encargado, al abrir un entorno de producción o a los 12 meses. Todos los riesgos. Responsable técnico.
-18. **Planeado.** Declarar en el aviso integral la anonimización completa por omisión y los dos interruptores por documento, que corren en dev desde el 2026-11-10. Atiende R19 y R20. Coordinación de desarrollo.
+7. **Pendiente.** Crear exportación y cancelación de cuenta. Atiende R12. Coordinación de desarrollo.
+8. **Planeado.** Activar el conserje de sesiones. Atiende R11. Coordinación de desarrollo.
+9. **Pendiente.** Aprobar la política de retención con destino final, y crear la depuración de trazas. Atiende R7 y R11. Responsable técnico y coordinación de desarrollo.
+10. **Planeado.** Programar respaldos cifrados con copia fuera del servidor y hacer una prueba de restauración. Atiende R14. Coordinación de desarrollo.
+11. **Pendiente.** Definir la política de acceso al original y su bitácora. Atiende R8. Responsable técnico.
+12. **Pendiente.** Definir la política sobre menores. Atiende R16. Responsable técnico.
+13. **Pendiente.** Decidir si una persona revisora puede aprobar su propia subida y aplicarlo. Atiende R17. Responsable técnico.
+14. **Pendiente.** Obtener la revisión de aliados de campo. Atiende R1 y R10. Facilitación.
+15. **Pendiente.** Revisar esta evaluación al cambiar un encargado, al abrir un entorno de producción o a los 12 meses. Todos los riesgos. Responsable técnico.
 
 ## Etapa 2
 

@@ -43,14 +43,14 @@ Este documento es para el equipo del proyecto, para revisores institucionales y 
 | Capacidad y límites | 8 | 6 | 2 | 0 |
 | Disponibilidad y recuperación | 5 | 0 | 2 | 3 |
 | Seguridad | 6 | 4 | 1 | 1 |
-| Privacidad | 5 | 1 | 3 | 1 |
+| Privacidad | 5 | 1 | 4 | 0 |
 | Accesibilidad | 5 | 3 | 1 | 1 |
 | Idioma e internacionalización | 3 | 2 | 1 | 0 |
 | Compatibilidad | 3 | 1 | 2 | 0 |
 | Mantenibilidad | 5 | 4 | 0 | 1 |
 | Observabilidad | 3 | 0 | 2 | 1 |
 | Costos de IA | 4 | 2 | 2 | 0 |
-| **Total** | **55** | **28** | **19** | **8** |
+| **Total** | **55** | **28** | **20** | **7** |
 
 Conteo medido el 2026-11-12 con `awk` sobre la columna de estado de cada fila RNF, por sección; «cumple (solo dev)» cuenta como cumple.
 
@@ -142,7 +142,7 @@ El detalle está en [protección de datos](../06-privacidad-y-seguridad/protecci
 | RNF-28 | El texto sin anonimizar no sale a proveedores externos. | parcial | En dev, el detector corre en el Spark, que pertenece a otra organización; con el respaldo `hosted` por defecto, el texto puede ir a OpenRouter. ai-service siempre pide a OpenRouter `provider.zdr: true` (solo proveedores sin retención; nunca reintenta sin esa marca), así que el texto sale pero no se retiene (leído en `services/ai-service/src/services/ai/router/adapters/openrouter.ts`). En staging no hay URL del Spark: con `hosted` va a OpenRouter; con `none`, desde el 2026-11-10, no va a ningún lado y el documento queda retenido (`detector.ts`, commit 14e958e2, desplegado). Dev usa `hosted` por decisión del 2026-11-09, confirmada el 2026-11-10. |
 | RNF-29 | Cada persona puede borrar sus conversaciones y documentos, y ese borrado llega al servicio de IA. | parcial | Implementado para documentos y conversaciones (citado de la revisión de privacidad). No hay borrado de cuenta ni exportación de "mis datos". |
 | RNF-55 | Los datos que ya no hacen falta se borran en un plazo fijo. | parcial | Cuerpo de los avisos entre servicios (`ai_service_callbacks.raw_body`): se vacía a los 30 días con una tarea diaria; la fila se queda porque es la deduplicación (`apps/backend/src/lib/callbackRetention.ts`, arrancada en `payload.config.ts`; commit f8294d65, desplegado). Grafo: barrido diario de filas huérfanas (`lib/graph/orphanJanitor.ts`, arrancado en `payload.config.ts`; commits 3d971397 y fdee543a, desplegados). Volcados de base de datos: se quedan los 7 más recientes por entorno, en el servidor y en la copia fuera de él; es un paso manual del runbook, no una tarea programada. Primera purga el 2026-11-10 hacia las 20:30 UTC: 52 volcados de dev borrados, 1231.3 MB liberados en cada lado (medido, citado de `infra/fleet/edc-1.md`). Sin plazo: documentos, conversaciones y cuentas, que duran hasta que alguien los borra. |
-| RNF-30 | La plataforma informa y recaba consentimiento antes de tratar datos personales (aviso de privacidad y comprobante ético). | no cumple | No existe aviso, consentimiento informado ni comprobante con folio (citado de la revisión de privacidad). Ver la historia pendiente P.1 en [historias de usuario](historias-de-usuario.md#historias-del-brief-no-implementadas). |
+| RNF-30 | La plataforma informa y recaba consentimiento antes de tratar datos personales (aviso de privacidad y comprobante ético). | parcial | Desde el 2026-11-12: casilla de consentimiento por recurso al subir (`apps/web/src/lib/uploadConsent.ts`), constancia con folio en `/documentos/<id>/constancia` y aviso en `/privacidad` (`apps/web/src/lib/privacyNotice.ts`); commit [HECHO PENDIENTE: SHA integrado en main]. Falta la validación jurídica: el aviso es un borrador con huecos `[POR DEFINIR]`. Ver la historia P.1 en [historias de usuario](historias-de-usuario.md#historias-del-brief-no-implementadas). |
 
 ## 6. Accesibilidad
 
