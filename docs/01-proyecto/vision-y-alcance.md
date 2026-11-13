@@ -147,7 +147,7 @@ Lo que se entregó y el brief no pedía:
 
 | Criterio del brief v1 §4 | Cumplimiento |
 |---|---|
-| Una persona puede contribuir de punta a punta y recibir su comprobante | **Cumplido** desde el 2026-11-12. La contribución de punta a punta funciona (subir, anonimizar, publicar, consultar) y cada subida tiene su constancia con folio |
+| Una persona puede contribuir de punta a punta y recibir su comprobante | **Cumplido** desde el 2026-11-12. La contribución de punta a punta funciona (subir, anonimizar, publicar, consultar) y cada subida desde el 2026-11-12 tiene su constancia con folio, que ve quien subió. Cómo recibe su folio la persona que da un testimonio subido por otra está pendiente |
 | El acervo queda organizado por temática y por perfil | **Parcial.** Organizado por ecosistema, por tipo (`contentKind`) y por `tema`. No por perfil |
 | Existe al menos un ciclo voz, resonancia, auditoría y veredicto documentado | **No cumplido.** Hay voz y resonancia; falta la auditoría comunitaria |
 

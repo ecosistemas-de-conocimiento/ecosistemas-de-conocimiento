@@ -19,7 +19,7 @@ Resumen para quien redacte el informe de la Etapa 1. Cada fila remite al documen
 
 ## 2. Entregables de la Etapa 1
 
-Estados: **Implementado** (en la rama `main`, desplegado en dev), **Planeado** (con plantilla o diseño, sin código). La lista sale de [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.1, §6.2 y §7; cada ruta y archivo se comprobó en el árbol de `main` el 2026-11-12 (medido con `ls` y `grep`).
+Estado: **Implementado** (en la rama `main`, desplegado en dev). La lista sale de [Visión y alcance](01-proyecto/vision-y-alcance.md) §6.1, §6.2 y §7; cada ruta y archivo se comprobó en el árbol de `main` el 2026-11-12 (medido con `ls` y `grep`).
 
 ### 2.1 Entregable 1: plataforma del repositorio
 
@@ -64,7 +64,7 @@ Criterios de éxito: contribución de punta a punta **implementado**, acervo por
 | La app en dev | `https://dev.ecosistemasdeconocimiento.com` (web) y `https://api.dev.ecosistemasdeconocimiento.com` (backend) | Citado de [Infraestructura y entornos](05-infraestructura/infraestructura-y-entornos.md) |
 | Videos de demostración | V1 (00:38), V2 (10:28 a 17:22) y V3 (18:35 a 19:15), grabados el 2026-10-28 contra dev, por rol, en `../evidencia/` (carpeta del proyecto); especificaciones en `apps/web/e2e/evidencia/` | Citado de [Cronología](01-proyecto/cronologia-e-hitos.md) §6.4, con duraciones medidas con ffprobe |
 | Evaluaciones de IA | `/admin/evals` (primera corrida 2026-10-29: hit@5 de 0.875 a 1.0, soporte de citas de 0.811 a 0.945 por ecosistema), GraphRAG, recuperación, `cite-eval`, detector y el kit diferencial de la compuerta (26 516 casos) | Citado de [Evaluaciones de IA](07-calidad/evaluaciones-de-ia.md) §2.4 y §9 |
-| Pruebas automatizadas | backend 6525, web 3133, ai-service 2176 unitarias más 383 de integración, antes del consentimiento por recurso; con el consentimiento, web 3176 de 3176 | Los primeros, citados del reporte de integración del land del 2026-11-12 anterior al consentimiento; el de web, medido con `vitest run` en `apps/web` el 2026-11-12 sobre el código desplegado. Cómo correrlas en [Estrategia de pruebas](07-calidad/estrategia-de-pruebas.md) |
+| Pruebas automatizadas | backend 6525, web 3133, ai-service 2176 unitarias más 383 de integración, antes del consentimiento por recurso; con el consentimiento, web 3176 de 3176 | Los primeros, citados del reporte de integración del land del 2026-11-12 anterior al consentimiento; el de web, medido por el carril de código con `vitest run` en `apps/web` el 2026-11-12 sobre el código desplegado. Cómo correrlas en [Estrategia de pruebas](07-calidad/estrategia-de-pruebas.md) |
 | Auditorías | Stack de IA (2026-10-17), código completo (2026-10-28), `main` (2026-11-10) | [Seguridad](06-privacidad-y-seguridad/seguridad.md) §5; [Cronología](01-proyecto/cronologia-e-hitos.md) §6.1 |
 
 ## 4. Correcciones posteriores al cierre (29 oct - 12 nov)

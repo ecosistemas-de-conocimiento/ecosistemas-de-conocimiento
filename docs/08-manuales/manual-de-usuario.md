@@ -203,7 +203,8 @@ El tipo se elige al crear la conversación y no cambia después.
 - **Pasos:**
   1. Abre el panel **Documentos** de la conversación.
   2. Pulsa **Subir documento** (o **Subir documento o audio**).
-  3. Elige el archivo.
+  3. Marca la casilla del aviso de privacidad. Es obligatoria y se pide en cada subida; para un testimonio, dice que la persona que lo da dio su consentimiento informado.
+  4. Pulsa **Elegir archivo** y elige el archivo.
 - **Resultado:** aparece una tarjeta con la placa **Borrador · solo tú** y el estado de lectura: En cola, Extrayendo el texto, Indexando, y al final **listo**.
 - **Notas:**
   - Tamaño máximo: 200 MiB por archivo (`apps/backend/src/collections/Media.ts`).
@@ -218,7 +219,8 @@ El tipo se elige al crear la conversación y no cambia después.
 - **Quién:** todos.
 - **Pasos:**
   1. En el panel Documentos pulsa **Nueva nota**.
-  2. Escribe el título y el contenido. Puedes usar Markdown.
+  2. Marca la casilla del aviso de privacidad y pulsa **Crear nota**.
+  3. Escribe el título y el contenido. Puedes usar Markdown.
 - **Resultado:** la nota se guarda sola mientras escribes.
 
 ### 2.14 Corregir una transcripción
@@ -316,6 +318,15 @@ El tipo se elige al crear la conversación y no cambia después.
   - Si apagas un interruptor en **Ajustes**, los documentos que lo heredan vuelven a revisarse solos. Encenderlo no cambia los documentos ya revisados.
   - Si apagas un interruptor, los nombres que se habían conservado salen de la Biblioteca y de las respuestas.
   - La pantalla nunca muestra qué nombres se quitaron.
+
+### 3.7 Ver la constancia de una subida
+
+- **Quién:** quien subió el documento (y la administración de la plataforma).
+- **Pasos:** en **Mis documentos**, en la fila del documento, pulsa el icono **Constancia**; para guardarla, pulsa **Descargar** (imprime o guarda como PDF desde el navegador).
+- **Resultado:** ves el folio (`EDC-AAAA-NNNNNN`), la fecha, la versión y el texto de la casilla que aceptaste.
+- **Notas:**
+  - Lo subido antes del 2026-11-12 dice «Sin registro de consentimiento».
+  - El aviso de privacidad está en `/privacidad`, enlazado desde la casilla, el inicio de sesión y la barra lateral. Es un borrador sin validación jurídica.
 
 ## 4. Biblioteca
 

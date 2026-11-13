@@ -368,7 +368,7 @@ flowchart TD
 
 - El responsable técnico del proyecto informaría a la Unidad de Transparencia del CIDE en cuanto confirme una vulneración de datos personales.
 - La notificación a las personas titulares diría, en lenguaje claro: qué pasó, qué datos se afectaron, qué hizo el proyecto, qué puede hacer la persona y a quién preguntar.
-- Para testimonios, la notificación llegaría por la persona facilitadora y por el folio de la constancia (**Implementado**), porque la plataforma no sabe quién habló.
+- Para testimonios, la notificación llegaría por la persona facilitadora y por el folio de la constancia, porque la plataforma no sabe quién habló. El folio existe (**Implementado**); cómo lo recibe la persona que da el testimonio está **Pendiente**.
 - La notificación a la autoridad seguiría la ley aplicable (ver [nota de marco legal](aviso-de-privacidad-y-consentimiento.md#a-nota-de-marco-legal)).
 
 ### 6.4 Herramientas que ayudan
