@@ -101,6 +101,7 @@ describe.skipIf(audioDown)('audio transcription', () => {
 
     startedAt = Date.now()
     const doc = await apiJson(world.alice.caller, 'POST', '/api/documents', {
+      uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
       name: `${world.ns} grabación`,
       kind: 'audio',
       mode: 'rag-retrieve',

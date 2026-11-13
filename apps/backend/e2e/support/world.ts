@@ -152,6 +152,7 @@ export async function createTextDocument(
   extra: Record<string, unknown> = {},
 ): Promise<{ id: number; publicationStatus: string; organization: unknown }> {
   const res = await apiJson(caller, 'POST', '/api/documents', {
+    uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
     name,
     kind: 'markdown',
     mode: 'rag-retrieve',

@@ -16,6 +16,7 @@ import { MAX_MEDIA_UPLOAD_BYTES, Media } from './collections/Media'
 import { AiServiceCallbacks } from './collections/AiServiceCallbacks'
 import { AnonymisationReviews } from './collections/AnonymisationReviews'
 import { AnonymisationSettingChanges } from './collections/AnonymisationSettingChanges'
+import { ConsentReceipts } from './collections/ConsentReceipts'
 import { Organizations } from './collections/Organizations'
 import { Teams } from './collections/Teams'
 import { Projects } from './collections/Projects'
@@ -187,6 +188,8 @@ export default buildConfig({
     // Append-only; see the collection.
     AnonymisationReviews,
     AnonymisationSettingChanges,
+    // One row per upload consent (`lib/uploadConsent.ts`). Append-only.
+    ConsentReceipts,
     /**
      * The corpus graph. Written ONLY by the extraction pipeline
      * (`lib/graph/writer.ts`); every create/update/delete access rule is

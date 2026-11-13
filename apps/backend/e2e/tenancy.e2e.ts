@@ -72,6 +72,7 @@ describe.skipIf(stackDown)('tenancy and isolation', () => {
     // Both are corpus-name inputs. Accepting either would let one person file a
     // document into another's private draft corpus.
     const res = await apiJson(world.alice.caller, 'POST', '/api/documents', {
+      uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
       name: `${world.ns} forged`,
       kind: 'markdown',
       bodyMarkdown: 'x',
@@ -209,6 +210,7 @@ describe.skipIf(stackDown)('tenancy and isolation', () => {
     // ⚠ This is INJECTION, not disclosure: the attacker could never read the row
     // back, but the victim's assistant would answer from a document they chose.
     const res = await apiJson(world.carol.caller, 'POST', '/api/documents', {
+      uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
       name: `${world.ns} injected`,
       kind: 'markdown',
       bodyMarkdown: 'payload',

@@ -86,6 +86,7 @@ async function createPdfDocument(
   expect(media.status, media.text.slice(0, 300)).toBe(201)
 
   const doc = await apiJson(caller, 'POST', '/api/documents', {
+    uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
     name,
     kind: 'pdf',
     mode: 'rag-retrieve',

@@ -44,6 +44,7 @@ vi.mock('@/lib/aiClient', () => ({
 // Every migration, not the baseline alone: the booted config expects the
 // columns later ones add (`documents.uploaded_in_session_id`).
 import { migrations } from '../migrations'
+import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 
 const CONTAINER = `edc-backend-conv-uploads-pg-${process.pid}`
 const IMAGE = 'postgres:16-alpine'
@@ -505,7 +506,7 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
     const owner = await payload.findByID({ collection: 'users', id: 1, overrideAccess: true })
     const created = await payload.create({
       collection: 'documents',
-      data: { name: 'chat upload', kind: 'markdown', session: [12], uploadedInSession: 13 } as never,
+      data: { uploadConsentVersion: UPLOAD_CONSENT_VERSION, name: 'chat upload', kind: 'markdown', session: [12], uploadedInSession: 13 } as never,
       overrideAccess: false,
       user: owner,
     })
@@ -829,7 +830,7 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
 
     const created = await payload.create({
       collection: 'documents',
-      data: { name: 'loose upload', kind: 'markdown', uploadedInSession: 11 } as never,
+      data: { uploadConsentVersion: UPLOAD_CONSENT_VERSION, name: 'loose upload', kind: 'markdown', uploadedInSession: 11 } as never,
       overrideAccess: false,
       user: owner,
     })

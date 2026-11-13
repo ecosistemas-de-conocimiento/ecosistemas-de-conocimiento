@@ -39,6 +39,7 @@ import { DB_POOL_CONNECTION_TIMEOUT_MS } from '@/lib/dbPool'
 import { resolveForOrganization, resolvePrincipal } from '@/lib/permissions'
 import { sessionMemberships } from '@/lib/roles'
 import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, type RealPostgres } from '@/lib/testing/realPostgres'
+import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 
 type Pool = {
   options: { max: number; connectionTimeoutMillis?: number }
@@ -452,6 +453,7 @@ describe.skipIf(!dockerOk)('writes on one free connection', () => {
           url: '/api/documents',
           before: () => upload(MEMO),
           body: (media: number) => ({
+            uploadConsentVersion: UPLOAD_CONSENT_VERSION,
             session: [1],
             kind: 'markdown',
             contentKind: 'documento',
@@ -469,7 +471,7 @@ describe.skipIf(!dockerOk)('writes on one free connection', () => {
           method: 'POST',
           url: '/api/documents',
           before: () => upload(MEMO),
-          body: (media: number) => ({ session: [], organization: ECO_A, kind: 'markdown', contentKind: 'documento', name: 'b.md', mediaFile: media, ingestStatus: 'pending' }),
+          body: (media: number) => ({ uploadConsentVersion: UPLOAD_CONSENT_VERSION, session: [], organization: ECO_A, kind: 'markdown', contentKind: 'documento', name: 'b.md', mediaFile: media, ingestStatus: 'pending' }),
           status: 201,
         },
       ],
@@ -513,7 +515,7 @@ describe.skipIf(!dockerOk)('writes on one free connection', () => {
           before: async () => {
             const media = await upload(MEMO)
             const res = await rest('POST', '/api/documents', await tokenFor(MEMO), {
-              session: [1], kind: 'markdown', contentKind: 'documento', name: 'c.md', mediaFile: media, ingestStatus: 'pending',
+              uploadConsentVersion: UPLOAD_CONSENT_VERSION, session: [1], kind: 'markdown', contentKind: 'documento', name: 'c.md', mediaFile: media, ingestStatus: 'pending',
             })
             expect(res.status).toBe(201)
             await pg.db.execute(sql`INSERT INTO ratings (message_id, user_id, session_id, organization_id, stars) VALUES (1, 3, 1, 1, 4)`)
@@ -551,6 +553,7 @@ describe.skipIf(!dockerOk)('writes on one free connection', () => {
     },
     'anonymisation-reviews': denied('anonymisation-reviews', PATO),
     'anonymisation-setting-changes': denied('anonymisation-setting-changes', PATO),
+    'consent-receipts': denied('consent-receipts', PATO),
     graphEntities: denied('graphEntities', PATO),
     graphMentions: denied('graphMentions', PATO),
     graphRelations: denied('graphRelations', PATO),

@@ -211,6 +211,7 @@ describe.skipIf(noSeed)('🔴 a published testimonio, read by a colleague', () =
     // Point the row at an object that is not there, so the extractor's read fails.
     exec(`update media set prefix = 'e2e-missing' where id = :'id'`, { id: Number(media.body.doc.id) })
     const created = await apiJson(world.alice.caller, 'POST', '/api/documents', {
+      uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
       name: 'Testimonio sin archivo',
       kind: 'pdf',
       mode: 'rag-retrieve',

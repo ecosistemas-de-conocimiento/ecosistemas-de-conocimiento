@@ -31,6 +31,7 @@ vi.mock('@/lib/aiClient', () => {
 })
 
 import { migrations } from '../migrations'
+import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 
 const CONTAINER = `edc-backend-long-text-pg-${process.pid}`
 const IMAGE = 'postgres:16-alpine'
@@ -144,7 +145,7 @@ describe.skipIf(!dockerOk)('an ~800k-character document, on a real Postgres', ()
       collection: 'documents',
       overrideAccess: false,
       user,
-      data: { kind: 'markdown', name: 'largo', bodyMarkdown: longText(LONG), session: [] } as never,
+      data: { uploadConsentVersion: UPLOAD_CONSENT_VERSION, kind: 'markdown', name: 'largo', bodyMarkdown: longText(LONG), session: [] } as never,
     })
     // The pipeline's writes: server-side, like `runExtractAndIngest` and the gate.
     await payload.update({
@@ -172,7 +173,7 @@ describe.skipIf(!dockerOk)('an ~800k-character document, on a real Postgres', ()
       collection: 'documents',
       overrideAccess: false,
       user,
-      data: { kind: 'markdown', name: 'tope', bodyMarkdown: 'hola', session: [] } as never,
+      data: { uploadConsentVersion: UPLOAD_CONSENT_VERSION, kind: 'markdown', name: 'tope', bodyMarkdown: 'hola', session: [] } as never,
     })
     await expect(
       payload.update({

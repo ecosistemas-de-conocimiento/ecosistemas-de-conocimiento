@@ -36,6 +36,7 @@ import {
   startRealPostgres,
   type RealPostgres,
 } from '../lib/testing/realPostgres'
+import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 
 if (!dockerOk) console.warn('[Documents.auditLaneA.pg.test] docker is not usable — the real-Postgres tests SKIP.')
 
@@ -61,7 +62,7 @@ async function createAs(userId: number, data: Record<string, unknown>) {
     overrideAccess: false,
     user: await userRow(userId),
     context: { __skipDocsExtract: true },
-    data: { kind: 'pdf', name: 'archivo', session: [], ...data } as never,
+    data: { uploadConsentVersion: UPLOAD_CONSENT_VERSION, kind: 'pdf', name: 'archivo', session: [], ...data } as never,
   })
 }
 

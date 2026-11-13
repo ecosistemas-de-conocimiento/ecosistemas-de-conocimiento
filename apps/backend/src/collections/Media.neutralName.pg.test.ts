@@ -32,6 +32,7 @@ import {
 } from '@/lib/testing/realPostgres'
 
 import { neutralMediaFilename } from './Media'
+import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 
 const PASSWORD = 'neutral-name-test-pw'
 // Payload's default `staticDir` for `media` is the slug, relative to cwd.
@@ -125,7 +126,7 @@ describe.skipIf(!dockerOk)('upload filename on a real Postgres', () => {
     const owner = await payload.findByID({ collection: 'users', id: 1, overrideAccess: true })
     const doc = await payload.create({
       collection: 'documents',
-      data: { name: 'Entrevista', kind: 'markdown', ingestStatus: 'pending', mediaFile: id } as never,
+      data: { uploadConsentVersion: UPLOAD_CONSENT_VERSION, name: 'Entrevista', kind: 'markdown', ingestStatus: 'pending', mediaFile: id } as never,
       overrideAccess: false,
       user: owner,
     })

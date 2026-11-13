@@ -25,6 +25,7 @@ import type { Payload, SanitizedConfig } from 'payload'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, type RealPostgres } from '@/lib/testing/realPostgres'
+import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 
 const PASSWORD = 'burst-pw'
 const MEDIA_DIR = path.resolve(process.cwd(), 'media')
@@ -127,6 +128,7 @@ describe.skipIf(!dockerOk)('one member’s burst of writes', () => {
       const doc = ((await media.json()) as { doc: { id: number; filename: string } }).doc
       written.push(doc.filename)
       return rest('POST', '/api/documents', {
+        uploadConsentVersion: UPLOAD_CONSENT_VERSION,
         session: [1],
         kind: 'markdown',
         contentKind: 'documento',
