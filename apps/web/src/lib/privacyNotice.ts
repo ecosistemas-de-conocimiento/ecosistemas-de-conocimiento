@@ -318,8 +318,10 @@ export const DERECHOS: NoticePart = {
             'Documentos que acrediten la identidad y, si aplica, la identidad y la personalidad del representante.',
             'Si es posible, el área que trata los datos. Para EDC: «plataforma Ecosistemas de Conocimiento, proyecto IH-2025-I-445».',
             // Source: «…el folio del comprobante [POR DEFINIR: el folio es
-            // Pendiente]». The folio now exists: it is on each upload's constancia.
-            'Descripción clara de los datos, salvo en el acceso. En EDC: el correo de la cuenta o, para un testimonio, el folio de su constancia (EDC-AAAA-NNNNNN).',
+            // Pendiente]». The folio exists (EDC-AAAA-NNNNNN on each constancia),
+            // but only the uploader can open a constancia: how the speaker gets
+            // it is still the owner's call (audit S3, 2026-11-12).
+            'Descripción clara de los datos, salvo en el acceso. En EDC: el correo de la cuenta o, para un testimonio, el folio del comprobante (EDC-AAAA-NNNNNN) [POR DEFINIR: cómo recibe su folio la persona que da el testimonio].',
             'El derecho que se ejerce o lo que se pide.',
             'Cualquier elemento que ayude a localizar los datos.',
           ],
@@ -355,10 +357,13 @@ export const DERECHOS: NoticePart = {
       ],
     },
     {
-      heading: 'Causas de improcedencia (art. 49)',
+      heading: 'Causas de improcedencia (art. 49, únicas)',
       blocks: [
         {
           p: 'Falta de acreditación; los datos no están en posesión del responsable; impedimento legal; lesión de derechos de un tercero; obstrucción de actuaciones judiciales o administrativas; resolución de autoridad que lo restrinja; cancelación u oposición ya realizada; incompetencia; protección de intereses de la persona titular; cumplimiento de obligaciones de la persona titular; integridad del Estado; información de entidades financieras supervisadas.',
+        },
+        {
+          p: 'En EDC, la causa «lesionar derechos de un tercero» puede aplicar en el acceso a un testimonio que menciona a otras personas [POR DEFINIR: lo valida jurídico].',
         },
       ],
     },
@@ -374,7 +379,7 @@ export const DERECHOS: NoticePart = {
       heading: 'Retiro de un testimonio',
       blocks: [
         {
-          p: 'Es una cancelación (art. 40) o una revocación del consentimiento. La plataforma no sabe quién habló, así que el folio es el único medio para localizar el testimonio. Si la persona no conserva su folio, puede aplicar la causa del art. 49 fr. II, porque el responsable no puede identificar los datos de esa persona. Lo que ya se usó, anonimizado, en análisis publicados no se puede deshacer.',
+          p: 'Es una cancelación (art. 40) o una revocación del consentimiento. La plataforma no sabe quién habló, así que el folio es el único medio para localizar el testimonio. Si la persona no conserva su folio, puede aplicar la causa del art. 49 fr. II, porque el responsable no puede identificar los datos de esa persona [POR DEFINIR: lo valida jurídico]. Lo que ya se usó, anonimizado, en análisis publicados no se puede deshacer.',
         },
       ],
     },

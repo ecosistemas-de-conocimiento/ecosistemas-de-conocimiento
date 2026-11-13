@@ -21,7 +21,6 @@ import type { CollectionConfig, Where } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { CONTENT_KINDS } from '../lib/contentKind'
-import { organizationIdsForUserWithPermission, PERMISSIONS } from '../lib/permissions'
 
 export const ConsentReceipts: CollectionConfig = {
   slug: 'consent-receipts',
@@ -37,14 +36,17 @@ export const ConsentReceipts: CollectionConfig = {
    */
   custom: { gatedQueryPrefix: 'document.' },
   access: {
-    // The uploader's own rows, `holds:review` in that ecosistema, or a platform admin.
-    read: async ({ req }) => {
+    // 🔴 The uploader's own rows, or a platform admin. NOT `holds:review`: a
+    // receipt links `actor` to a document id, and the hold list shows reviewers
+    // that id without `uploadedBy` on purpose (`lib/holdReview.ts`), because
+    // who filed a testimonio next to what it says helps re-identify the
+    // speaker (audit S1, 2026-11-12).
+    read: ({ req }) => {
       const user = req.user
       if (!user || !isActiveUser(user)) return false
       if (isPlatformAdminUser(user)) return true
-      const ids = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.holdsReview, req)
       const own: Where = { actor: { equals: user.id } }
-      return ids.length === 0 ? own : { or: [own, { organization: { in: ids } }] }
+      return own
     },
     create: () => false,
     update: () => false,

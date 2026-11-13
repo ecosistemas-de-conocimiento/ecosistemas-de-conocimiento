@@ -43,7 +43,7 @@ describe('/documentos/[id]/constancia page', () => {
 
   it('receipt null says there is no consent record', () => {
     const b = body({ documentId: 8, receipt: null, document: { ...document, title: 'Viejo' } });
-    expect(b).toContain('Sin registro de consentimiento (anterior al 2026-11-12)');
+    expect(b).toContain('Sin registro de consentimiento');
     expect(b).not.toContain('constancia-folio');
   });
 

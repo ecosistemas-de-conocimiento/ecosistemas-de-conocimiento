@@ -161,7 +161,7 @@ describe('🔴 MicButton — the checkbox before the microphone opens', () => {
     }
   }
 
-  it('first tap shows the testimonio checkbox and opens no mic; ticked, it records and uploads with the version', async () => {
+  it('first tap shows the checkbox for the kind it will upload and opens no mic; ticked, it records and uploads with the version', async () => {
     const getUserMedia = vi.fn(async () => ({ getTracks: () => [] }) as unknown as MediaStream);
     Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia }, configurable: true });
     vi.stubGlobal('MediaRecorder', FakeRecorder);
@@ -173,7 +173,9 @@ describe('🔴 MicButton — the checkbox before the microphone opens', () => {
     q(root, 'mic-start')!.click();
     await settle();
     expect(getUserMedia).not.toHaveBeenCalled();
-    expect(q(root, 'mic-consent')!.textContent).toContain(uploadConsentLine('testimonio')!.after.trim());
+    // No voces permission here: it uploads a documento, so it shows that line
+    // (audit S2: the line shown must be the line the constancia reproduces).
+    expect(q(root, 'mic-consent')!.textContent).toContain(uploadConsentLine('documento')!.after.trim());
     expect(q<HTMLButtonElement>(root, 'mic-consent-go')!.disabled).toBe(true);
 
     q(root, 'mic-consent-check')!.click();
@@ -186,6 +188,7 @@ describe('🔴 MicButton — the checkbox before the microphone opens', () => {
     q(root, 'mic-stop')!.click();
     await settle();
     expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]![2]).toBe('documento');
     expect(upload.mock.calls[0]![4]).toBe(UPLOAD_CONSENT_VERSION);
     vi.unstubAllGlobals();
   });

@@ -212,7 +212,7 @@
 <span class="mic">
 {#if asking && !recording}
   <div class="consent-pop" data-testid="mic-consent">
-    <UploadConsentCheck bind:checked={consent} kind="testimonio" testId="mic-consent-check" />
+    <UploadConsentCheck bind:checked={consent} kind={canUploadVoces ? 'testimonio' : 'documento'} testId="mic-consent-check" />
     <div class="pop-foot">
       <Button variant="ghost" size="sm" label="Cancelar" onClick={() => (asking = false)} />
       <Button size="sm" label="Grabar" disabled={!consent} dataTestId="mic-consent-go" onClick={begin} />

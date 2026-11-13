@@ -78,7 +78,7 @@
     {/if}
     <p class="note">Aviso de privacidad: <a href={PRIVACY_PATH}>{PRIVACY_PATH}</a></p>
   {:else}
-    <p data-testid="constancia-none">Sin registro de consentimiento (anterior al 2026-11-12)</p>
+    <p data-testid="constancia-none">Sin registro de consentimiento</p>
     <dl>
       <dt>Documento n.º</dt>
       <dd>{c.documentId}</dd>

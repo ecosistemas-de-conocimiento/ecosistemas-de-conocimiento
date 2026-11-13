@@ -8,7 +8,7 @@
  *   · server creates (no user, or `overrideAccess`) → no receipt, no error;
  *   · a document delete keeps the receipt (`document` NULL, the snapshot kept);
  *   · nobody creates, edits or deletes a receipt through REST; reads are the
- *     uploader's own rows, `holds:review` and the platform admin;
+ *     uploader's own rows and the platform admin (never `holds:review`);
  *   · a receipt has no text column;
  *   · `GET /api/documents/:id/constancia`.
  *
@@ -177,12 +177,12 @@ describe.skipIf(!dockerOk)('upload consent receipts', () => {
     expect(await receipts()).toEqual([r])
   })
 
-  it('reads: the uploader its own rows, holds:review its ecosistema, the platform admin all; another member none', async () => {
+  it('reads: the uploader its own rows, the platform admin all; another member and a holds:review reviewer none', async () => {
     await call('POST', '/api/documents', tokens.ana, note({ uploadConsentVersion: UPLOAD_CONSENT_VERSION }))
     const seen = async (who: string) =>
       ((await (await call('GET', '/api/consent-receipts?depth=0', tokens[who])).json()) as { docs?: unknown[] }).docs?.length ?? 0
     expect(await seen('ana')).toBe(1)
-    expect(await seen('rita')).toBe(1)
+    expect(await seen('rita')).toBe(0)
     expect(await seen('root')).toBe(1)
     expect(await seen('beto')).toBe(0)
   })
