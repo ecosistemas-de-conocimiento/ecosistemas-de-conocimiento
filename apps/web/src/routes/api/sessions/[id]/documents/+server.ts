@@ -94,6 +94,8 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     /* allow empty */
   }
   const uploadConsentVersion = parseUploadConsentVersion(body.uploadConsentVersion);
+  // 🔴 Refused here too; the backend still checks (400 / 409).
+  if (uploadConsentVersion === undefined) return json({ error: 'upload_consent_required' }, { status: 400 });
   const res = await backendFetch(locals.token, '/api/documents', {
     method: 'POST',
     body: JSON.stringify({
@@ -105,8 +107,8 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       bodyMarkdown: body.bodyMarkdown ?? '',
       isPinned: body.isPinned ?? true,
       ingestStatus: 'n/a',
-      // 🔴 The per-resource consent: forwarded when ticked; the backend decides.
-      ...(uploadConsentVersion !== undefined ? { uploadConsentVersion } : {}),
+      // 🔴 The per-resource consent the person ticked; the backend decides.
+      uploadConsentVersion,
     }),
   });
   const out = await res.json().catch(() => ({}));

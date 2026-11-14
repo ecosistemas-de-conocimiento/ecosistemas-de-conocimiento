@@ -54,6 +54,7 @@ describe('uploadDocument — content sniffing', () => {
   it('refuses an audio file renamed a.pdf before anything goes up', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const form = new FormData();
+    form.append('uploadConsentVersion', '1');
     form.append('file', new File([MP3], 'a.pdf', { type: 'application/pdf' }));
     form.append('contentKind', 'documento');
 
@@ -67,6 +68,7 @@ describe('uploadDocument — content sniffing', () => {
 
   it('refuses a PDF renamed acta.docx', async () => {
     const form = new FormData();
+    form.append('uploadConsentVersion', '1');
     form.append('file', new File([PDF], 'acta.docx', { type: '' }));
     form.append('contentKind', 'documento');
 
@@ -91,6 +93,7 @@ describe('uploadDocument — which ecosistema the create names', () => {
       new Response(JSON.stringify({ doc: { id: 21 } }), { status: 201 }),
     );
     const form = new FormData();
+    form.append('uploadConsentVersion', '1');
     form.append('file', new File([PDF], 'informe.pdf', { type: 'application/pdf' }));
     form.append('contentKind', 'documento');
     for (const [k, v] of Object.entries(extra)) form.append(k, v);
@@ -141,6 +144,7 @@ describe('uploadDocument — spreadsheets and web pages', () => {
       new Response(JSON.stringify({ doc: { id: 21 } }), { status: 201 }),
     );
     const form = new FormData();
+    form.append('uploadConsentVersion', '1');
     form.append('file', file);
     form.append('contentKind', 'documento');
     const res = await uploadDocument('tok', form, { session: [], defaultPinned: false, organization: '4' });
@@ -181,6 +185,7 @@ describe('uploadDocument — spreadsheets and web pages', () => {
   ])('🔴 refuses %s before anything goes up', async (_label, file) => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const form = new FormData();
+    form.append('uploadConsentVersion', '1');
     form.append('file', file);
     form.append('contentKind', 'documento');
     const res = await uploadDocument('tok', form, { session: [], defaultPinned: false });
@@ -219,6 +224,7 @@ describe('🔴 uploadDocument — a refused create deletes the stored file (audi
 
   const pdfForm = () => {
     const form = new FormData();
+    form.append('uploadConsentVersion', '1');
     form.append('file', new File([PDF], 'informe.pdf', { type: 'application/pdf' }));
     form.append('contentKind', 'documento');
     return form;

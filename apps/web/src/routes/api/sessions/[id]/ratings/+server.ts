@@ -152,7 +152,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
  * guessed id. We still look the row up by message first, so the client never
  * names a rating id at all.
  */
-export const DELETE: RequestHandler = async ({ locals, params, request }) => {
+export const DELETE: RequestHandler = async ({ locals, request }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
 
   let incoming: { messageId?: unknown } = {};

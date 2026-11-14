@@ -15,7 +15,8 @@ export type UploadResult = { status: number; body: Record<string, unknown> };
 /**
  * 🔴 The per-resource upload consent (`$lib/uploadConsent.ts`): the version the
  * person ticked, as sent by the browser (a form field or a JSON property).
- * Forwarded as is; THE BACKEND decides (400 without it, 409 on another version).
+ * Without one the BFF answers 400 itself, before the bytes go up; with one it
+ * is forwarded as is and THE BACKEND decides (400 without it, 409 on another version).
  * Anything that is not a positive integer is "not sent".
  */
 export function parseUploadConsentVersion(raw: unknown): number | undefined {
@@ -211,6 +212,11 @@ export async function uploadDocument(
     return { status: 400, body: { error: 'unsupported_kind', reason: 'content_mismatch', kind } };
   }
 
+  // 🔴 No consent version, no bytes on the backend's disk: the backend would
+  // refuse the create anyway, after the file was stored (then discarded).
+  const uploadConsentVersion = parseUploadConsentVersion(form.get('uploadConsentVersion'));
+  if (uploadConsentVersion === undefined) return { status: 400, body: { error: 'upload_consent_required' } };
+
   // Payload's `POST /api/media` wants multipart with a `file` field. No
   // content-type header: fetch generates the boundary.
   const mediaForm = new FormData();
@@ -239,7 +245,6 @@ export async function uploadDocument(
 
   const name = form.get('name');
   const pinnedRaw = form.get('isPinned');
-  const uploadConsentVersion = parseUploadConsentVersion(form.get('uploadConsentVersion'));
   const docRes = await backendFetch(token, '/api/documents', {
     method: 'POST',
     body: JSON.stringify({
@@ -258,7 +263,7 @@ export async function uploadDocument(
       mediaFile: mediaId,
       isPinned: pinnedRaw === null ? opts.defaultPinned : pinnedRaw !== 'false',
       ingestStatus: 'pending',
-      ...(uploadConsentVersion !== undefined ? { uploadConsentVersion } : {}),
+      uploadConsentVersion,
     }),
   });
   const body = (await docRes.json().catch(() => ({}))) as Record<string, unknown>;

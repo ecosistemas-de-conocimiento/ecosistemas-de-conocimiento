@@ -2,8 +2,8 @@
  * P-07 (re-audit 2026-11-10): the lint rule that keeps a raw error's text out
  * of every log line (`apps/backend/eslint/noRawErrorLog.js`, shared), run
  * through the web's own `eslint.config.js` with the ESLint Node API, as
- * `pnpm lint` runs it. That config has no `.svelte` parser, so the last test
- * lints each component's `<script>` blocks here instead.
+ * `pnpm lint` runs it. The last test lints each component's `<script>` blocks
+ * too, the way the config's `svelteScripts` processor hands them to `pnpm lint`.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';

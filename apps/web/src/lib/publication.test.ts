@@ -16,7 +16,6 @@ import {
   publishGate,
   noteEdited,
   stampDraftProvenance,
-  type PublicationStatus,
 } from './publication';
 
 describe('the publication states', () => {

@@ -55,6 +55,14 @@ describe('isAudioUpload', () => {
     expect(isAudioUpload({ name: 'informe.pdf', type: 'application/pdf' })).toBe(false);
     expect(isAudioUpload({ name: 'notes.txt', type: 'text/plain' })).toBe(false);
   });
+
+  // The server settles documents first (`uploadFileKind`): the checkbox line
+  // and the cap must not call this a recording.
+  it('an audio MIME on a document name is a document', () => {
+    expect(isAudioUpload({ name: 'informe.pdf', type: 'audio/mpeg' })).toBe(false);
+    expect(isAudioUpload({ name: 'junta.m4a', type: 'application/pdf' })).toBe(false);
+    expect(maxUploadBytesFor({ name: 'informe.pdf', type: 'audio/mpeg' })).toBe(MAX_UPLOAD_BYTES);
+  });
 });
 
 describe('maxUploadBytesFor', () => {

@@ -60,3 +60,12 @@ export function uploadConsentText(
   const l = uploadConsentLine(kind, version);
   return l ? `${l.before}${l.link}${l.after}` : null;
 }
+
+/**
+ * Was a consent version given? A positive integer. The browser refuses to send
+ * a resource without one (the five entry points and `app` store), and so does
+ * the BFF before any byte reaches the backend; the backend still decides.
+ */
+export function hasUploadConsent(version: unknown): version is number {
+  return typeof version === 'number' && Number.isInteger(version) && version > 0;
+}

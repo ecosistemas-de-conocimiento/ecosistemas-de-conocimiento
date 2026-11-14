@@ -270,10 +270,8 @@
       { title: note.title, body: note.body, includeInContext: false },
       note.uploadConsentVersion,
     );
-    if (!created) {
-      toasts.push({ kind: 'error', title: 'No se pudo crear la nota', message: 'Inténtalo de nuevo en un momento.' });
-      return false;
-    }
+    // `newDoc` already said why (one notice, not two).
+    if (!created) return false;
     await app.detachDoc(sessionId, created.id);
     await app.loadOwnedDocs(filter);
     return true;

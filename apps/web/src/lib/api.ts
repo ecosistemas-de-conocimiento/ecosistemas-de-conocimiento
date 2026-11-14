@@ -1,5 +1,5 @@
 import { safeErrMessage } from '$lib/errorSummary';
-import type { Message, WorkingDoc, ContextRef, ContextScope, Provenance } from './types';
+import type { Message, ContextRef, ContextScope, Provenance } from './types';
 import { AI_UNAVAILABLE_MESSAGE, AI_UNAVAILABLE_CODE } from './aiMessages';
 import { ANSWER_TRUNCATED_CODE, EMPTY_ANSWER_CODE, isEmptyGeneration } from '@edc/chat-engine/core';
 

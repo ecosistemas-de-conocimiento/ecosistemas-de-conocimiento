@@ -120,6 +120,7 @@
     if (recording || saving || starting) return;
     asking = !asking;
     consent = false;
+    recordingConsent = undefined;
   }
 
   async function begin(): Promise<void> {
@@ -148,7 +149,8 @@
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (!file || recording || saving || starting) return;
+    // 🔴 Only after "Grabar" with the box ticked (`begin` sets it).
+    if (!file || recording || saving || starting || recordingConsent === undefined) return;
     starting = true;
     try {
       await start(await fileStream(file));
