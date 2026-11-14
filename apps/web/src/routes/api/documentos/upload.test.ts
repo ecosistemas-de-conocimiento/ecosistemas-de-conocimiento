@@ -30,6 +30,7 @@ function makeEvent(
 ) {
   const form = new FormData();
   if (file) form.append('file', file);
+  form.append('uploadConsentVersion', '1');
   const request = new Request('http://app.test/api/documentos', { method: 'POST', body: form });
   return {
     locals: { user, token: 'tok' },

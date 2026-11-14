@@ -41,10 +41,11 @@ function makeEvent(opts: {
   } as unknown as Parameters<typeof POST>[0];
 }
 
+/** With the consent ticked unless `extra` says otherwise (`uploadConsentVersion: ''` = none). */
 function multipartRequest(file: File, extra: Record<string, string> = {}): Request {
   const form = new FormData();
   form.append('file', file, file.name);
-  for (const [k, v] of Object.entries(extra)) form.append(k, v);
+  for (const [k, v] of Object.entries({ uploadConsentVersion: '1', ...extra })) if (v !== '') form.append(k, v);
   return new Request('http://chat.test/api/sessions/42/documents', {
     method: 'POST',
     body: form,
@@ -316,6 +317,7 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
     Object.defineProperty(file, 'size', { value: size, configurable: true });
     const form = new FormData();
     form.append('file', file, file.name);
+    form.append('uploadConsentVersion', '1');
     return {
       headers: new Headers({ 'content-type': 'multipart/form-data; boundary=vitest' }),
       formData: async () => form,
@@ -527,7 +529,7 @@ describe('POST /api/sessions/[id]/documents — session is an array', () => {
     const request = new Request('http://chat.test/api/sessions/42/documents', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Nota', bodyMarkdown: '# hola' }),
+      body: JSON.stringify({ name: 'Nota', bodyMarkdown: '# hola', uploadConsentVersion: 1 }),
     });
     const res = await POST(makeEvent({ request }));
 
@@ -548,7 +550,7 @@ describe('POST /api/sessions/[id]/documents — session is an array', () => {
     const request = new Request('http://chat.test/api/sessions/abc/documents', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Nota' }),
+      body: JSON.stringify({ name: 'Nota', uploadConsentVersion: 1 }),
     });
     await POST(makeEvent({ request, sessionId: 'abc-123' }));
 
@@ -664,11 +666,13 @@ describe('POST /api/sessions/[id]/documents — upload consent', () => {
     expect(sentBody().uploadConsentVersion).toBe(1);
   });
 
-  it('names no version when the browser sent none (the backend refuses)', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 9 } }), { status: 200 }));
-    mockedBackendFetch.mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 3 } }), { status: 201 }));
-    await POST(makeEvent({ request: multipartRequest(pdf()) }));
-    expect(sentBody()).not.toHaveProperty('uploadConsentVersion');
+  it('🔴 refuses a file without a version before any byte goes up', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const res = await POST(makeEvent({ request: multipartRequest(pdf(), { uploadConsentVersion: '' }) }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'upload_consent_required' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockedBackendFetch).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -688,11 +692,15 @@ describe('POST /api/sessions/[id]/documents — upload consent', () => {
     expect(sentBody().uploadConsentVersion).toBe(1);
   });
 
-  it('a note without it names none', async () => {
-    mockedBackendFetch.mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 3 } }), { status: 201 }));
-    await POST(makeEvent({ request: noteRequest({ uploadConsentVersion: 'sí' }) }));
-    expect(sentBody()).not.toHaveProperty('uploadConsentVersion');
-  });
+  it.each([{}, { uploadConsentVersion: 'sí' }, { uploadConsentVersion: 0 }])(
+    '🔴 refuses a note without a valid version (%o) and never calls the backend',
+    async (extra) => {
+      const res = await POST(makeEvent({ request: noteRequest(extra) }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'upload_consent_required' });
+      expect(mockedBackendFetch).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ['upload_consent_required', 400],

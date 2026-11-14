@@ -1,5 +1,6 @@
 import { safeErrMessage } from '$lib/errorSummary';
 import { consentErrorCopy, type UploadContentKind } from '$lib/uploadKind';
+import { hasUploadConsent } from '$lib/uploadConsent';
 import type {
   DocKind,
   IngestStatus,
@@ -211,6 +212,22 @@ function ownedDocFromBackend(row: Record<string, unknown>): WorkingDoc {
     graphError: typeof row.graphError === 'string' ? row.graphError : null,
     uploadedByCaller: row.uploadedByCaller === true,
   };
+}
+
+/** The note create's one failure notice (`newDoc`). */
+export const NOTE_CREATE_FAILED = {
+  title: 'No se pudo crear la nota',
+  message: 'Inténtalo de nuevo en un momento.',
+} as const;
+
+/**
+ * 🔴 No consent version, no request (`$lib/uploadConsent.ts`): the same notice
+ * the server's 400 would bring, without sending the resource.
+ */
+function consentGiven(version: number | undefined): boolean {
+  if (hasUploadConsent(version)) return true;
+  toasts.push({ kind: 'error', ...consentErrorCopy('upload_consent_required')! });
+  return false;
 }
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -1188,6 +1205,7 @@ class AppStore {
     seed?: Partial<WorkingDoc>,
     uploadConsentVersion?: number,
   ): Promise<WorkingDoc | null> {
+    if (!consentGiven(uploadConsentVersion)) return null;
     try {
       const data = await fetchJson<{ doc: Record<string, unknown> }>(
         `/api/sessions/${sessionId}/documents`,
@@ -1212,8 +1230,11 @@ class AppStore {
       return created;
     } catch (err) {
       console.error('newDoc failed', safeErrMessage(err));
-      const consent = consentErrorCopy(err instanceof Error ? err.message : null);
-      if (consent) toasts.push({ kind: 'error', ...consent });
+      // ONE notice, here: callers add none of their own.
+      toasts.push({
+        kind: 'error',
+        ...(consentErrorCopy(err instanceof Error ? err.message : null) ?? NOTE_CREATE_FAILED),
+      });
       return null;
     }
   }
@@ -1297,6 +1318,7 @@ class AppStore {
     /** The per-resource consent the person ticked (`$lib/uploadConsent.ts`); sent only when given. */
     uploadConsentVersion?: number,
   ): Promise<WorkingDoc | null> {
+    if (!consentGiven(uploadConsentVersion)) return null;
     // Client-side gate. Server enforces it too; this saves a round-trip and
     // gives the user a specific reason without a server 413.
     //
@@ -1306,16 +1328,7 @@ class AppStore {
     //
     // The SETTLED kind, the way the server settles it (documents, then
     // audio): a PDF the browser labels `audio/mp4` still gets the 20 MB cap.
-    const isDocument =
-      /\.(pdf|docx|xlsx|xls|csv|html?|md|markdown)$/i.test(file.name) ||
-      file.type === 'application/pdf' ||
-      file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-      file.type === 'application/vnd.ms-excel' ||
-      file.type === 'text/csv' ||
-      file.type === 'text/html' ||
-      file.type === 'text/markdown';
-    const cap = !isDocument && isAudioUpload(file) ? MAX_AUDIO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
+    const cap = isAudioUpload(file) ? MAX_AUDIO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
     if (file.size > cap) {
       toasts.push({
         kind: 'error',

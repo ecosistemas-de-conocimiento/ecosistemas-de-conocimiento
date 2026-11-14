@@ -60,8 +60,33 @@ export const UPLOAD_ACCEPT = [
   '.mkv',
 ].join(',');
 
-/** Does this look like audio? MIME first, filename as the fallback. */
+const DOCUMENT_EXTENSIONS = /\.(pdf|docx|xlsx|xls|csv|html?|md|markdown)$/i;
+const DOCUMENT_MIMES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'text/csv',
+  'text/html',
+  'text/markdown',
+]);
+
+/**
+ * Does the name or MIME make this a document? The server settles documents
+ * BEFORE audio (`uploadFileKind`), so the browser has to as well: an `audio/*`
+ * file named `a.pdf` is a PDF there (and its bytes decide), never a recording.
+ */
+export function isDocumentUpload(file: { name?: string; type?: string }): boolean {
+  return DOCUMENT_EXTENSIONS.test(file.name ?? '') || DOCUMENT_MIMES.has((file.type ?? '').toLowerCase());
+}
+
+/**
+ * Does this look like audio? MIME first, filename as the fallback. ⚠ A
+ * document by name or MIME never is ({@link isDocumentUpload}), so the consent
+ * line, the cap and the audio switch agree with what the server will file.
+ */
 export function isAudioUpload(file: { name?: string; type?: string }): boolean {
+  if (isDocumentUpload(file)) return false;
   const type = (file.type ?? '').toLowerCase();
   if (type.startsWith('audio/')) return true;
   // A phone or screen recording is a video container whose audio track is the

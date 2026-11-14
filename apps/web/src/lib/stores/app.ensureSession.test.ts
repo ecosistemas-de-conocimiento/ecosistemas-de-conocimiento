@@ -68,7 +68,7 @@ describe('ensureSession', () => {
 
   it('upload with no chat open: creates the conversation, then uploads into it', async () => {
     const sessionId = await app.ensureSession();
-    const doc = await app.uploadDoc(sessionId!, new File(['%PDF'], 'a.pdf', { type: 'application/pdf' }));
+    const doc = await app.uploadDoc(sessionId!, new File(['%PDF'], 'a.pdf', { type: 'application/pdf' }), 'documento', false, 1);
 
     expect(doc).not.toBeNull();
     expect(creates()).toHaveLength(1);

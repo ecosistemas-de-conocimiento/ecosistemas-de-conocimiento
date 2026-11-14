@@ -40,10 +40,20 @@
 // redirect to `/sign-in` (UX backlog #6) — it never renders the layout.
 export const AUTH_ROUTES: readonly string[] = ['/sign-in'];
 
+/**
+ * Public pages a visitor may read with or without a session (`/privacidad`,
+ * linked from sign-in and from every consent checkbox). They neither hydrate
+ * (every read would 401 without a session) nor reset: a signed-in person who
+ * opens the notice comes back to their conversations.
+ */
+export const PUBLIC_ROUTES: readonly string[] = ['/privacidad'];
+
+const normalise = (pathname: string): string =>
+  pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+
 /** Is this one of the unauthenticated routes? Trailing slash tolerated. */
 export function isAuthRoute(pathname: string): boolean {
-  const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
-  return AUTH_ROUTES.includes(path);
+  return AUTH_ROUTES.includes(normalise(pathname));
 }
 
 /**
@@ -66,6 +76,7 @@ export interface HydrationInput {
 }
 
 export function hydrationAction({ pathname, hydrated }: HydrationInput): HydrationAction {
+  if (PUBLIC_ROUTES.includes(normalise(pathname))) return 'none';
   if (isAuthRoute(pathname)) {
     // Leaving the app for the sign-in form is the end of a visit. Forget it,
     // so the NEXT sign-in hydrates instead of inheriting these conversations.

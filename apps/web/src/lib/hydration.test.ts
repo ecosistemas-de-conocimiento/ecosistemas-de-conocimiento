@@ -79,3 +79,16 @@ describe('hydrationAction', () => {
     expect(visit('/')).toBe('hydrate');
   });
 });
+
+describe('hydrationAction — public pages', () => {
+  // 🔴 `/privacidad` without a session: a hydration there is a 401 in the console.
+  it('never hydrates on the privacy notice', () => {
+    expect(hydrationAction({ pathname: '/privacidad', hydrated: false })).toBe('none');
+    expect(hydrationAction({ pathname: '/privacidad/', hydrated: false })).toBe('none');
+  });
+
+  it('keeps a signed-in visit when the notice is opened, and hydrates on the way in', () => {
+    expect(hydrationAction({ pathname: '/privacidad', hydrated: true })).toBe('none');
+    expect(hydrationAction({ pathname: '/', hydrated: false })).toBe('hydrate');
+  });
+});
