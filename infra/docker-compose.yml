@@ -336,17 +336,15 @@ services:
       #      is the provisioning script (`apps/backend/**`, another agent), and
       #      until it has run, root is the only identity that exists. Local
       #      demo: root is fine, every credential in `.env` is fake anyway.
-      #    ⚠ DEFAULTED, NOT `:?`-REQUIRED, AND THAT IS DELIBERATE. Every other
-      #      credential in this file uses `${VAR:?…}` so a missing value is a
-      #      loud failure. Here that would break the documented local-disk
-      #      fallback: turning object storage off means commenting all five
-      #      `S3_*` lines out of `.env`, and a `:?` guard would then refuse to
-      #      start the whole stack. So the store keeps a working root key even
-      #      when the app is not configured to use it. The value below is fake
-      #      and identical for everyone who clones this repo — same rule as the
-      #      rest of `.env.example`: safe only because this binds to localhost.
-      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID:-edclocal}
-      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY:-edclocal_secret_not_for_any_real_env}
+      #    🔴 REQUIRED (`:?`), NO DEFAULT. The repo is public, so any literal
+      #      default here is a known root key on every environment that forgets
+      #      to set its own. Locally both come from `.env` (fake values in
+      #      `.env.example` §7). To run the backend on local disk, do NOT comment
+      #      the five `S3_*` lines out of `.env` (this would then refuse to
+      #      start): uncomment the empty-`S3_*` block under `backend` in
+      #      `docker-compose.override.yml` instead.
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required (also the RustFS root key; local value in infra/.env.example)}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required (also the RustFS root secret; local value in infra/.env.example)}
       RUSTFS_VOLUMES: /data
       RUSTFS_ADDRESS: ":9000"
     volumes:
@@ -548,10 +546,9 @@ services:
       #    `S3_ENDPOINT: ${S3_ENDPOINT:-}` and an unset variable arrives as the
       #    EMPTY STRING, which is a different thing, and whether the backend
       #    treats it as off depends on how its check happens to be written.
-      #    Through `env_file`, commenting the line out in `.env` means the
-      #    variable is genuinely not in the container's environment. One
-      #    switch, no ambiguity, and the fallback is reachable by a developer
-      #    who wants it.
+      #    Local-disk fallback: the empty-`S3_*` block under `backend` in
+      #    `docker-compose.override.yml` (local only). Commenting the lines
+      #    out of `.env` no longer works: `rustfs` above requires the two keys.
       #    ⚠ The one thing this costs: `S3_ENDPOINT` must hold a
       #      CONTAINER-NETWORK address (`http://rustfs:9000`), and it now sits
       #      in the same file as host-side ports. Putting `localhost:45410`
@@ -915,7 +912,7 @@ services:
       #      and the document never becomes ready. So the secret is written in
       #      exactly ONE place (`CALLBACK_SECRET` in .env) and interpolated into
       #      both consumers. Never paste a literal secret into this JSON.
-      API_KEYS: '{"${AUDIO_SERVICE_API_KEY:-}":{"org":"demo","project":"demo","role":"app","callbackSecret":"${CALLBACK_SECRET}"},"${AUDIO_SERVICE_ADMIN_API_KEY:-dev-audio-key-admin}":{"org":"demo","project":"demo","role":"admin"}}'
+      API_KEYS: '{"${AUDIO_SERVICE_API_KEY:-}":{"org":"demo","project":"demo","role":"app","callbackSecret":"${CALLBACK_SECRET}"},"${AUDIO_SERVICE_ADMIN_API_KEY:?AUDIO_SERVICE_ADMIN_API_KEY is required (admin bearer for audio-service; local value in infra/.env.example, a fresh secret per deployed env)}":{"org":"demo","project":"demo","role":"admin"}}'
       # ── CPU-ONLY, and that is the whole point ──
       # 🔴 No GPU box is assumed for transcription. The service is built
       #    CPU-first: `cuda` + `float16` is a two-variable flip if a GPU
