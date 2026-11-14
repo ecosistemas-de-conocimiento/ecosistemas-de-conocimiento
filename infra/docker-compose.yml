@@ -912,7 +912,7 @@ services:
       #      and the document never becomes ready. So the secret is written in
       #      exactly ONE place (`CALLBACK_SECRET` in .env) and interpolated into
       #      both consumers. Never paste a literal secret into this JSON.
-      API_KEYS: '{"${AUDIO_SERVICE_API_KEY:-}":{"org":"demo","project":"demo","role":"app","callbackSecret":"${CALLBACK_SECRET}"},"${AUDIO_SERVICE_ADMIN_API_KEY:?AUDIO_SERVICE_ADMIN_API_KEY is required (admin bearer for audio-service; local value in infra/.env.example, a fresh secret per deployed env)}":{"org":"demo","project":"demo","role":"admin"}}'
+      API_KEYS: '{"${AUDIO_SERVICE_API_KEY:-}":{"org":"demo","project":"demo","role":"app","callbackSecret":"${CALLBACK_SECRET}"},"${AUDIO_SERVICE_ADMIN_API_KEY:-}":{"org":"demo","project":"demo","role":"admin"}}'
       # ── CPU-ONLY, and that is the whole point ──
       # 🔴 No GPU box is assumed for transcription. The service is built
       #    CPU-first: `cuda` + `float16` is a two-variable flip if a GPU
