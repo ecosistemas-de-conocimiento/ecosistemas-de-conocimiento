@@ -138,7 +138,9 @@ export default buildConfig({
    * ⚠ No `abortOnLimit`. In 3.88 it rejects a promise nobody is awaiting yet
    * (`processMultipart.js`), and over a socket that is an unhandled rejection:
    * plain Node exits on it, so an oversized upload would take the process down
-   * unless Next's own handler swallows it. No `useTempFiles` either:
+   * unless Next's own handler swallows it. Payload 3.90 turned it ON by default,
+   * so it is set to `false` below: the cut file still reaches the hook, which
+   * answers with the cap ("maximum is 200 MB"). No `useTempFiles` either:
    * `generateFileData` reads the temp file back into a Buffer for every
    * non-image upload, and `unlinkTempFiles` runs only after a create that
    * SUCCEEDS, so every refused upload would leave its temp file behind.
@@ -151,11 +153,18 @@ export default buildConfig({
    * the admin panel sends `_payload` (the document as JSON) and at most a
    * `file` string (quoted from `@payloadcms/ui` 3.88, `forms/Form`). So 8
    * fields and 10 parts, at least four times what either sends.
-   * `fieldSize` stays at busboy's 1 MiB default, written out: a longer field is
-   * TRUNCATED, not refused, and a cut `_payload` fails Payload's `JSON.parse`.
-   * Past `fields` or `parts` busboy drops the rest without an error.
+   * `fieldSize` stays at busboy's 1 MiB default, written out.
+   *
+   * 🔴 Since Payload 3.90 every limit but `fileSize` REFUSES the request (413,
+   * `processMultipart.js`): a second file, a ninth field, an eleventh part or a
+   * field longer than `fieldSize`. A file past `fileSize` is still cut and left
+   * to the hook. 3.90 also caps the whole multipart body at 50 MB by default
+   * (`requestSizeLimit`), under the 200 MB media cap; it is set to the cap plus
+   * 16 MiB, room for the 8 fields of 1 MiB and the part headers.
    */
   upload: {
+    requestSizeLimit: MAX_MEDIA_UPLOAD_BYTES + 16 * 1024 * 1024,
+    abortOnLimit: false,
     limits: {
       fileSize: MAX_MEDIA_UPLOAD_BYTES + 1,
       files: 1,

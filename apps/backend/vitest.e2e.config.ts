@@ -36,7 +36,8 @@ export default defineConfig({
     hookTimeout: 180_000,
     fileParallelism: false,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
+    // vitest 4 dropped `poolOptions.forks.singleFork`; one worker is the same serial run.
+    maxWorkers: 1,
     // A failure here is a bug report about the live stack, so print every name.
     reporters: ['verbose'],
   },

@@ -184,6 +184,13 @@ describe.skipIf(!dockerOk)('a filter through a relationship reads only what the 
       const pinAt = (p: string) => `where[${p}contentKind][equals]=documento&where[${p}anonymise][equals]=false&`
       const pin = pinAt(at) + (path.includes('revisionOf.') ? pinAt(`${at}revisionOf.`) : '')
       const up = await list(collection, who, `${pin}sort=${path}`)
+      // Since Payload 3.90 the hop into `document` applies its read rule, and
+      // `hideRevisions` keeps a staging row out of it: a log's pin through
+      // `document.revisionOf.` matches no row, so there is nothing to move.
+      if (at === 'document.' && path.includes('revisionOf.')) {
+        expect(up).toEqual([])
+        return
+      }
       expect(up.length).toBeGreaterThan(1)
       expect(await list(collection, who, `${pin}sort=-${path}`)).toEqual(up)
     })
@@ -202,10 +209,12 @@ describe.skipIf(!dockerOk)('a filter through a relationship reads only what the 
   })
 
   it('a platform admin filters and sorts through every relationship', async () => {
-    expect(await list('documents', 'platform', 'where[session.title][like]=Juana')).toEqual([PLAIN])
+    // Since Payload 3.90 a crossing matches only target rows the caller may read,
+    // platform admin included: a conversation is its owner's alone.
+    expect(await list('documents', 'platform', 'where[session.title][like]=Juana')).toEqual([])
     expect(await list('documents', 'platform', 'where[uploadedBy.email][like]=juana')).toEqual(expect.arrayContaining([GATED, PLAIN]))
     expect(await list('anonymisation-reviews', 'platform', 'where[reviewer.email][like]=juana')).toEqual([R_PLAIN])
-    expect(await list('anonymisation-reviews', 'platform', 'where[document.revisionOf.uploadedBy.email][like]=juana')).toEqual([R_REV])
+    expect(await list('anonymisation-reviews', 'platform', 'where[document.revisionOf.uploadedBy.email][like]=juana')).toEqual([]) // staging row: `hideRevisions`
     expect(await list('anonymisation-setting-changes', 'platform', 'where[actor.email][like]=juana')).toEqual([R_PLAIN])
     const up = await list('anonymisation-reviews', 'platform', 'sort=reviewer.email')
     expect(await list('anonymisation-reviews', 'platform', 'sort=-reviewer.email')).not.toEqual(up)

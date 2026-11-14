@@ -25,6 +25,7 @@ import * as migration_20261110_070204_anonymisation_setting_changes_keys from '.
 import * as migration_20261110_181621_consent_held_reviews_keep from './20261110_181621_consent_held_reviews_keep';
 import * as migration_20261113_015634_consent_receipts from './20261113_015634_consent_receipts';
 import * as migration_20261114_220719_consent_receipts_keep_on_ecosystem_delete from './20261114_220719_consent_receipts_keep_on_ecosystem_delete';
+import * as migration_20261114_234336_payload_3_90_seguridad from './20261114_234336_payload_3_90_seguridad';
 
 export const migrations = [
   {
@@ -160,6 +161,11 @@ export const migrations = [
   {
     up: migration_20261114_220719_consent_receipts_keep_on_ecosystem_delete.up,
     down: migration_20261114_220719_consent_receipts_keep_on_ecosystem_delete.down,
-    name: '20261114_220719_consent_receipts_keep_on_ecosystem_delete'
+    name: '20261114_220719_consent_receipts_keep_on_ecosystem_delete',
+  },
+  {
+    up: migration_20261114_234336_payload_3_90_seguridad.up,
+    down: migration_20261114_234336_payload_3_90_seguridad.down,
+    name: '20261114_234336_payload_3_90_seguridad'
   },
 ];

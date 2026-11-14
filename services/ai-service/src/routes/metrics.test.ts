@@ -219,7 +219,8 @@ describe('what the scrape contains', () => {
     const res = await app.inject({ method: 'GET', url: '/metrics' });
     // ANTI-VACUITY: route metrics are actually being collected...
     expect(res.body).toContain('http_request_duration_seconds');
-    expect(res.body).toMatch(/http_request_duration_seconds_count\{[^}]*route="\/v1\/"/);
+    // fastify 5.12.0 labelled the prefixed root `/v1/`; 5.12.5 and 5.12.6 label it `/v1`.
+    expect(res.body).toMatch(/http_request_duration_seconds_count\{[^}]*route="\/v1\/?"/);
     // ...and the scrape is not timing itself. Left in, it is the most frequent
     // request on a quiet box and dominates any latency read off this metric.
     expect(res.body).not.toContain('route="/metrics"');

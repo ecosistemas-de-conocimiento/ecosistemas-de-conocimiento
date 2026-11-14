@@ -469,7 +469,7 @@ describe('runIngestRecoveryPass', () => {
     })
     // The extracting sweep's query blows up; the sweeps after it still run.
     const find = db.payload.find as unknown as ReturnType<typeof vi.fn>
-    const realFind = find.getMockImplementation()!
+    const realFind = find.getMockImplementation()! as (args: Record<string, unknown>) => unknown
     find.mockImplementation(async (args: Record<string, unknown>) => {
       // Only the pdf/docx stall sweep's query: it is the one that names "docx".
       const w = JSON.stringify(args.where)

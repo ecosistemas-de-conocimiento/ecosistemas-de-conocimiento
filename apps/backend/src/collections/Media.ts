@@ -732,6 +732,14 @@ export const Media: CollectionConfig = {
           'Object-storage key prefix, derived on upload. Operability only — never an access boundary.',
       },
     },
+    /**
+     * Same reason as `prefix`: since Payload 3.90 the storage plugin adds
+     * `_objectKey` (the per-upload folder of a client upload) to every upload
+     * collection it manages, so it is declared here for one schema in both
+     * modes. With the plugin on, its own copy replaces this one
+     * (`getFields.js`); Payload strips it from incoming data (`sanitizeUploadData.js`).
+     */
+    { name: '_objectKey', type: 'text', admin: { hidden: true, readOnly: true } },
     { name: 'alt', type: 'text' },
   ],
   hooks: {
