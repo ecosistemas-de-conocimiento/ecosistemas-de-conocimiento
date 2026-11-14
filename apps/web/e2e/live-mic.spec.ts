@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { adminCredentials } from './env';
 import { startRecordingWithConsent } from './consent';
+import { transcriptionUnavailable } from './transcription';
 
 /**
  * Live mic: speak → partial text appears → stop → the recording uploads.
@@ -13,7 +14,8 @@ import { startRecordingWithConsent } from './consent';
  * route run exactly as with a person talking.
  *
  * Needs ffmpeg on PATH (the m4a → wav conversion) and a stack whose
- * audio-service runs WHISPER_BACKEND=remote.
+ * audio-service runs WHISPER_BACKEND=remote. Without a transcription backend
+ * that answers, every test here SKIPS with the reason (`transcription.ts`).
  *
  * Optional, for a host without the backend route deployed yet:
  *   LIVE_AUDIO_URL / LIVE_AUDIO_KEY — the browser's `/api/live/*` calls are
@@ -109,9 +111,21 @@ async function stopAndExpectUpload(page: Page): Promise<void> {
   // A request in flight at Stop must not bring the text back.
   await page.waitForTimeout(3_000);
   await expect(page.getByTestId('live-text')).toHaveCount(0);
-  expect(res.request().postDataBuffer()?.includes(Buffer.from('audio/webm'))).toBe(true);
-  if (process.env.LIVE_EXPECT_UPLOAD !== '0') expect(res.ok()).toBe(true);
+  // The request is a multipart upload; what it carried is the SERVER's answer
+  // (`doc.kind`), not a byte search of the body: Playwright may hand back no
+  // body at all for a large or streamed request (`postDataBuffer()` → null).
+  expect(res.request().headers()['content-type'] ?? '').toMatch(/^multipart\/form-data;/);
+  if (process.env.LIVE_EXPECT_UPLOAD === '0') return;
+  expect(res.ok(), `upload answered ${res.status()}`).toBe(true);
+  const body = (await res.json()) as { doc?: { kind?: string } };
+  expect(body.doc?.kind).toBe('audio');
 }
+
+/** Skip with the reason when no transcription backend answers (`transcription.ts`). */
+test.beforeEach(async () => {
+  const reason = await transcriptionUnavailable();
+  test.skip(reason !== null, reason ?? '');
+});
 
 test('live mic shows partial text while recording, then uploads the recording', async ({ page }) => {
   test.skip(!SIM, `${SIM_REL} not found (set LIVE_SIM_FILE)`);

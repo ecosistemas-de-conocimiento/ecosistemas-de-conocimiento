@@ -5007,7 +5007,10 @@ function unpublishEndpoint(): Endpoint {
  * 🔴 THE UPLOAD CONSENT'S CONSTANCIA (`lib/uploadConsent.ts`). `:id` is the
  * DOCUMENT's id; after a delete it still resolves through the receipt's
  * `documentIdSnapshot` (`document: null`). `receipt: null` is a document
- * uploaded before the consent existed.
+ * uploaded before the consent existed. After an ecosistema delete the receipt
+ * survives (`organization` NULL) and still serves, like after a document
+ * delete: `document: null`, `receipt.ecosystem: null` (the name is gone with
+ * the ecosistema; the receipt never stored it).
  *
  * Readers: the uploader (`uploadedBy`, or the receipt's `actor` once the
  * document is gone) and a platform admin. Anyone else gets the same 404 as a

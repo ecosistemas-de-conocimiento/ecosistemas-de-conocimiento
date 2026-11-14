@@ -3,6 +3,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { adminCredentials } from './env';
 import { consentInPanel } from './consent';
 import { fixtureBytes, fixtures, type FixtureEntry } from './fixtures';
+import { transcriptionUnavailable } from './transcription';
 
 /**
  * ONE coherent journey through the live stack, in a real browser, recorded.
@@ -173,6 +174,10 @@ async function ensureExpanded(card: Locator): Promise<void> {
 test('journey: sign in → chat → rate → upload → transcribe → publish → cite → sign out', async ({
   page,
 }, testInfo) => {
+  // Step 6 waits for a real transcription: with no backend that answers (the
+  // Spark off) it can only time out, so the journey skips, saying why.
+  const unavailable = await transcriptionUnavailable();
+  test.skip(unavailable !== null, unavailable ?? '');
   const { email, password } = adminCredentials();
 
   // `confirm()` guards the publish action (and carries the transcript

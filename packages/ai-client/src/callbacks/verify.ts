@@ -56,12 +56,16 @@ export const CALLBACK_EVENT_HEADER = 'x-aiservice-event' as const;
  * down in at least two stale places, and it is dead. It is argued out of
  * existence here, at the constant, so the third person does not rediscover it.
  *
- * THE ARGUMENT. ai-service's retry schedule is `[0, 5s, 30s, 2m, 10m]`, each
- * delay measured from the previous attempt, so the fifth and final attempt
- * lands ~t+12m35s after enqueue. The emitter USED TO mint the timestamp once,
- * at enqueue, and resend it verbatim. Under a 300 s window the last two
- * attempts were therefore rejected as `stale_timestamp` → 401, and ai-service
- * maps 401 to a PERMANENT `auth_failed` and stops retrying. So the recovery
+ * THE ARGUMENT. ai-service's retry schedule is seven attempts,
+ * `[0, 5s, 30s, 2m, 10m, 30m, 2h]` (`RETRY_SCHEDULE_MS` in
+ * `services/ai-service/src/services/callbacks/emit.ts`), each delay measured
+ * from the previous attempt, so the seventh and final attempt lands ~t+2h42m35s
+ * after enqueue (the argument below was first made when it was five attempts,
+ * ending ~t+12m35s; the two extra ones only make it stronger). The emitter USED
+ * TO mint the timestamp once, at enqueue, and resend it verbatim. Under a 300 s
+ * window every attempt from the fifth on (t+12m35s; the fourth is t+2m35s)
+ * was therefore rejected as `stale_timestamp` → 401, and ai-service maps 401
+ * to a PERMANENT `auth_failed` and stops retrying. So the recovery
  * attempt that only happens BECAUSE the earlier ones failed could never
  * succeed. Widening every receiver to 900 s was the proposed workaround.
  *

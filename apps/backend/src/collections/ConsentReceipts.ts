@@ -13,6 +13,11 @@
  * (`ON DELETE set null`) and `documentIdSnapshot` keeps which one it was, so
  * the constancia still resolves after a withdrawal.
  *
+ * 🔴 AN ECOSISTEMA DELETE KEEPS THE RECEIPT TOO (2026-11-14): `organization`
+ * goes NULL (`ON DELETE set null`, was `cascade`) and `organizationIdSnapshot`
+ * keeps which one it was. The receipt is the proof that consent was given;
+ * deleting the space it was given in does not undo it. Ids only, no name.
+ *
  * Append-only: created server-side only (`overrideAccess`, from the documents
  * create hook), never created, updated or deleted through the API.
  */
@@ -26,7 +31,7 @@ export const ConsentReceipts: CollectionConfig = {
   slug: 'consent-receipts',
   admin: {
     useAsTitle: 'kind',
-    defaultColumns: ['kind', 'consentVersion', 'contentKind', 'documentIdSnapshot', 'organization', 'actor', 'createdAt'],
+    defaultColumns: ['kind', 'consentVersion', 'contentKind', 'documentIdSnapshot', 'organization', 'organizationIdSnapshot', 'actor', 'createdAt'],
     group: 'Feedback',
     description: 'Cada consentimiento declarado al subir un recurso. Solo se agregan filas.',
   },
@@ -57,7 +62,10 @@ export const ConsentReceipts: CollectionConfig = {
     { name: 'document', type: 'relationship', relationTo: 'documents', index: true },
     /** The document's id at upload; survives its delete. */
     { name: 'documentIdSnapshot', type: 'number', required: true, index: true },
-    { name: 'organization', type: 'relationship', relationTo: 'organizations', required: true, index: true },
+    /** NULL once the ecosistema is deleted (`ON DELETE set null`). */
+    { name: 'organization', type: 'relationship', relationTo: 'organizations', index: true },
+    /** The ecosistema's id at upload; survives its delete. Never its name. */
+    { name: 'organizationIdSnapshot', type: 'number', required: true, index: true },
     /** Who uploaded. Never whose words they are. */
     { name: 'actor', type: 'relationship', relationTo: 'users', index: true },
     {

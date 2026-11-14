@@ -7,6 +7,8 @@
  *     (JSON and the multipart `_payload`);
  *   · server creates (no user, or `overrideAccess`) → no receipt, no error;
  *   · a document delete keeps the receipt (`document` NULL, the snapshot kept);
+ *   · an ecosistema delete keeps the receipt too (`organization` NULL, its
+ *     snapshot kept), with the same readers;
  *   · nobody creates, edits or deletes a receipt through REST; reads are the
  *     uploader's own rows and the platform admin (never `holds:review`);
  *   · a receipt has no text column;
@@ -27,6 +29,7 @@ vi.mock('@/lib/aiClient', () => {
   return { getAdminAIClient: () => anything, getAppAIClient: () => anything }
 })
 
+import { migrations } from '@/migrations'
 import { UPLOAD_CONSENT_VERSION } from '@/lib/uploadConsent'
 import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, type RealPostgres } from '@/lib/testing/realPostgres'
 
@@ -59,6 +62,19 @@ const run = (s: string) => pg.db.execute(sql.raw(s))
 const receipts = () => rowsOf(pg.db, sql`SELECT * FROM consent_receipts ORDER BY id`)
 const docCount = async () => Number((await rowsOf(pg.db, sql`SELECT count(*)::int AS n FROM documents`))[0]!.n)
 const note = (extra: Record<string, unknown> = {}) => ({ kind: 'markdown', name: 'nota secreta', bodyMarkdown: 'hola', ...extra })
+/**
+ * ⚠ An ecosistema that still has members or documents cannot be deleted at
+ * all (23502: `memberships`/`documents.organization_id` are NOT NULL + SET
+ * NULL; `Ratings.deletePaths.pg.test.ts`, a product decision still open). So
+ * the delete that can happen today is the one after its documents and members
+ * are gone: documents through REST (as their uploader), members by SQL, then
+ * the ecosistema through REST as the platform admin.
+ */
+async function deleteEcosystem(documentIds: number[]): Promise<number> {
+  for (const id of documentIds) expect((await call('DELETE', `/api/documents/${id}`, tokens.ana)).status).toBe(200)
+  await run('DELETE FROM memberships WHERE organization_id = 1')
+  return (await call('DELETE', '/api/organizations/1', tokens.root)).status
+}
 const message = async (res: Response) => ((await res.json()) as { errors?: Array<{ message: string }> }).errors?.[0]?.message
 
 describe.skipIf(!dockerOk)('upload consent receipts', () => {
@@ -119,6 +135,7 @@ describe.skipIf(!dockerOk)('upload consent receipts', () => {
       content_kind: 'documento',
     })
     expect(Number(rows[0]!.document_id_snapshot)).toBe(doc.id)
+    expect(Number(rows[0]!.organization_id_snapshot)).toBe(1)
     expect(Number(rows[0]!.consent_version)).toBe(UPLOAD_CONSENT_VERSION)
     expect(JSON.stringify(rows[0])).not.toContain('nota secreta')
   })
@@ -163,6 +180,53 @@ describe.skipIf(!dockerOk)('upload consent receipts', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]!.document_id).toBeNull()
     expect(Number(rows[0]!.document_id_snapshot)).toBe(doc.id)
+  })
+
+  it('🔴 an ecosistema delete keeps the receipt: organization NULL, snapshot kept, readers unchanged', async () => {
+    const res = await call('POST', '/api/documents', tokens.ana, note({ uploadConsentVersion: UPLOAD_CONSENT_VERSION }))
+    const { doc } = (await res.json()) as { doc: { id: number } }
+    const [before] = await receipts()
+    expect(await deleteEcosystem([doc.id])).toBe(200)
+    expect(await rowsOf(pg.db, sql`SELECT id FROM organizations WHERE id = 1`)).toEqual([])
+    const rows = await receipts()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ id: before!.id, organization_id: null, document_id: null, actor_id: 1, kind: 'upload' })
+    expect(Number(rows[0]!.organization_id_snapshot)).toBe(1)
+    expect(Number(rows[0]!.document_id_snapshot)).toBe(doc.id)
+    expect(rows[0]!.created_at).toEqual(before!.created_at)
+    expect(Number(rows[0]!.consent_version)).toBe(UPLOAD_CONSENT_VERSION)
+    // Access as before: the uploader and the platform admin, nobody else.
+    const seen = async (who: string) =>
+      ((await (await call('GET', '/api/consent-receipts?depth=0', tokens[who])).json()) as { docs?: unknown[] }).docs?.length ?? 0
+    expect(await seen('ana')).toBe(1)
+    expect(await seen('root')).toBe(1)
+    expect(await seen('beto')).toBe(0)
+    expect(await seen('rita')).toBe(0)
+    for (const who of ['ana', 'root'] as const) {
+      expect((await call('DELETE', `/api/consent-receipts/${before!.id}`, tokens[who])).status).toBe(403)
+    }
+  })
+
+  it('migration `20261114_220719`: up/down/up with a kept receipt and an orphaned one', async () => {
+    const m = migrations.find((x) => x.name === '20261114_220719_consent_receipts_keep_on_ecosystem_delete')!
+    const args = { db: pg.db, payload: {}, req: {} } as unknown as Parameters<typeof m.up>[0]
+    const fk = async () =>
+      (await rowsOf(pg.db, sql`SELECT confdeltype FROM pg_constraint WHERE conname = 'consent_receipts_organization_id_organizations_id_fk'`))[0]!
+        .confdeltype
+    await run(`
+      INSERT INTO organizations (id, name, slug) VALUES (2, 'Dos', 'dos');
+      INSERT INTO consent_receipts (id, document_id_snapshot, organization_id, organization_id_snapshot, actor_id, kind, consent_version, content_kind)
+        VALUES (1, 7, 1, 1, 1, 'upload', 1, 'documento'), (2, 8, NULL, 2, 1, 'upload', 1, 'documento');
+    `)
+    expect(await fk()).toBe('n')
+    // down: the orphaned receipt cannot be NOT NULL, so it goes (throwaway databases only).
+    await m.down(args)
+    expect(await fk()).toBe('c')
+    expect((await receipts()).map((r) => [r.id, r.organization_id])).toEqual([[1, 1]])
+    await m.up(args)
+    expect(await fk()).toBe('n')
+    const [r] = await receipts()
+    expect(Number(r!.organization_id_snapshot)).toBe(1)
   })
 
   it('nobody creates, edits or deletes a receipt through REST, platform admin included', async () => {
@@ -243,6 +307,25 @@ describe.skipIf(!dockerOk)('upload consent receipts', () => {
       expect(body.document).toBeNull()
       expect(body.receipt!.consentVersion).toBe(UPLOAD_CONSENT_VERSION)
       expect((await constancia(id, 'beto')).status).toBe(404)
+    })
+
+    it('after the ecosistema delete: the uploader and the admin still get it (folio kept, ecosystem null); others 404', async () => {
+      const id = await upload()
+      const [r] = await receipts()
+      expect(await deleteEcosystem([id])).toBe(200)
+      const { status, body } = await constancia(id, 'ana')
+      expect(status).toBe(200)
+      expect(body.document).toBeNull()
+      expect(body.receipt).toMatchObject({
+        id: r!.id,
+        folio: `EDC-2026-${String(r!.id).padStart(6, '0')}`,
+        consentVersion: UPLOAD_CONSENT_VERSION,
+        ecosystem: null,
+      })
+      expect((await constancia(id, 'root')).status).toBe(200)
+      for (const who of ['beto', 'rita', undefined]) {
+        expect(await constancia(id, who)).toEqual({ status: 404, body: { error: 'not_found' } })
+      }
     })
 
     it('a document from before the consent: receipt null', async () => {

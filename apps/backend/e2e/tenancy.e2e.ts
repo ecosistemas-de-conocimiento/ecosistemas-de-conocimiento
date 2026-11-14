@@ -71,16 +71,34 @@ describe.skipIf(stackDown)('tenancy and isolation', () => {
   it('refuses a client-supplied uploader and a client-supplied ecosistema', async () => {
     // Both are corpus-name inputs. Accepting either would let one person file a
     // document into another's private draft corpus.
-    const res = await apiJson(world.alice.caller, 'POST', '/api/documents', {
-      uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
-      name: `${world.ns} forged`,
-      kind: 'markdown',
-      bodyMarkdown: 'x',
-      extractedText: 'x',
-      uploadedBy: world.bob.id,
-      organization: world.orgB.id,
-      publicationStatus: 'published',
-    })
+    //
+    // ⚠ Two requests since 2026-10-23 (`7e2708d`): a named ecosistema is now a
+    // REQUEST checked against membership (`collections/Documents.ts`, "A NAMED
+    // ECOSISTEMA IS A REQUEST"), so a foreign one is refused with 403 and
+    // nothing is written, where it used to be silently replaced. The forged
+    // uploader and publication state are still overwritten on a 201.
+    const forged = (name: string, extra: Record<string, unknown>) =>
+      apiJson(world.alice.caller, 'POST', '/api/documents', {
+        uploadConsentVersion: 1, // = UPLOAD_CONSENT_VERSION (src/lib/uploadConsent.ts)
+        name: `${world.ns} ${name}`,
+        kind: 'markdown',
+        bodyMarkdown: 'x',
+        extractedText: 'x',
+        uploadedBy: world.bob.id,
+        publicationStatus: 'published',
+        ...extra,
+      })
+
+    const foreign = await forged('forged foreign', { organization: world.orgB.id })
+    expect(foreign.status).toBe(403)
+    // Her own list, filtered here (not a `where[name]`, which the gated-query
+    // narrowing could turn into an empty answer for another reason).
+    const mine = await apiGet(world.alice.caller, '/api/documents?limit=200&depth=0')
+    expect(mine.status).toBe(200)
+    expect(mine.body.docs.length).toBeGreaterThan(0)
+    expect(mine.body.docs.map((d: { name?: string }) => d.name)).not.toContain(`${world.ns} forged foreign`)
+
+    const res = await forged('forged', {})
     expect(res.status).toBe(201)
     expect(res.body.doc.uploadedBy.id ?? res.body.doc.uploadedBy).toBe(world.alice.id)
     expect(res.body.doc.organization.id ?? res.body.doc.organization).toBe(world.orgA.id)

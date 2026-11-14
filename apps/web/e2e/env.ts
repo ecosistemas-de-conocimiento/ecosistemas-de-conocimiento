@@ -117,7 +117,9 @@ let stackVars: Map<string, string> | null = null;
  * Any other value out of `infra/.env` — the stack's own environment, read the
  * way Compose read it.
  *
- * ⚠ Used for the database credentials in `e2e/db.ts` and NOTHING ELSE. Every
+ * ⚠ Used for the database credentials in `e2e/db.ts` and, in
+ * `e2e/transcription.ts`, for `AUDIO_HOST_PORT`, `WHISPER_BACKEND` and
+ * `WHISPER_REMOTE_URL` (to probe, never printed), and NOTHING ELSE. Every
  * other value this suite needs is either a URL it can be pointed at or one of
  * the two seeded credentials above. A process env var of the same name wins, so
  * CI can inject without a file on disk.

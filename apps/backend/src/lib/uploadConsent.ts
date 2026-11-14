@@ -68,6 +68,7 @@ export const recordUploadConsent: CollectionAfterChangeHook = async ({ doc, oper
       document: doc.id,
       documentIdSnapshot: doc.id,
       organization: relationId(doc.organization),
+      organizationIdSnapshot: relationId(doc.organization),
       actor: (req.user as { id: number | string }).id,
       kind: 'upload',
       // The field hook already refused anything else.
