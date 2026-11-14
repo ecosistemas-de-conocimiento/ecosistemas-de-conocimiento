@@ -178,12 +178,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "reset_password_requested_at": {
-          "name": "reset_password_requested_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "login_attempts": {
           "name": "login_attempts",
           "type": "numeric",
@@ -6620,6 +6614,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "460d5acd-ab5a-4592-83e9-ca319f8f015c",
+  "id": "102e0a7a-e2ff-4d02-b260-b083cd4f676f",
   "prevId": "00000000-0000-0000-0000-000000000000"
 }

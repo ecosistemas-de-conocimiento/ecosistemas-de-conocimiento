@@ -312,8 +312,10 @@ describe.skipIf(!dockerOk)('every collection: a filter reads only what the calle
     expect(await list('ratings', 'platform', 'where[session.title][like]=privada')).toEqual([])
     expect(await list('ratings', 'platform', 'where[user.email][like]=ben')).toEqual([R_BEN])
     expect(await list('memberships', 'platform', 'where[user.email][like]=juana')).toHaveLength(1)
-    const up = await ordered('ratings', 'platform', `where[id][in]=${R_ANA},${R_BEN}&sort=user.email`)
-    expect(await ordered('ratings', 'platform', `where[id][in]=${R_ANA},${R_BEN}&sort=-user.email`)).toEqual([...(up as number[])].reverse())
+    // Payload's `validateSortQuery` checks only field access, so a sort through a
+    // relation the admin cannot filter on still works (not a regression).
+    const up = await ordered('ratings', 'platform', `where[id][in]=${R_ANA},${R_BEN}&sort=session.title`)
+    expect(await ordered('ratings', 'platform', `where[id][in]=${R_ANA},${R_BEN}&sort=-session.title`)).toEqual([...(up as number[])].reverse())
   })
 
   it("the web's own filters still work", async () => {
