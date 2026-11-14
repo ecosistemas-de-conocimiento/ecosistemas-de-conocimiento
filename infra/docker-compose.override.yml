@@ -52,6 +52,17 @@ services:
       # Set EXPLICITLY rather than left to `resolveCorpusDir()`'s ancestor walk:
       # inside the image there is no `corpus-generativo` above /repo/apps/backend.
       CORPUS_DIR: /corpus
+      # ── Local disk instead of RustFS (opt-in) ──
+      # Uncomment all five to store uploads on the `backend_media` volume.
+      # `environment` wins over `env_file`, and the backend treats an empty
+      # `S3_*` exactly like an absent one (storage/client.test.ts). Keep the
+      # five lines in `.env`: docker-compose.yml requires the two keys for the
+      # RustFS root, and refuses to start without them.
+      # S3_ENDPOINT: ""
+      # S3_REGION: ""
+      # S3_BUCKET: ""
+      # S3_ACCESS_KEY_ID: ""
+      # S3_SECRET_ACCESS_KEY: ""
     volumes:
       # The demo library's 250 documents. A sibling repo, deliberately not
       # vendored. `:ro` — the corpus is read for seeding and nothing else.
