@@ -74,4 +74,6 @@ EXPOSE ${PORT}
 # `-H 0.0.0.0` binds all interfaces so the host-published port reaches the dev
 # server. It stays a flag because the Next CLI has no env equivalent for
 # hostname — unlike the port, which PORT above already sets.
-CMD ["sh", "-c", "pnpm exec payload migrate && exec pnpm exec next dev -H 0.0.0.0"]
+# `--webpack`: Next 16 defaults to Turbopack, which follows the extract worker
+# (`src/lib/extract/worker.mjs`) into tsx/esbuild and fails. Same flag as `pnpm build`.
+CMD ["sh", "-c", "pnpm exec payload migrate && exec pnpm exec next dev --webpack -H 0.0.0.0"]

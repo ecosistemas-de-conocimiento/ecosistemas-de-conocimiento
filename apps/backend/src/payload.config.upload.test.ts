@@ -92,7 +92,7 @@ describe('the media cap, applied while the body streams', () => {
   })
 
   it('🔴 does not abort on the limit: in 3.88 that is an unhandled rejection that can exit the process', () => {
-    expect((config.upload as { abortOnLimit?: boolean }).abortOnLimit).toBeFalsy()
+    expect((config.upload as { abortOnLimit?: boolean }).abortOnLimit).toBe(false) // 3.90 defaults it to true
   })
 
   it('still parses a file under the cap, in memory, where the Media hooks read it', async () => {
@@ -103,7 +103,8 @@ describe('the media cap, applied while the body streams', () => {
     expect(req.file?.tempFilePath).toBeFalsy()
   })
 
-  it('🔴 keeps only one file per request, so the cap cannot be multiplied', async () => {
+  // Since Payload 3.90 a limit other than `fileSize` refuses the whole request (413).
+  it('🔴 refuses a second file, so the cap cannot be multiplied', async () => {
     const req = requestWith(
       multipart([
         { field: 'file', bytes: MiB },
@@ -111,8 +112,14 @@ describe('the media cap, applied while the body streams', () => {
         { field: 'third', bytes: 2 * MiB },
       ]),
     )
-    await addDataAndFileToRequest(req)
-    expect(Object.keys(req.files ?? {})).toEqual(['file'])
+    await expect(addDataAndFileToRequest(req)).rejects.toMatchObject({ status: 413 })
+    expect(req.file).toBeUndefined()
+  })
+
+  it('🔴 refuses a body past the cap plus 16 MiB before reading it all (`requestSizeLimit`)', async () => {
+    expect((config.upload as { requestSizeLimit?: number }).requestSizeLimit).toBe(MAX_MEDIA_UPLOAD_BYTES + 16 * MiB)
+    const req = requestWith(multipart([{ field: 'file', bytes: MAX_MEDIA_UPLOAD_BYTES + 17 * MiB }]))
+    await expect(addDataAndFileToRequest(req)).rejects.toMatchObject({ status: 413 })
   })
 })
 
@@ -160,26 +167,26 @@ describe('text fields are bounded too (C-03, the review of 2026-11-10)', () => {
     expect(req.file?.size).toBe(16)
   })
 
-  it('🔴 keeps no more than 8 fields: a ninth, even `_payload`, is dropped unread', async () => {
+  it('🔴 keeps no more than 8 fields: a ninth, even `_payload`, refuses the request unread', async () => {
     const junk = Array.from({ length: 8 }, (_, i) => ({ name: `f${i}`, value: 'a' }))
     const req = requestWith(form([...junk, { name: '_payload', value: '{"alt":"x"}' }]))
-    await addDataAndFileToRequest(req)
+    await expect(addDataAndFileToRequest(req)).rejects.toMatchObject({ status: 413 })
     expect(req.data).toBeUndefined()
   })
 
-  it('🔴 reads no more than 10 parts, files included', async () => {
-    // Ten file parts: one kept, nine drained by `files: 1`, all ten counted.
+  it('🔴 refuses ten file parts', async () => {
+    // The second already trips `files: 1`; `parts: 10` stays as a backstop.
     const files = Array.from({ length: 10 }, (_, i) => ({ name: `x${i}`, file: 4 }))
     const req = requestWith(form([...files, { name: '_payload', value: '{"alt":"x"}' }]))
-    await addDataAndFileToRequest(req)
+    await expect(addDataAndFileToRequest(req)).rejects.toMatchObject({ status: 413 })
     expect(req.data).toBeUndefined()
   })
 
-  it('cuts a field at 1 MiB, and a cut `_payload` is refused, not half-read', async () => {
+  it('a field past 1 MiB is refused, not half-read', async () => {
     expect((config.upload as { limits: { fieldSize?: number } }).limits.fieldSize).toBe(MiB)
     const big = JSON.stringify({ alt: 'a'.repeat(MiB) })
     const req = requestWith(form([{ name: '_payload', value: big }]))
-    await expect(addDataAndFileToRequest(req)).rejects.toThrow(SyntaxError)
+    await expect(addDataAndFileToRequest(req)).rejects.toMatchObject({ status: 413 })
     expect(req.data).toBeUndefined()
   })
 

@@ -246,7 +246,11 @@ export async function buildServer(injectedRuntime?: Runtime): Promise<FastifyIns
     // `true` trusted every hop, so `req.ip` was the LEFTMOST `X-Forwarded-For`
     // entry — whatever the caller wrote. With a count, `req.ip` is the address
     // the outermost trusted proxy appended. Pinned by `routes/trust-proxy.test.ts`.
-    trustProxy: config.TRUSTED_PROXY_HOPS,
+    // ⚠ A function, not the bare number: since fastify 5.12.2 a numeric
+    // `trustProxy` trusts nothing (GHSA-3m5p-2c4r-xxw2: a hop count cannot tell
+    // the ingress from a direct caller). This keeps the count semantics; it is
+    // only safe while the port is reachable through the ingress alone.
+    trustProxy: (_addr: string, hop: number) => hop < config.TRUSTED_PROXY_HOPS,
     disableRequestLogging: false,
     // Global request-body cap (see `server-limits.ts`). Per-route overrides
     // land on the route options below; this is the floor for anything that

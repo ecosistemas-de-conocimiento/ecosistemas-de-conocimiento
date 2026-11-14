@@ -8,8 +8,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "next dev -p ${PORT:-3002}",
-    "build": "next build",
+    "dev": "next dev --webpack -p ${PORT:-3002}",
+    "build": "next build --webpack",
     "start": "sh scripts/migrate.sh && next start -p ${PORT:-3002}",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.eval.json --noEmit",
     "generate:types": "payload generate:types",
@@ -34,16 +34,16 @@
     "@aws-sdk/lib-storage": "^3.1049.0",
     "@edc/ai-client": "workspace:*",
     "@edc/chat-engine": "workspace:*",
-    "@payloadcms/db-postgres": "^3.84.1",
-    "@payloadcms/next": "^3.84.1",
-    "@payloadcms/richtext-lexical": "^3.84.1",
-    "@payloadcms/storage-s3": "^3.84.1",
+    "@payloadcms/db-postgres": "3.90.2",
+    "@payloadcms/next": "3.90.2",
+    "@payloadcms/richtext-lexical": "3.90.2",
+    "@payloadcms/storage-s3": "3.90.2",
     "graphql": "^16.8.1",
     "jose": "^5.9.6",
     "mammoth": "^1.12.0",
-    "next": "15.4.11",
+    "next": "16.4.3",
     "parse5": "^8.0.1",
-    "payload": "^3.84.1",
+    "payload": "3.90.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "read-excel-file": "^9.3.12",
@@ -56,9 +56,9 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "eslint": "^9.24.0",
-    "eslint-config-next": "15.4.11",
+    "eslint-config-next": "16.4.3",
     "typescript": "^5.8.0",
     "typescript-eslint": "^8.67.0",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.10"
   }
 }

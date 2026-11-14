@@ -177,6 +177,13 @@ export const Users: CollectionConfig = {
       sameSite: isProductionAuth ? 'None' : 'Lax',
       secure: isProductionAuth,
     },
+    // ⚠ 0 turns off the per-email forgot-password throttle Payload 3.90 added.
+    // It reserves the request on a SECOND connection, outside the request's
+    // transaction (`auth/operations/forgotPassword.js`), so concurrent
+    // unauthenticated calls could hold the whole pool waiting on each other
+    // (`access/oneConnection.pg.test.ts` caught it). 0 keeps the 3.88 path;
+    // no email adapter is configured, so there is no mail to throttle.
+    forgotPassword: { minRequestInterval: 0 },
   },
   admin: {
     useAsTitle: 'email',

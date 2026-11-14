@@ -303,14 +303,17 @@ describe.skipIf(!dockerOk)('every collection: a filter reads only what the calle
     expect(await list('ratings', 'ana', 'where[session.title][like]=Juana')).toHaveLength(BULK + 1)
   })
 
-  it('a platform admin filters and sorts through every relationship', async () => {
+  // Since Payload 3.90 a crossing also matches only rows of the target the
+  // caller may read there, platform admin included: conversations and their
+  // messages are their owner's alone (`Sessions.ts`, `Messages.ts`).
+  it('a platform admin filters and sorts through every relationship it may read', async () => {
     expect(await list('media', 'platform', 'where[uploadedBy.email][like]=juana')).toEqual([M_ANA])
-    expect(await list('ratings', 'platform', 'where[message.content][like]=secreta')).toEqual([R_ANA])
-    expect(await list('ratings', 'platform', 'where[session.title][like]=privada')).toEqual([R_ANA])
+    expect(await list('ratings', 'platform', 'where[message.content][like]=secreta')).toEqual([])
+    expect(await list('ratings', 'platform', 'where[session.title][like]=privada')).toEqual([])
     expect(await list('ratings', 'platform', 'where[user.email][like]=ben')).toEqual([R_BEN])
     expect(await list('memberships', 'platform', 'where[user.email][like]=juana')).toHaveLength(1)
-    const up = await ordered('ratings', 'platform', `where[id][in]=${R_ANA},${R_BEN}&sort=session.title`)
-    expect(await ordered('ratings', 'platform', `where[id][in]=${R_ANA},${R_BEN}&sort=-session.title`)).toEqual([...(up as number[])].reverse())
+    const up = await ordered('ratings', 'platform', `where[id][in]=${R_ANA},${R_BEN}&sort=user.email`)
+    expect(await ordered('ratings', 'platform', `where[id][in]=${R_ANA},${R_BEN}&sort=-user.email`)).toEqual([...(up as number[])].reverse())
   })
 
   it("the web's own filters still work", async () => {
