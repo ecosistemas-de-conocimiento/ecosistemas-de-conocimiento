@@ -23,8 +23,6 @@ import { randomBytes } from 'node:crypto'
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { documentTitleFor } from '@/lib/contentKind'
-
 import { apiGet, apiJson, pollUntil, uploadFixture } from './support/api'
 import { dbAccess, exec } from './support/db'
 import { fixtures } from './support/fixtures'
@@ -89,8 +87,9 @@ describe.skipIf(noSeed)('🔴 a published testimonio, read by a colleague', () =
     expect(res.body.bodyMarkdown).toBeUndefined()
     // ⚠ `name` is KEPT since 2026-11-10 (R4-01, `ea0c6ec`): a colleague gets the
     // neutral title in its place (`neutralNameForCaller`), never the file name.
-    // Exact value, not just "no marker" (that is `res.text` above).
-    expect(res.body.name).toBe(documentTitleFor({ contentKind: 'testimonio', anonymise: true }))
+    // Exact value, not just "no marker" (that is `res.text` above). A literal,
+    // not the production function: a test that calls it agrees with any bug in it.
+    expect(res.body.name).toBe('Testimonio')
   })
 
   it('by list: same', async () => {

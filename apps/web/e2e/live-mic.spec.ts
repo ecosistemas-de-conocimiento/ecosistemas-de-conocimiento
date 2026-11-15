@@ -115,6 +115,9 @@ async function stopAndExpectUpload(page: Page): Promise<void> {
   // (`doc.kind`), not a byte search of the body: Playwright may hand back no
   // body at all for a large or streamed request (`postDataBuffer()` → null).
   expect(res.request().headers()['content-type'] ?? '').toMatch(/^multipart\/form-data;/);
+  // When Playwright does hand the body back, it still carries the WebM part.
+  const sent = res.request().postDataBuffer();
+  if (sent) expect(sent.includes(Buffer.from('audio/webm'))).toBe(true);
   if (process.env.LIVE_EXPECT_UPLOAD === '0') return;
   expect(res.ok(), `upload answered ${res.status()}`).toBe(true);
   const body = (await res.json()) as { doc?: { kind?: string } };

@@ -10,6 +10,8 @@ import { stackVar } from './env';
  * which reads as a product failure when it is a missing machine.
  *
  *   1. `E2E_TRANSCRIPTION=0` → skip; `=1` → run without probing.
+ *      With `EDC_WEB_URL` set (a remote stack) and no audio URL, it THROWS:
+ *      the local port would say nothing about that stack.
  *   2. audio-service `GET /health/ready` (unauthenticated) must answer 200.
  *      `EDC_AUDIO_URL`, else `LIVE_AUDIO_URL`, else the local host port.
  *   3. With `WHISPER_BACKEND=remote`, `WHISPER_REMOTE_URL` must answer at all:
@@ -42,6 +44,15 @@ async function probe(): Promise<string | null> {
   const forced = process.env.E2E_TRANSCRIPTION;
   if (forced === '0') return 'transcription disabled for this run (E2E_TRANSCRIPTION=0)';
   if (forced === '1') return null;
+
+  // A remote web target with no audio URL would probe THIS host's port, which
+  // says nothing about that stack, and skip the whole journey for it. Fail,
+  // naming the variables (audit 2026-11-14).
+  if (process.env.EDC_WEB_URL && !process.env.EDC_AUDIO_URL && !process.env.LIVE_AUDIO_URL) {
+    throw new Error(
+      'EDC_WEB_URL is set but neither EDC_AUDIO_URL nor LIVE_AUDIO_URL is: set one to probe that stack, or E2E_TRANSCRIPTION=0/1',
+    );
+  }
 
   const audioUrl = (
     process.env.EDC_AUDIO_URL ??

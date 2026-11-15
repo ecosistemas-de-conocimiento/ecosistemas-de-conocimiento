@@ -111,7 +111,9 @@ export function bytesMatchKind(head: Uint8Array, kind: UploadFileKind): boolean 
  * carries the xls MIME then fails the OLE2 byte check.
  */
 export function uploadFileKind(file: { name: string; type: string }): UploadFileKind | null {
-  const { name, type } = file;
+  // Lowercase, as `isDocumentUpload` does: a MIME's case carries no meaning.
+  const name = file.name;
+  const type = file.type.toLowerCase();
   if (type === 'application/pdf' || /\.pdf$/i.test(name)) return 'pdf';
   if (type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(name))
     return 'docx';

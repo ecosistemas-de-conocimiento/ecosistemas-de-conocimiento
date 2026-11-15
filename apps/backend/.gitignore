@@ -6,6 +6,9 @@ node_modules
 .DS_Store
 src/payload-types.ts
 tsconfig.tsbuildinfo
+# Next 16 rewrites it on every build, dev and `next typegen` (which `pnpm
+# typecheck` runs first).
+next-env.d.ts
 
 # Payload media uploads written by the dev server (local file storage).
 # Production deployments mount a persistent volume; the path itself stays

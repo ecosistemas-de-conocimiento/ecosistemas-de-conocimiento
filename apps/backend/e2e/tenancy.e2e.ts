@@ -91,12 +91,13 @@ describe.skipIf(stackDown)('tenancy and isolation', () => {
 
     const foreign = await forged('forged foreign', { organization: world.orgB.id })
     expect(foreign.status).toBe(403)
-    // Her own list, filtered here (not a `where[name]`, which the gated-query
-    // narrowing could turn into an empty answer for another reason).
-    const mine = await apiGet(world.alice.caller, '/api/documents?limit=200&depth=0')
-    expect(mine.status).toBe(200)
-    expect(mine.body.docs.length).toBeGreaterThan(0)
-    expect(mine.body.docs.map((d: { name?: string }) => d.name)).not.toContain(`${world.ns} forged foreign`)
+    // Nothing landed in org B. Asked of the platform admin, who reads every
+    // ecosistema: alice's own list could never show an org-B row, so it proved
+    // nothing (audit 2026-11-14). Filtered here, not by `where[name]`, which the
+    // gated-query narrowing could empty for another reason.
+    const inB = await apiGet(world.admin, `/api/documents?limit=200&depth=0&where[organization][equals]=${world.orgB.id}`)
+    expect(inB.status).toBe(200)
+    expect(inB.body.docs.map((d: { name?: string }) => d.name)).not.toContain(`${world.ns} forged foreign`)
 
     const res = await forged('forged', {})
     expect(res.status).toBe(201)

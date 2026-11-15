@@ -1197,8 +1197,8 @@ class AppStore {
   // ── doc ops ────────────────────────────────────────────────────────────
   /**
    * `uploadConsentVersion`: the per-resource consent the person ticked
-   * (`$lib/uploadConsent.ts`); sent only when given. The backend refuses a
-   * note without it.
+   * (`$lib/uploadConsent.ts`); without it no request
+   * leaves (`consentGiven`), and the backend refuses a note without it too.
    */
   async newDoc(
     sessionId: string,
@@ -1218,7 +1218,7 @@ class AppStore {
             isPinned: seed?.includeInContext ?? true,
             kind: 'markdown',
             mode: 'full-text',
-            ...(uploadConsentVersion !== undefined ? { uploadConsentVersion } : {}),
+            uploadConsentVersion,
           }),
           credentials: 'same-origin',
         },
@@ -1315,7 +1315,7 @@ class AppStore {
     contentKind: UploadContentKind = 'documento',
     /** "Anonimizar": a documento whose text passes the gate before anyone else reads it. */
     anonymise = false,
-    /** The per-resource consent the person ticked (`$lib/uploadConsent.ts`); sent only when given. */
+    /** The per-resource consent the person ticked (`$lib/uploadConsent.ts`); no request without it. */
     uploadConsentVersion?: number,
   ): Promise<WorkingDoc | null> {
     if (!consentGiven(uploadConsentVersion)) return null;
@@ -1344,7 +1344,7 @@ class AppStore {
       form.append('isPinned', 'true');
       form.append('contentKind', contentKind);
       if (anonymise) form.append('anonymise', 'true');
-      if (uploadConsentVersion !== undefined) form.append('uploadConsentVersion', String(uploadConsentVersion));
+      form.append('uploadConsentVersion', String(uploadConsentVersion));
       const res = await fetch(`/api/sessions/${sessionId}/documents`, {
         method: 'POST',
         body: form,

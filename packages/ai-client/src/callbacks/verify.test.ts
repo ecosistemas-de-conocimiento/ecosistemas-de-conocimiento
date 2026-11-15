@@ -189,8 +189,9 @@ describe('the replay window', () => {
 });
 
 describe('🔴 the emitter coupling — 300s holds ONLY while ai-service re-stamps', () => {
-  // ai-service RETRY_SCHEDULE_MS = [0, 5s, 30s, 2m, 10m], each delay measured
-  // from the previous attempt ⇒ the fifth attempt lands at t+12m35s = t+755s.
+  // ai-service RETRY_SCHEDULE_MS = [0, 5s, 30s, 2m, 10m, 30m, 2h] (seven
+  // attempts), each delay measured from the previous attempt ⇒ the fifth
+  // lands at t+12m35s = t+755s, past 300s like the two after it.
   const FINAL_RETRY_OFFSET_S = 755;
 
   // GATE: the enqueue-time-stamped late retry. This pair is the alarm.

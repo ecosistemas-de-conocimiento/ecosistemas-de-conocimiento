@@ -10,10 +10,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ESLint } from 'eslint';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const eslint = new ESLint({ cwd: web });
+
+// The first lint loads typescript-eslint and the config, which can pass the
+// default 5 s under load (audit 2026-11-14).
+vi.setConfig({ testTimeout: 30_000 });
 
 /** The lines the rule flags in `code`, linted as if it were a source file. */
 async function flagged(code: string, filePath = 'src/lib/__rawErrorLogFixture.ts'): Promise<number[]> {

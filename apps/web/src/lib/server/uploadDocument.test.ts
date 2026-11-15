@@ -5,7 +5,13 @@ vi.mock('$lib/server/auth', () => ({
   backendFetch: vi.fn(),
 }));
 
-import { bytesMatchKind, consentErrorCode, parseUploadConsentVersion, uploadDocument } from './uploadDocument';
+import {
+  bytesMatchKind,
+  consentErrorCode,
+  parseUploadConsentVersion,
+  uploadDocument,
+  uploadFileKind,
+} from './uploadDocument';
 import { backendFetch } from '$lib/server/auth';
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -16,6 +22,14 @@ const MP3_FRAME = new Uint8Array([0xff, 0xfb, 0x90, 0x64]);
 const M4A = new Uint8Array([0, 0, 0, 0x20, ...enc('ftypM4A ')]);
 const WAV = enc('RIFF\x24\x00\x00\x00WAVEfmt ');
 const OGG = enc('OggS\x00\x02');
+
+describe('uploadFileKind', () => {
+  // As `isDocumentUpload` reads it (audit 2026-11-14): a MIME's case means nothing.
+  it('reads the MIME case-insensitively', () => {
+    expect(uploadFileKind({ name: 'informe', type: 'Application/PDF' })).toBe('pdf');
+    expect(uploadFileKind({ name: 'tabla', type: 'TEXT/CSV' })).toBe('csv');
+  });
+});
 
 describe('bytesMatchKind', () => {
   it.each([

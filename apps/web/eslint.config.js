@@ -11,7 +11,7 @@ import noRawErrorLog from '../backend/eslint/noRawErrorLog.js';
 // they log nothing that ships.
 //
 // `.svelte`: no Svelte parser is installed, so `svelteScripts` hands ESLint
-// each `<script>` block as TypeScript, padded so line numbers stay the file's.
+// each `<script>` block as TypeScript, padded so line and column numbers stay the file's.
 // The markup is invisible to it, so the two rules that need it are off there:
 // `no-unused-vars` (a name used only in the template) and `prefer-const` (a
 // `let` written by `bind:`).
@@ -22,10 +22,15 @@ const SCRIPT = /(<script\b[^>]*>)([\s\S]*?)<\/script>/g;
 const svelteScripts = {
   meta: { name: 'edc-svelte-scripts' },
   preprocess(text) {
-    return [...text.matchAll(SCRIPT)].map((m, i) => ({
-      text: '\n'.repeat(text.slice(0, m.index + m[1].length).split('\n').length - 1) + m[2],
-      filename: `${i}.ts`,
-    }));
+    return [...text.matchAll(SCRIPT)].map((m, i) => {
+      // Newlines keep the line numbers; spaces as wide as the text before the
+      // block on its `<script>` line keep that line's columns.
+      const before = text.slice(0, m.index + m[1].length).split('\n');
+      return {
+        text: '\n'.repeat(before.length - 1) + ' '.repeat(before.at(-1).length) + m[2],
+        filename: `${i}.ts`,
+      };
+    });
   },
   postprocess: (messages) => messages.flat(),
   supportsAutofix: false,
