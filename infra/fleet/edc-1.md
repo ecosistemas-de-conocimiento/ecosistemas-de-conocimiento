@@ -1,8 +1,10 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` at `29c54854` (per-resource upload consent with
-`consent_receipts`, the constancia page, a public `/privacidad`; migration `20261113_015634_consent_receipts` applied
-on start), deployed 2026-11-13 03:21 UTC — see §4zzzzzzzzzzzzzz. Before that, the deploys and dev data fixes of
+**Status:** live since 2026-10-17. Dev runs `main` at `5baaa45` (security updates: Payload 3.90.2, Next 16.4.3,
+fastify 5.12.6, audio-service FastAPI 0.162.0; no public key defaults in compose; migration
+`20261114_234336_payload_3_90_seguridad` applied on start), deployed 2026-11-15 00:01-00:11 UTC — see §4zzzzzzzzzzzzzzz. Before
+that (per-resource upload consent with `consent_receipts`, the constancia page, a public `/privacidad`; migration
+`20261113_015634_consent_receipts` applied on start), deployed 2026-11-13 03:21 UTC — see §4zzzzzzzzzzzzzz. Before that, the deploys and dev data fixes of
 2026-10-29 to 2026-11-12 — §4zz to §4zzzzzzzzzzzzz. Before that (`[[wikilink]]` graph seeds, student
 notes on "Publicar" and "Publicar cambios", `.xls` uploads; migrations `20261028_170129`,
 `20261028_231948` with the `processed_body` backfill and `20261028_235647` applied on start), deployed
@@ -134,15 +136,17 @@ Proxy must stay OFF: Traefik on the box obtains Let's Encrypt certificates over 
 
 ### Coolify objects
 
-| object | name | uuid |
-|---|---|---|
-| Server | `localhost` (the box itself) | `c4sunfauiafh7ef2i6ugld7y` |
-| Private key (GitHub) | `github-edc-deploy` | `z3ferg0mhuqeqqo1itrj3tuc` |
-| Project | `edc` | `r6bdvlavx3ohv9hwrkkkjxyb` |
-| Environment | `dev` | `thvomosxtffavghmjmp0zcmp` |
-| Environment | `staging` | `nzdfzgyrk9oroxsunrggqs61` |
-| Application | `edc-dev` | `pehgnxpqvnonhihabzvnwnil` |
-| Application | `edc-staging` | `dwmvhro1iewb7uvpzg9qbspe` |
+| object | name |
+|---|---|
+| Server | `localhost` (the box itself) |
+| Private key (GitHub) | `github-edc-deploy` |
+| Project | `edc` |
+| Environment | `dev` |
+| Environment | `staging` |
+| Application | `edc-dev` |
+| Application | `edc-staging` |
+
+Their uuids are in Coolify (`GET /api/v1/servers`, `/projects`, `/applications`, `/security/keys`), not in this repo.
 
 ### Repository access
 
@@ -338,7 +342,7 @@ Found along the way:
 ### 4g. ✅ Done 2026-10-17 21:05–21:11 UTC: dev only
 
 All measured by the deploy agent. Staging (`edc-staging`) was not touched; it stays on its earlier build.
-The dev app was resolved by its domain through the API (`edc-dev` = `pehgnxpqvnonhihabzvnwnil`).
+The dev app was resolved by its domain through the API (`edc-dev`; its uuid is in Coolify).
 
 - Before the deploy, through the API: `AI_SERVICE_ADMIN_API_KEY` is 64 chars and its sha256 matches
   the local `EDC_DEV_AI_SERVICE_ADMIN_API_KEY`. `RERANK_API_KEY` is stored in Coolify (main and
@@ -382,7 +386,7 @@ compose file changed. Each app was resolved by its domain through the API before
 `HYBRID_LEXICAL_LEG` and `TRIGRAM_THRESHOLD` stay unset on both (API list, and unset inside
 ai-service). Dev first; staging only after dev's cleanup showed 61 GB free.
 
-| | dev (`pehgnxpqvnonhihabzvnwnil`) | staging (`dwmvhro1iewb7uvpzg9qbspe`) |
+| | dev (`edc-dev`) | staging (`edc-staging`) |
 |---|---|---|
 | Backup (`pg_restore -l` ok, sha256 matched off-box) | `/root/backups/20261017T2201Z/`, `edc_ai` 2.3 MB, `edc_backend` 314 KB | `/root/backups/20261017T2214Z/`, 96 KB / 141 KB |
 | Pre-check (API, by hash) | admin key matches `EDC_DEV_…`; `RERANK_API_KEY` `4dbc5b378dde`; timeout 600000 | admin key matches `EDC_STAGE_…`; same rerank key and timeout |
@@ -475,7 +479,7 @@ documents and ai-service documents were already gone (§4g–§4h). After, by SQ
 `zarzamora*` media rows, 0 `zarzamora*` RustFS objects, 0 `media` rows without a document.
 Document counts unchanged: 257 backend (248 `ready`), 253 ai-service.
 
-**Staging** (`dwmvhro1iewb7uvpzg9qbspe`, resolved by its domain through the API):
+**Staging** (`edc-staging`, resolved by its domain through the API):
 
 - Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261017T2257Z/`, `edc_ai`
   100 KB, `edc_backend` 141 KB. Pre-check by hash as in §4h.
@@ -1230,11 +1234,11 @@ participant in Prevención del dengue, 3 fresh conversations:
 - Deleting the 3 conversations removed the 3 `msg-*` documents (0 left).
 
 **🔴 Incident, 23:10–23:25 UTC: dev down ≈ 8 minutes, caused by this agent.** While I pruned after
-the deploy, another deploy queued by someone else at 23:06:36 (deployment
-`k3iirrwz0bsperpwxqgg43vz`) was building. My cleanup loop removed every dev image not tagged
+the deploy, another deploy queued by someone else at 23:06:36 (another deployment)
+was building. My cleanup loop removed every dev image not tagged
 with the current build, so it deleted its freshly built `web` and `ai-service` images and pruned
 20.47 GB of build cache. At start, Coolify tried to pull those images ("pull access denied for
-pehgnxpqvnonhihabzvnwnil_web…"); the deploy **failed** at 23:17:48, left all containers `Created`,
+<edc-dev uuid>_web…"); the deploy **failed** at 23:17:48, left all containers `Created`,
 and both health URLs answered 503. Volumes were untouched. Fixed by redeploying the same commit
 through the API (23:18:39 → 23:24:59, `finished`). 9 containers up, including the audio services
 the build turns on; health 200. Data checked: 252 backend documents, 4 organisations, 228 ai-service
@@ -1312,8 +1316,8 @@ rerank-only revert without a build can use the §4d method: edit the generated `
 `up -d --no-deps --no-build ai-service`.
 
 **Deploy.** Backup `/root/backups/20261021T2306Z/` (`edc_ai` 2.3 MB, `edc_backend` 311 KB,
-`pg_restore -l` ok, sha256 matched off-box). Deploy `k3iirrwz…` (23:06:36 → 23:17:31) **failed** at
-`up -d`: "audio-service-worker: failed to mkdir …/pehgnxpqvnonhihabzvnwnil_audio-work/_data/uploads:
+`pg_restore -l` ok, sha256 matched off-box). Another deployment (23:06:36 → 23:17:31) **failed** at
+`up -d`: "audio-service-worker: failed to mkdir …/<edc-dev uuid>_audio-work/_data/uploads:
 file exists". Two containers copied the image's directory into the fresh volume at the same moment.
 Dev came back at 23:18 with `docker compose -p <uuid> -f docker-compose.yaml --env-file .env up -d
 --no-build` on the box (9 containers healthy, health 200). The infra lane then redeployed the build
@@ -1394,7 +1398,7 @@ Variables added to `edc-dev` through the API, literal (Coolify also made the pre
 73 chars). No variable holds `:?` text. **Revert:** delete the five `EMBEDDINGS_*` variables (both
 the normal and the preview copies) and redeploy; ai-service then embeds on OpenRouter as before.
 
-Deploy `pfsw0ethnqcddkxa9znljlyn`: 00:26:05 → 00:32:21 UTC; 9
+Deploy: 00:26:05 → 00:32:21 UTC; 9
 containers up, both health URLs 200. No migration. The container sees all five values. ai-service
 runs ingest and query in one Node process, so the cooldown covers both.
 
@@ -1618,7 +1622,7 @@ sign-in without JS, Biblioteca and chat sources shown as "Testimonio · <tema> �
 (`payload_migrations` 3, `edc_ai` 6); no variable change.
 
 Backup `/root/backups/20261023T1846Z/`, time-limited copy, sha256 matched; deploy chained after it.
-Deploy 18:46:47 → 18:52:47 UTC (`zfuxbojxxbahpioyad5b4qct`). The agent's local poll was killed
+Deploy 18:46:47 → 18:52:47 UTC. The agent's local poll was killed
 (exit 137) during the build; the deploy itself ran to `finished`. 9 containers up, health 200.
 
 | check | result |
@@ -1650,7 +1654,7 @@ variable change.
 
 Backup `/root/backups/20261024T1931Z/` (`edc_ai` 2.4 MB, `edc_backend` 316 KB; `pg_restore -l`
 152 / 411 entries), off-box copy with `timeout 180 scp`, sha256 of both dumps matched. Deploy
-`kgnchqsqzgicgtobfzh350jh` 19:31:48 → 19:38:03 UTC. 9 containers up; `web`, `backend` and
+19:31:48 → 19:38:03 UTC. 9 containers up; `web`, `backend` and
 `ai-service` run the same image tag (`docker inspect`). Health 200 on `dev.` and `api.dev.`.
 0 error/fatal lines in any dev container's log at startup and after the smoke.
 
@@ -1685,7 +1689,7 @@ backfill, so every stored persona stays hidden until a prompt-`v5` re-extraction
 Backup `/root/backups/20261024T2034Z/` (`edc_ai` 2.4 MB, `edc_backend` 316 KB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261024T2034Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy. Deploy
-`27ziugdmodpi3e1kbqfuiomw` 20:34:50 → 20:41:07 UTC. 9 containers up; `web`, `backend` and
+20:34:50 → 20:41:07 UTC. 9 containers up; `web`, `backend` and
 `ai-service` run the same image tag (`docker ps`). Health 200 on `dev.` and `api.dev.`.
 0 error/fatal lines in the web, backend and ai-service logs at startup and after the smoke.
 
@@ -1719,7 +1723,7 @@ Backup `/root/backups/20261024T2327Z/` (`edc_ai` 2.7 MB, `edc_backend` 373 KB; `
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261024T2327Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy. ⚠ In zsh, quote the remote
 glob (`"root@…:/root/backups/<stamp>/*.dump"`), or zsh expands it locally and `scp` never runs.
-Deploy `qkgxzmyp0ijsxpfubz0gbtie` 23:27:24 → 23:33:38 UTC. 9 containers up; `web`, `backend` and
+Deploy 23:27:24 → 23:33:38 UTC. 9 containers up; `web`, `backend` and
 `ai-service` run the same image tag (`docker ps`). Health 200 on `dev.` and `api.dev.`.
 0 error/fatal lines in the web, backend and ai-service logs at startup and after the smoke.
 
@@ -1779,7 +1783,7 @@ retry and per-tab new chat. No compose or variable change.
 Backup `/root/backups/20261025T0014Z/` (`edc_ai` 2.7 MB, `edc_backend` 386 KB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261025T0014Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
-Deploy `zdcjmlnttlhwfbnilzrwipva` 00:15:12 → 00:21:16 UTC, `finished`. 9 containers up; `web`,
+Deploy 00:15:12 → 00:21:16 UTC, `finished`. 9 containers up; `web`,
 `backend` and `ai-service` run the same image tag. Health 200 on `dev.` and `api.dev.`.
 
 **audio-service is rebuilt by the deploy itself, not by hand.** The three audio containers run
@@ -1839,7 +1843,7 @@ change; the body limit lives in `apps/web/Dockerfile`, not in Coolify.
 Backup `/root/backups/20261025T0121Z/` (`edc_ai` 2.7 MB, `edc_backend` 384 KB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261025T0121Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
-Deploy `gtvzadn2b2f8dimzdyik63j7` 01:22:01 → 01:28:07 UTC, `finished`.
+Deploy 01:22:01 → 01:28:07 UTC, `finished`.
 9 containers up; `web`, `backend` and `ai-service` run the same image tag. Health 200 on
 `dev.` and `api.dev.`. The web container's env has `BODY_SIZE_LIMIT=201M` (`printenv`).
 
@@ -1897,7 +1901,7 @@ read before and after the deploy; `edc_ai` stays at 6.
 Backup `/root/backups/20261026T2104Z/` (`edc_ai` 6.2 MB, `edc_backend` 614 KB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261026T2104Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
-Deploy `otuvviogusyuiif2n611hvd9` 21:04:34 → 21:10:58 UTC, `finished`.
+Deploy 21:04:34 → 21:10:58 UTC, `finished`.
 9 containers up; `web`, `backend` and `ai-service` run the same image tag. Health 200 on
 `dev.` and `api.dev.`. The backend image's `src/collections/Documents.ts` holds
 `DOCUMENT_TEXT_MAX_LENGTH`, and `AiServiceCallbacks.ts` holds `maxLength: 100_000`.
@@ -1950,7 +1954,7 @@ deploy with a migration, read `payload_migrations` — do not trust the start.**
 Backup `/root/backups/20261026T2232Z/` (`edc_ai` 55 MB, `edc_backend` 3.1 MB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261026T2232Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
-Deploy `6y8i4t3fem7fjo8hlnegah4e` 22:33:23 → 22:39:32 UTC, `finished`.
+Deploy 22:33:23 → 22:39:32 UTC, `finished`.
 9 containers up; `web`, `backend` and `ai-service` run the same image tag. Health 200 on
 `dev.` and `api.dev.`. audio-service rebuilt by the deploy (§4zk): `edc-audio-service:dev` is now
 `8ef9fadc037f`, created 22:35:36 UTC; the old `e3c1b5681b45` is gone.
@@ -1997,7 +2001,7 @@ the chat input (appended after any typed text), plus one assertion in `e2e/live-
 only; no compose, variable or migration change, so no backup. Before landing, in the worktree:
 vitest 113 files / 2287 tests passed, svelte-check 0 errors.
 
-Push (fast-forward). Deploy `ujfxnpo931epgkiaveagnaoq` queued 00:19:21 →
+Push (fast-forward). Deploy queued 00:19:21 →
 `finished` 00:25:24 UTC (≈ 6 min). `web`, `backend` and `ai-service` run image
 the same image tag, healthy; the 3 audio containers stay on `edc-audio-service:dev` (§4zk). 9 dev
 containers. Health 200 on `dev.` and `api.dev.`. The served bundle carries the new code: chunk
@@ -2033,7 +2037,7 @@ then `Done.`, then "Next.js 15.4.11" and "Ready in 798ms":
 Backup `/root/backups/20261027T0259Z/` (`edc_ai` 57 MB, `edc_backend` 3.3 MB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261027T0259Z/`
 with `timeout 180 scp`; `sha256sum -c` of both dumps passed before the deploy.
-Deploy `lj5ljnjml6t9pvtvrzg173hs` 03:00:11 → 03:06:10 UTC, `finished`.
+Deploy 03:00:11 → 03:06:10 UTC, `finished`.
 9 containers up; `web`, `backend` and `ai-service` run the same image tag, healthy. The
 deploy rebuilt `edc-audio-service:dev` again (now `d970e50b32bf`; was `4bf65519445c`). Health 200
 on `dev.` and `api.dev.`. 0 `error`/`fatal` lines in all 9 dev containers at startup, and 0 in
@@ -2107,7 +2111,7 @@ belonged to a renamed migration that was never deployed.
 Backup `/root/backups/20261027T0606Z/` (`edc_ai` 91 MB, `edc_backend` 5.3 MB; `pg_restore -l`
 137 / 406 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261027T0606Z/`
 with `timeout 180 scp`; `sha256sum -c` of both dumps passed before the deploy.
-Deploy `nz9q4xibgc6o9ehdrrokgz1p` 06:07:07 → 06:13:11 UTC, `finished`.
+Deploy 06:07:07 → 06:13:11 UTC, `finished`.
 9 containers up; `web`, `backend` and `ai-service` run the same image tag, healthy. The
 deploy rebuilt `edc-audio-service:dev` again (now `d2362e21e954`, created 06:09:25 UTC). Health 200
 on `dev.` and `api.dev.`. 0 `error`/`fatal` lines in all 9 dev containers at startup. After the
@@ -2175,7 +2179,7 @@ or variable change; no ai-service migration.
 Backup `/root/backups/20261027T0620Z/` (`edc_ai` 88 MB, `edc_backend` 5.1 MB; `pg_restore -l`
 137 / 438 non-comment lines, `SHA256SUMS` beside them), off-box copy in the owner's
 `cide/backups/edc-1/20261027T0620Z/` with `timeout 180 scp`; `sha256sum -c` of both dumps passed
-before the deploy. Deploy `ske0kaoobhbqwdzpmmklci8o` 06:21:22 → 06:27:54 UTC, `finished`, 9 containers up; `web`, `backend` and `ai-service` run the same image tag,
+before the deploy. Deploy 06:21:22 → 06:27:54 UTC, `finished`, 9 containers up; `web`, `backend` and `ai-service` run the same image tag,
 healthy. The deploy rebuilt `edc-audio-service:dev` again (now `34eaa1a34994`). Health 200 on
 `dev.` and `api.dev.`. 0 `error`/`fatal` lines in 8 of 9 dev containers at startup and after the
 smoke; postgres holds 2 `ERROR: syntax error` lines (06:28:22 UTC), both the deploy agent's own
@@ -2224,7 +2228,7 @@ variable or migration change.
 Backup `/root/backups/20261027T2252Z/` (`edc_ai` 88 MB, `edc_backend` 5.4 MB; `pg_restore -l`
 137 / 438 non-comment lines, `SHA256SUMS` beside them), off-box copy in the owner's
 `cide/backups/edc-1/20261027T2252Z/` with `timeout 180 scp`; `sha256sum -c` of both dumps passed
-before the deploy. Deploy `q00lhthv4nae5zbozn5cjmuq` 22:52:35 → 22:58:41 UTC, `finished`, 9 containers up; `web`, `backend` and `ai-service` run the same image tag,
+before the deploy. Deploy 22:52:35 → 22:58:41 UTC, `finished`, 9 containers up; `web`, `backend` and `ai-service` run the same image tag,
 healthy. The deploy rebuilt `edc-audio-service:dev` again (now `ab794b81e5ba`). Health 200 on
 `dev.` and `api.dev.`. 0 `error`/`fatal` lines in 8 of 9 dev containers at startup and after the
 check; postgres holds 34 `ERROR` lines, all the deploy agent's own queries (30 from one wait loop
@@ -2297,10 +2301,10 @@ Backups, one before each deploy: `/root/backups/20261028T0557Z/` (`edc_ai` 129 M
 `cide/backups/edc-1/<same stamp>/` with `timeout 180 scp`; `sha256sum -c` of all four dumps passed
 before each deploy.
 
-| deploy | uuid | queued → finished (UTC) |
-|---|---|---|
-| first | `kgqliryjwiendh83wfebv9po` | 05:58:33 → 06:05:10 |
-| second | `lips5ibff6eu68fdt1z6hbol` | 06:06:50 → 06:10:45 |
+| deploy | queued → finished (UTC) |
+|---|---|
+| first | 05:58:33 → 06:05:10 |
+| second | 06:06:50 → 06:10:45 |
 
 After the second: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in all 9 dev
 containers at startup.
@@ -2345,9 +2349,9 @@ Backup `/root/backups/20261028T0805Z/` (`edc_ai` 129 MB, `edc_backend` 9.5 MB); 
 137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in the owner's
 `cide/backups/edc-1/20261028T0805Z/` with `timeout 180 scp`; `sha256sum -c` passed before the deploy.
 
-| deploy | uuid | queued → finished (UTC) |
-|---|---|---|
-| first | `psmqc01hajshahc8hyszsdi2` | 08:06:30 → 08:12:54 |
+| deploy | queued → finished (UTC) |
+|---|---|
+| first | 08:06:30 → 08:12:54 |
 
 After: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in all 9 dev
 containers at startup. The backend container's `package.json` line 22 has
@@ -2394,9 +2398,9 @@ Backup `/root/backups/20261028T0930Z/` (`edc_ai` 129 MB, `edc_backend` 8.5 MB); 
 137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in the owner's
 `cide/backups/edc-1/20261028T0930Z/` with `timeout 180 scp`; `sha256sum -c` passed before the deploy.
 
-| deploy | uuid | queued → finished (UTC) |
-|---|---|---|
-| first | `tgg1t8wsmti9eck4tyge7fkz` | 09:31:07 → 09:36:40 |
+| deploy | queued → finished (UTC) |
+|---|---|
+| first | 09:31:07 → 09:36:40 |
 
 After: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in all 9 dev
 containers at startup (one later postgres `ERROR` at 09:36:58 is the deploy agent's own mistyped
@@ -2440,9 +2444,9 @@ Backup `/root/backups/20261028T0941Z/` (`edc_ai` 129 MB, `edc_backend` 8.5 MB); 
 137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in the owner's
 `cide/backups/edc-1/20261028T0941Z/` with `timeout 180 scp`; `sha256sum -c` passed before the deploy.
 
-| deploy | uuid | queued → finished (UTC) |
-|---|---|---|
-| first | `mlr4mitb2lnl4gfshfr3j9z9` | 09:42:03 → 09:48:23 |
+| deploy | queued → finished (UTC) |
+|---|---|
+| first | 09:42:03 → 09:48:23 |
 
 After: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in all 9 dev
 containers at startup (one later postgres `ERROR` is the deploy agent's own query against a
@@ -2485,9 +2489,9 @@ in the owner's `cide/backups/edc-1/20261028T1717Z/` with `timeout 180 scp`; `sha
 before the deploy. ⚠ The host has no `pg_restore`; run `pg_restore -l` inside the postgres
 container (`docker exec -i "$C" pg_restore -l < file.dump`).
 
-| deploy | uuid | queued → finished (UTC) |
-|---|---|---|
-| first | `esqf5olw4rqgmi1misheshin` | 17:19:18 → 17:23:23 |
+| deploy | queued → finished (UTC) |
+|---|---|
+| first | 17:19:18 → 17:23:23 |
 
 After: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in 8 of 9 dev
 containers; the one postgres `ERROR` (17:29:44) is the deploy agent's own `psql` query, where the
@@ -2575,9 +2579,9 @@ checked in `information_schema.columns`. `edc_ai` `__drizzle_migrations` unchang
 set and 22 have `processed_body = body_markdown`. 22 rows in all of `documents` hold a
 `processed_body`, so the backfill touched nothing else.
 
-| deploy | uuid | queued → finished (UTC) |
-|---|---|---|
-| first | `jhmkdpv8te6lrmrf3vo0jbwe` | 00:17:47 → 00:24:06 |
+| deploy | queued → finished (UTC) |
+|---|---|
+| first | 00:17:47 → 00:24:06 |
 
 After: 9 dev containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in 8 of 9 dev
 containers (00:25 UTC). The postgres container holds the deploy agent's own two bad queries
@@ -2628,9 +2632,9 @@ inside the postgres container 137 / 440 non-comment lines, `SHA256SUMS` beside t
 the owner's `cide/backups/edc-1/20261029T0053Z/` with `timeout 300 scp`; `sha256sum -c` passed
 before the deploy.
 
-| deploy | uuid | queued → finished (UTC) |
-|---|---|---|
-| first | `s2fqskjbxgcurvqcyvjp0yev` | 00:55:38 → 00:59:48 |
+| deploy | queued → finished (UTC) |
+|---|---|
+| first | 00:55:38 → 00:59:48 |
 
 After: 9 dev containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. `payload_migrations` still 19, newest batch 12.
 0 `error`/`fatal` lines in all 9 dev containers (`docker logs --since 10m`, 01:02 UTC).
@@ -2664,7 +2668,7 @@ environment right before its deploy (≈ 9 MB for dev today, measured):
 ```sh
 ssh root@<edc-1-ip>
 mkdir -p /root/backups
-for APP in pehgnxpqvnonhihabzvnwnil dwmvhro1iewb7uvpzg9qbspe; do   # dev, staging
+for APP in <edc-dev uuid> <edc-staging uuid>; do   # from Coolify
   C=$(docker ps --format '{{.Names}}' | grep "^postgres-$APP")
   docker exec "$C" pg_dump -U edc -d edc_ai -Fc > "/root/backups/edc_ai-$APP-$(date -u +%Y%m%dT%H%MZ).dump"
 done
@@ -2732,7 +2736,7 @@ their row from the backend (`provisionEcosystem.ts`). Old spend stays booked to 
 Measured by the deploy agent. Staging untouched (still its earlier build, "Up 11 days"). Previous dev image
 was the earlier build. Pre-check: no documents in `graph_status` extracting or `anonymisation_status`
 pending, no active backend query, last `documents.updated_at` 03:53 UTC, backend log silent for 3 min.
-No backup taken by this run. Deploy `7aezwgxxjesa1fgqiednouul`, 05:37:19 -> 05:43:12 UTC.
+No backup taken by this run. Deploy 05:37:19 -> 05:43:12 UTC.
 Migration `20261029_042255_documents_held_text_hash` logged `Migrated (10ms)`, then `Done.`,
 `Ready in 864ms`; `payload_migrations` 19 -> 20, batch 13. After: `web`, `backend`, `ai-service` run
 the build's image tag, healthy; 0 error lines in all 9 dev containers.
@@ -2745,7 +2749,7 @@ extracting or `anonymisation_status` pending; last `documents.updated_at` 03:53 
 Backup `/root/backups/20261029T0643Z/` (`edc_ai` 312 MB, `edc_backend` 18.7 MB, `pg_restore -l` ok,
 sha256 matched off-box in the owner's `cide/backups/edc-1/20261029T0643Z/`). Backup command used:
 `docker exec <postgres> pg_dump -U edc -Fc <db>` per database, then `sha256sum` into `SHA256SUMS`.
-Deploy `kyk7m37pk7dngypqqr3g7e7r`, 06:45:52 -> ~06:50:13 UTC.
+Deploy 06:45:52 -> ~06:50:13 UTC.
 Migration `20261029_060304_evals` logged `Migrated (72ms)`, then `Done.`, `Ready in 832ms`;
 `payload_migrations` 20 -> 21, batch 14. After: `web`, `backend`, `ai-service` run the build's image tag, healthy; 0 error lines in all 9 dev containers.
 Smoke: `/` and `/admin/evals` 303 -> `/sign-in`; `/api/health` 200.
@@ -2824,9 +2828,9 @@ Backup `/root/backups/20261110T0538Z/` (`edc_ai` 299 MB, `edc_backend` 18 MB, pl
 `platform_settings` alone, 17 MB; `pg_restore -l` 137 / 472 / 45 lines; `SHA256SUMS`). Off-box copy in the owner's
 `cide/backups/edc-1/20261110T0538Z/`, `sha256sum -c` passed. Pre-check: no active query, last gate 2026-11-06 23:55.
 
-| deploy | uuid | queued -> finished (UTC) |
-|---|---|---|
-| first | `9nscrihdbwa1hbpkxf7xjfwl` | 05:41:28 -> 05:47:46 |
+| deploy | queued -> finished (UTC) |
+|---|---|
+| first | 05:41:28 -> 05:47:46 |
 
 **Migrations** at start, 05:47:47: `20261104_075139_documents_authors_kept` (11ms), `20261108_001902_documents_anonymise_switches`
 (59ms), `Done.`, "Ready in 858ms". `payload_migrations` 21 -> 23, batch 15. `documents.authors_kept` jsonb,
@@ -2877,9 +2881,9 @@ Backup `/root/backups/20261110T1825Z/` under `umask 077` (§7 step 6): `edc_ai` 
 152 / 506 / 75 lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's
 `cide/backups/edc-1/20261110T1825Z/` under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
 
-| deploy | uuid | queued -> finished (UTC) |
-|---|---|---|
-| first | `jdxkclihhi1idd3jtyyrrp99` | 18:27:05 -> 18:33:12 |
+| deploy | queued -> finished (UTC) |
+|---|---|
+| first | 18:27:05 -> 18:33:12 |
 
 **Migration** at start, 18:33:17: `20261110_070204_anonymisation_setting_changes_keys` (10ms), `Done.`, "Ready in
 927ms". `payload_migrations` 23 -> 24, batch 16. `enum_anonymisation_setting_changes_scope` =
@@ -2931,9 +2935,9 @@ lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's
 under `umask 077`, `sha256sum -c` passed, files 600, folder 700. Retention (§7 step 7) not applied in this run: dev
 now holds 9 stamps on each side.
 
-| deploy | uuid | queued -> finished (UTC) |
-|---|---|---|
-| first | `oasz1bbobuf3ongfycrneh0q` | 02:16:40 -> 02:22:48 |
+| deploy | queued -> finished (UTC) |
+|---|---|
+| first | 02:16:40 -> 02:22:48 |
 
 **No migration** at start, 02:22:52: "Reading migration files", `Done.`, "Ready in 811ms". `payload_migrations` 25,
 last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `2e74037d`, healthy (postgres, redis and
@@ -2988,9 +2992,9 @@ Backup `/root/backups/20261112T1523Z/` under `umask 077`: `edc_ai` 313 MB, `edc_
 lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's `cide/backups/edc-1/20261112T1523Z/`
 under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
 
-| deploy | uuid | queued -> finished (UTC) |
-|---|---|---|
-| first | `sdxkgvtdyleewihtbq1scq5i` | 15:25:01 -> 15:31:18 |
+| deploy | queued -> finished (UTC) |
+|---|---|
+| first | 15:25:01 -> 15:31:18 |
 
 **No migration** at start, 15:31:22: "Reading migration files", `Done.`, "Ready in 864ms". `payload_migrations` 25,
 last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `8fdcd258`, 7 with a healthcheck all
@@ -3043,9 +3047,9 @@ Backup `/root/backups/20261112T1934Z/` under `umask 077`: `edc_ai` 313 MB, `edc_
 lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's `cide/backups/edc-1/20261112T1934Z/`
 under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
 
-| deploy | uuid | queued -> finished (UTC) |
-|---|---|---|
-| first | `x3o9j5ymeozbz8hrlvvcmrz1` | 19:36:15 -> 19:42:24 |
+| deploy | queued -> finished (UTC) |
+|---|---|
+| first | 19:36:15 -> 19:42:24 |
 
 **No migration** at start, 19:42:28: "Reading migration files", `Done.`, "Ready in 808ms". `payload_migrations` 25,
 last batch 17. After: 9 dev containers up, web, backend and ai-service on tag `eb5625f5`, 7 with a healthcheck all
@@ -3111,9 +3115,9 @@ plus `documents`, `organizations`, `platform_settings` and `anonymisation_settin
 `pg_restore -l` 152 / 507 / 75 lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's
 `cide/backups/edc-1/20261113T0312Z/` under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
 
-| deploy | uuid | queued -> finished (UTC) |
-|---|---|---|
-| first | `4lcl4hdx1fmfcn91ywb4zhyu` | 03:14:48 -> 03:21:10 |
+| deploy | queued -> finished (UTC) |
+|---|---|
+| first | 03:14:48 -> 03:21:10 |
 
 **Migration** at start (backend log): 03:21:15 "Migrating: 20261113_015634_consent_receipts", "Migrated (87ms)",
 `Done.`, "Ready in 859ms". `payload_migrations` 26 (+1), last batch 18; `consent_receipts` exists with 10 columns
@@ -3153,6 +3157,53 @@ dev's `8fdcd258` images (backend, ai-service, web); the `eb5625f5` images stay f
 `/root/backups/` and in the laptop copy, 331.1 MB freed on each side (`du -sb`). Dev keeps `20261110T0538Z`,
 `20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z`, `20261112T1934Z` and `20261113T0312Z`,
 `sha256sum -c` OK on both sides after; staging's 7 unchanged.
+
+---
+
+### 4zzzzzzzzzzzzzzz. Done 2026-11-15 00:01-00:11 UTC: dev only - one migration; security updates of dependencies, keys without public defaults
+
+Measured by the deploy agent (quoted from its report, which covers dev only). Range
+`29c54854` (§4zzzzzzzzzzzzzz) -> `5baaa45`: npm security updates (Payload 3.88.0 -> 3.90.2 with every `@payloadcms/*`,
+Next 15.4.11 -> 16.4.3, fastify 5.12.6, drizzle-orm 0.45.2, backend vitest 4.1.10), audio-service FastAPI 0.162.0,
+Starlette 1.10.0, python-multipart 0.0.31 and requests 2.33.0, and `infra/docker-compose.yml`: `S3_ACCESS_KEY_ID` and
+`S3_SECRET_ACCESS_KEY` became `:?`, and `AUDIO_SERVICE_ADMIN_API_KEY` defaults to empty (`:-`; an empty bearer never
+authenticates) instead of `dev-audio-key-admin`. Dev sets the admin key since §4y (the `AUDIO_SERVICE_ADMIN_API_KEY` row
+there) and both S3 keys as required variables (`env-manifests.md` §2a), so the compose change needed no new variable. Staging has no
+`AUDIO_SERVICE_ADMIN_API_KEY`; that is why the admin key is `:-` and not `:?` (§4 footgun 1). One backend migration,
+`20261114_234336_payload_3_90_seguridad`. The deploy key moved to `edc-1-coolify` worked (the clone ran without error).
+
+Version check: dev runs `5baaa45` = GitHub `main` (deploy log, `git ls-remote`, image tags). Backup `/root/backups/20261114T2359Z/`; off-box copy in the
+owner's `cide/backups/edc-1/20261114T2359Z/`, `sha256sum -c` passed.
+
+| deploy | queued -> finished (UTC) |
+|---|---|
+| first | 00:01 -> 00:11 (containers recreated 00:07:09; image tags `5baaa45`) |
+
+**Migration** at start: `payload_migrations` 26 -> 27 (`20261114_234336_payload_3_90_seguridad`); `media._objectkey`
+present. Row counts unchanged across the deploy: 1103 documents, 949 media, 15 users. Versions read inside the
+containers: Payload 3.90.2, Next 16.4.3, fastify 5.12.6, FastAPI 0.162.0, Starlette 1.10.0, python-multipart 0.0.31.
+9 dev containers healthy, 0 restarts, 0 error lines in the logs from 00:07 to 00:11.
+
+**Smoke**, no model spend:
+
+| check | result |
+|---|---|
+| health | `dev.` and `api.dev.` 200; ai-service 200; audio-service `:8080` ready |
+| public pages | `/privacidad` 200, `/sign-in` 200 |
+| login, synthetic participant, then `/documentos` | 200 |
+
+Not verified: upload, ingest and chat (they cost model calls), and a real transcription.
+
+**Notices.** The *preview* copies of `POSTGRES_PASSWORD`, `EDC_ENV`, `ALLOWED_ORIGINS`, `AUTH_ISSUER` and `WEB_ORIGIN` hold
+`:?` error text since 2026-10-24; previews are not used. ai-service logs `FSTDEP023` (`disableRequestLogging`
+deprecated).
+
+**Images and disk:** image ids `f971d54c…` deleted, `db9a4456…` kept for rollback (the report does not say which
+commit each carries); `docker builder prune` freed 13.74 GB.
+
+**Retention** (§7 step 7), dev only: `20261110T0538Z` deleted in `/root/backups/` and in the laptop copy. Dev keeps
+`20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z`, `20261112T1934Z`, `20261113T0312Z` and
+`20261114T2359Z` (inferred from §4zzzzzzzzzzzzzz's list and this deletion); staging's 7 unchanged.
 
 ---
 

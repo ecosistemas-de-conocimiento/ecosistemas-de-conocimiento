@@ -1,7 +1,7 @@
 # Registro de riesgos
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-12
+- **Versión:** 1.5
+- **Fecha:** 2026-11-15
 - **Estado:** vigente
 - **Fuentes:** en el repositorio: `plan/auditoria-ia-2026-10-17.md`, `plan/auditoria-codigo-2026-10-28.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/anonimizacion-y-voces.md`, `plan/adr-corpus-graph.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `apps/backend/src/lib/anonymise/fallbackGenerator.ts`, `apps/backend/src/lib/graph/queries.ts`, `apps/backend/src/collections/Documents.ts`. Fuera del repositorio: la bitácora del proyecto (registros del 2026-10-21, 2026-10-27 y 2026-10-28), el informe del 21 de octubre, los resultados de evaluación del 2026-10-29 y la auditoría de `main` del 2026-11-10 (`plan/orchestration/auditoria-2026-11-10/`). La versión 1.4 contrasta las mitigaciones con `main` del 2026-11-12, la línea de corte de la Etapa 1, y con lo desplegado en dev ese día (la misma versión); `services/ai-service/src/services/callbacks/emit.ts` y `apps/backend/src/lib/backfillLengua.ts` para R-43 y R-44.
 
@@ -71,13 +71,12 @@ quadrantChart
 
 | Id | Riesgo | Prob. | Impacto | Severidad | Mitigación actual | Rol responsable | Estado | Fuente |
 |---|---|---|---|---|---|---|---|---|
-| R-08 | **Llave de administración de audio-service con valor por defecto público** en el archivo de despliegue. Esa llave lee transcripciones crudas. No se sabe si dev la usa | Media | Alto | **Alta** | Audio-service no está expuesto a internet de forma directa (inferido de la topología) | Equipo de desarrollo | Abierto | `infra/docker-compose.yml`; auditoría del 2026-10-28, hallazgo 11 |
 | R-09 | **Sin cifrado en reposo.** Ni disco, ni Postgres, ni RustFS. Los respaldos no van cifrados y su copia fuera de la caja vive en la laptop del responsable de desarrollo | Media | Alto | **Alta** | Secretos fuera del repositorio; acceso a la caja solo por SSH. Desde el 2026-11-10 los volcados se crean con `umask 077` (archivos 600, carpetas 700) en el servidor y en la copia, y solo se guardan los 7 más recientes por entorno (citado de `infra/fleet/edc-1.md`). Cifrarlos es Etapa 2 ([Roadmap](roadmap.md#etapa-2)) | Equipo de desarrollo | Abierto | `infra/fleet/backups.md` (diseño no construido); auditoría del 2026-10-17 |
 | R-12 | **Sin CSP ni cabeceras de seguridad**; la protección CSRF descansa solo en `SameSite=Lax` | Media | Medio | Media | Imágenes en markdown desactivadas; DOMPurify bloquea `img` e `iframe`; citas construidas sobre el DOM | Equipo de desarrollo | Abierto | `apps/web/svelte.config.js`; `apps/web/src/lib/markdown.ts` |
 | R-13 | **Sin límite en turnos de chat**, y un solo contador de 30 generaciones por minuto para todos los ecosistemas | Media | Medio | Media | Desde el 2026-11-10 el inicio de sesión tiene límite: 4 fallos por (IP, correo) por hora y 100 por IP por hora, contados antes de revisar la contraseña, por debajo del bloqueo de Payload tras 5 intentos (desplegado). Límites del grafo por usuario y ecosistema; el detector se autolimita. Desde el 2026-11-12, en dev: 60 conversaciones nuevas por cuenta por hora (`SESSION_RATELIMIT_CREATE_USER_MAX`) y filtros a través de una relación acotados por petición y por persona (`apps/backend/src/access/relationFilters.ts`). El límite de turnos de chat y un tope total de conversaciones son Etapa 2 | Equipo de desarrollo | Mitigado en parte | `services/ai-service/src/server.ts`; `apps/backend/src/lib/loginRateLimit.ts` |
 | R-14 | **Permisos de servidor amplios.** El contenedor web recibe todos los secretos; backend y servicio de IA entran como superusuario de Postgres; SSH con contraseña habilitada y sin fail2ban según la auditoría del 2026-10-17 (estado actual sin verificar) | Media | Alto | **Alta** | Firewall de Hetzner con solo los puertos 22, 80 y 443 | Equipo de desarrollo | Abierto | Auditoría del 2026-10-17; `infra/fleet/env-manifests.md` §1.5 |
 | R-39 | **Inyección de instrucciones al modelo.** Un documento o una pregunta puede intentar cambiar el comportamiento del chat. Los mensajes `system` inyectados desde el navegador ya se rechazan, pero la parte del motor de chat en el stack de IA sigue abierta | Media | Medio | Media | Cercos del prompt sin identificadores; prueba de inyección en la bitácora §4l; minimizador de datos personales en la salida | Equipo de desarrollo | Mitigado en parte | `plan/auditoria-ia-2026-10-17.md`; auditoría del 2026-10-28, hallazgo 10 |
-| R-40 | **Dependencias sin vigilancia.** No hay `pnpm audit`, Dependabot ni Renovate. Starlette 0.41.3 y python-multipart 0.0.20 de audio-service tienen avisos de denegación de servicio conocidos (citado de la auditoría del 2026-10-28) | Media | Medio | Media | Ninguna | Equipo de desarrollo | Abierto | Auditoría del 2026-10-28, sección de bajos |
+| R-40 | **Dependencias sin vigilancia.** No hay `pnpm audit` periódico, Dependabot ni Renovate. La corrida a mano del 2026-11-14 encontró 16 críticos y 94 altos en todo el árbol; tras las actualizaciones de ese día quedan 0 críticos y 2 altos, de una herramienta de evaluaciones que no entra en ninguna imagen, y `pnpm audit --prod` da 0 y 0 (measured el 2026-11-14 en la rama de la actualización; en dev desde el 2026-11-15). Los avisos de Starlette y python-multipart de audio-service se corrigieron el mismo día | Media | Medio | Media | Versiones fijadas en los archivos de bloqueo; actualización del 2026-11-14 | Equipo de desarrollo | Mitigado en parte | Auditoría del 2026-10-28, sección de bajos; [Seguridad](../06-privacidad-y-seguridad/seguridad.md) §4.3 |
 
 ### 3.3 Técnicos e IA
 
@@ -121,10 +120,10 @@ quadrantChart
 | Severidad | Riesgos | Cuántos |
 |---|---|---|
 | Crítica | R-02, R-04, R-06, R-29, R-32 | 5 |
-| Alta | R-01, R-03, R-05, R-08, R-09, R-10, R-14, R-16, R-17, R-18, R-19, R-20, R-26, R-30, R-31, R-33, R-34, R-41 | 18 |
+| Alta | R-01, R-03, R-05, R-09, R-10, R-14, R-16, R-17, R-18, R-19, R-20, R-26, R-30, R-31, R-33, R-34, R-41 | 17 |
 | Media | R-07, R-11, R-12, R-13, R-21, R-22, R-23, R-27, R-28, R-36, R-37, R-38, R-39, R-40, R-42, R-43, R-44 | 17 |
 | Baja | R-24, R-25 | 2 |
-| **Total** | | **42** |
+| **Total** | | **41** |
 
 Los conteos salen de este registro; las severidades son juicio del redactor (ver la advertencia del inicio).
 
@@ -134,11 +133,11 @@ Tres acciones reducen a la vez la mayor parte del riesgo crítico de privacidad,
 2. Validar con el área jurídica el aviso de privacidad y el consentimiento (R-06, R-32; ver el [Roadmap](roadmap.md)).
 3. Encontrar la causa de la fuga del ecosistema 6 en la primera corrida de evals (R-04).
 
-Las correcciones de `main` hasta la línea de corte (2026-11-12) corren en dev desde el 2026-11-12.
+Las correcciones de `main` hasta la línea de corte (2026-11-12) corren en dev desde el 2026-11-12; las de seguridad del 2026-11-14, desde el 2026-11-15.
 
 ## 5. Riesgos cerrados desde las auditorías
 
-Se registran para que no se reabran sin saberlo. Los de las auditorías del 2026-10-17 y 2026-10-28 están cerrados en el código, verificado el 2026-10-30; no se volvieron a probar. Los de la auditoría del 2026-11-10 se verificaron contra `main` el 2026-11-10; su estado en dev, contra lo que corría en dev el 2026-11-11. Los del 2026-11-11 y 2026-11-12, contra `main` el 2026-11-12, cada rama con auditoría independiente CONFIRMED (citado del handoff del coordinador, fuera del repositorio).
+Se registran para que no se reabran sin saberlo. Los de las auditorías del 2026-10-17 y 2026-10-28 están cerrados en el código, verificado el 2026-10-30; no se volvieron a probar. Los de la auditoría del 2026-11-10 se verificaron contra `main` el 2026-11-10; su estado en dev, contra lo que corría en dev el 2026-11-11. Los del 2026-11-11 y 2026-11-12, contra `main` el 2026-11-12, cada rama con auditoría independiente CONFIRMED (citado del handoff del coordinador, fuera del repositorio). R-08, contra `main` el 2026-11-15.
 
 | Riesgo cerrado | Cierre | Fuente |
 |---|---|---|
@@ -164,6 +163,7 @@ Se registran para que no se reabran sin saberlo. Los de las auditorías del 2026
 | Las columnas de error guardadas, los registros y las trazas podían llevar mensajes de Postgres que citan valores | Mitigado del 2026-11-10 al 2026-11-12: patrón único al leer y al registrar, en backend y ai-service; en dev, 0 filas viejas que limpiar (citado de `infra/fleet/edc-1.md` §4zzzzzzzzzz) | `fix/enmascarado-regla`, `fix/filas-viejas` |
 | Una escritura vieja de fila entera podía devolver columnas de compuerta, interruptores, títulos o `kept` a un valor anterior, y mandar el original al corpus | Mitigado el 2026-11-12: ninguna columna de `documents` se escribe si no se envió; editar el texto contra un veredicto concurrente responde 409 (en dev desde el 2026-11-12) | `fix/escritura-vieja-*` |
 | No había aviso de privacidad, consentimiento informado ni comprobante con folio, y las conversaciones entraban al acervo sin aviso | Mitigado el 2026-11-12: casilla por recurso, constancia con folio `EDC-AAAA-NNNNNN` y `/privacidad`; queda la validación jurídica (R-06) | `fix/consentimiento-etapa-1-2026-11-12` |
+| R-08: la llave de administración de audio-service traía un valor por defecto público en el archivo de despliegue | Cerrado el 2026-11-14: queda vacía si el entorno no la define, y vacía no autentica; las llaves de RustFS son obligatorias (en dev desde el 2026-11-15) | `fix/seguridad-deps-2026-11-14` |
 
 ## Referencias
 

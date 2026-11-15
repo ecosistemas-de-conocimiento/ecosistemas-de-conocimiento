@@ -1,6 +1,6 @@
 # Funciones por ecosistema
 
-**Versión:** 1.5 · **Fecha:** 2026-11-12 · **Estado:** vigente
+**Versión:** 1.6 · **Fecha:** 2026-11-15 · **Estado:** vigente
 
 **Fuentes:**
 - `apps/backend/src/lib/features.ts` (defaults, dónde se aplica cada función, interruptores bloqueados, lectura con caché)
@@ -134,7 +134,7 @@ El detector es el modelo que, dentro de la compuerta de anonimización, busca no
 | Si falla la lectura | Devuelve `none`: falla cerrada, sin caché, para no deshacer un `none` guardado a propósito |
 | Caché | 30 s (`TTL_MS` en `apps/backend/src/lib/platformSettings.ts`) |
 | Valor de entorno inválido | Si no hay valor guardado y la variable es inválida, la llamada lanza error y el documento queda retenido |
-| Riesgo | Con `hosted`, el texto sin anonimizar de un testimonio puede salir a un proveedor externo. Por OpenRouter va con ZDR (sin retención en el proveedor). DeepInfra, que ai-service usa para el reordenamiento (`rerank-client.ts`), no lleva ZDR. Dev usa `hosted` por decisión del 2026-11-09, confirmada el 2026-11-10. Ver [protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md). |
+| Riesgo | Con `hosted`, el texto sin anonimizar de un testimonio puede salir a un proveedor externo. Por OpenRouter va con ZDR (sin retención en el proveedor). DeepInfra, que ai-service usa para el reordenamiento en staging (`rerank-client.ts`; en dev va al Spark), no lleva ZDR. Dev usa `hosted` por decisión del 2026-11-09, confirmada el 2026-11-10. Ver [protección de datos](../06-privacidad-y-seguridad/proteccion-de-datos.md). |
 | Historia | F3.2 |
 
 ### Variables de entorno que actúan como funciones

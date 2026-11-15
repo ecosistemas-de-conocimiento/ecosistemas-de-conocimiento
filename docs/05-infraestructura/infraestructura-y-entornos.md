@@ -1,9 +1,9 @@
 # Infraestructura y entornos
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-12
+- **Versión:** 1.5
+- **Fecha:** 2026-11-15
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (bitácora del servidor, hasta §4zzzzzzzzzzz, 2026-11-12), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/fleet/backups.md`, `infra/fleet/runbook.md`, `infra/fleet/topology.md`, `plan/spark-ai-adopcion.md`, `plan/servidor-desarrollo.md`, `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, notas de contexto del equipo, `TESTING.md`, código de `main` en `00b943f3` (2026-11-10).
+- **Fuentes:** `infra/fleet/edc-1.md` (bitácora del servidor, hasta §4zzzzzzzzzzzzzzz, 2026-11-15), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/fleet/backups.md`, `infra/fleet/runbook.md`, `infra/fleet/topology.md`, `plan/spark-ai-adopcion.md`, `plan/servidor-desarrollo.md`, `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, notas de contexto del equipo, `TESTING.md`, código de `main` en `00b943f3` (2026-11-10); las llaves sin valor público y el estado de dev, en `5baaa45` (2026-11-15).
 
 ## Para quién es y qué responde
 
@@ -225,7 +225,7 @@ Costo medido de una caída: si el Spark se cuelga (no responde, pero tampoco rec
 | IA | OpenRouter con ZDR para chat, condensación, expansión y grafo. Spark para embeddings, detector, transcripción y rerank (desde el 2026-10-21). Respaldo de embeddings en DeepInfra; respaldo del detector hospedado vía OpenRouter con ZDR | OpenRouter, más DeepInfra para rerank. Sin Spark ni audio | OpenRouter con llave local, o el proveedor falso `fake-provider` (perfil `fake`). Rerank apagado |
 | Ecosistemas | ids 1, 3, 6, 7 y 8 (citado, `edc-1.md` §4x y §4zp) | organización `Montaje` (id 1), creada a mano el 2026-10-17 | los del seed de `corpus-generativo` |
 | Usuarios demo (solo roles) | admin de plataforma; participante (rol `member`); `investigador`; dos `estudiante`; investigador de Semiosis; investigador de Dengue (citado, `edc-1.md` §4w y §4zq) | admin de plataforma; usuario de humo con rol `owner` de `Montaje` (citado, `edc-1.md` §3) | admin creado por el seed |
-| Versión desplegada | `29c54854` (el código de `main`; los commits posteriores solo cambian `docs/` e `infra/fleet/`), desplegada el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México), con 26 migraciones de Payload (measured con `docker ps` y `payload_migrations` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz). El 2026-11-12 hubo tres despliegues sin migración: `2e74037d` (02:22 UTC), `8fdcd258` (15:31 UTC) y `eb5625f5` (19:42 UTC); antes, `9463c79c` (2026-11-10 23:03 UTC) | web y backend de la versión del 2026-10-17 ("Up 3 weeks"); ai-service "Up 5 days", etiqueta `97d5316a` (measured el 2026-11-12, `edc-1.md` §4zzzzzzzzz) | lo que haya en el árbol de trabajo |
+| Versión desplegada | `5baaa45` (el `main` de ese momento: actualizaciones de seguridad de dependencias y llaves sin valor público), desplegada el 2026-11-15, 00:01-00:11 UTC (2026-11-14 18:01-18:11 en la Ciudad de México), con 27 migraciones de Payload; la nueva, `20261114_234336_payload_3_90_seguridad`, añade `media._objectkey` (measured por el agente de despliegue con el registro del despliegue, `git ls-remote`, las etiquetas de imagen y `payload_migrations`, `edc-1.md` §4zzzzzzzzzzzzzzz). Antes, `29c54854` (2026-11-13 03:21 UTC, consentimiento por recurso); el 2026-11-12 hubo tres despliegues sin migración: `2e74037d` (02:22 UTC), `8fdcd258` (15:31 UTC) y `eb5625f5` (19:42 UTC); antes, `9463c79c` (2026-11-10 23:03 UTC) | web y backend de la versión del 2026-10-17 ("Up 3 weeks"); ai-service "Up 5 days", etiqueta `97d5316a` (measured el 2026-11-12, `edc-1.md` §4zzzzzzzzz) | lo que haya en el árbol de trabajo |
 | Propósito | Iteración y demostración. Los datos son desechables por decisión del responsable | Copia congelada para pruebas de aceptación | Desarrollo individual |
 | Quién despliega | Quien opera el despliegue, por la API o el panel de Coolify. "Auto-deploy" está encendido en Coolify, pero no existe webhook de GitHub, así que en la práctica es manual (citado, `edc-1.md` §3) | Igual; auto-deploy apagado | Cada desarrollador con `docker compose` |
 
@@ -267,7 +267,7 @@ Regla de diseño importante: **cada variable de Coolify llega a `backend`, `web`
 | `ORG_KEY` | backend | Clave de organización por defecto | no |
 | `OPENROUTER_API_KEY` | ai-service | Llave del proveedor de modelos | sí |
 | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET` | backend, rustfs | Ubicación del almacén de archivos | no |
-| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | backend, rustfs | Credencial del backend; también es la llave raíz de RustFS | sí |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | backend, rustfs | Credencial del backend; también es la llave raíz de RustFS. Obligatorias: sin ellas compose no arranca (`:?`, desde el 2026-11-14) | sí |
 | `IDENTITY_TRUSTED_PROXY_HOPS` | backend | Saltos de proxy confiables (uno: Traefik). Un valor mayor permite saltarse los límites por IP | no |
 | `AI_CAPABILITY_MODE` | backend | Cómo reacciona el backend si ai-service no anuncia una capacidad | no |
 | `LLM_REQUEST_TIMEOUT_MS` | ai-service | Tiempo máximo de una generación (600 000 ms en ambos entornos, citado de `env-manifests.md` §2b) | no |
@@ -310,14 +310,14 @@ Regla de diseño importante: **cada variable de Coolify llega a `backend`, `web`
 | Variable | Propósito | Secreto |
 |---|---|---|
 | `AUDIO_SERVICE_URL` | Dirección interna de audio-service para el backend | no |
-| `AUDIO_SERVICE_API_KEY`, `AUDIO_SERVICE_ADMIN_API_KEY` | Llaves `app` y `admin` de audio-service | sí |
+| `AUDIO_SERVICE_API_KEY`, `AUDIO_SERVICE_ADMIN_API_KEY` | Llaves `app` y `admin` de audio-service. Sin valor en el entorno quedan vacías, y vacías no autentican | sí |
 | `WHISPER_MODEL`, `WHISPER_BAKE`, `WHISPER_BACKEND`, `WHISPER_REMOTE_URL`, `WHISPER_REMOTE_TIMEOUT_S`, `WHISPER_COMPUTE_TYPE`, `WHISPER_LANGUAGE` | Modelo y backend de transcripción (remoto, en el Spark) | no |
 | `WHISPER_REMOTE_TOKEN` | Token del proxy del Spark | sí |
 | `AUDIO_LOG_LEVEL`, `AUDIO_CPUS`, `AUDIO_MEMORY`, `COMPOSE_PROFILES`, `PUBLIC_AUDIO_UPLOAD_ENABLED` | Recursos y perfil compose | no |
 
 `BODY_SIZE_LIMIT=201M`, el tamaño máximo de cuerpo en web, no es variable de Coolify: lo fija la imagen (`apps/web/Dockerfile:45`; citado también de `edc-1.md` §4zl).
 
-Hallazgo abierto: `infra/docker-compose.yml:918` todavía da a `AUDIO_SERVICE_ADMIN_API_KEY` el valor por defecto público `dev-audio-key-admin`. Si dev no define la variable, cualquiera que conozca el repositorio tiene la llave admin de audio, que lee transcripciones crudas. No se ha verificado si dev la define (auditoría de código del 2026-10-28, hallazgo 11; ver [Seguridad](../06-privacidad-y-seguridad/seguridad.md)).
+Cerrado el 2026-11-14 (en dev desde el 2026-11-15): `AUDIO_SERVICE_ADMIN_API_KEY` ya no tiene el valor público `dev-audio-key-admin`. Si el entorno no la define queda vacía (`infra/docker-compose.yml:915`), y un bearer vacío nunca autentica (`services/audio-service/app/auth.py`): la administración de audio queda cerrada. No es obligatoria (`:?`) porque compose la expande aun donde el perfil de audio está apagado, como en staging, que no la tiene (measured con `docker compose config` en la auditoría del 2026-11-14, citado del mensaje del commit `a521dd0`).
 
 ### 6.7 Fijas, prohibidas y opcionales
 

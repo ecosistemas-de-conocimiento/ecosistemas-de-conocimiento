@@ -1,7 +1,7 @@
 # Roadmap
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-12
+- **Versión:** 1.5
+- **Fecha:** 2026-11-15
 - **Estado:** vigente
 - **Fuentes:** en el repositorio: `plan/ux-demo-backlog.md`, `plan/corpus-recomendaciones.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/auditoria-ia-2026-10-17.md`, `plan/auditoria-codigo-2026-10-28.md`, `plan/servidor-desarrollo.md` y `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, `plan/adr-corpus-graph.md`, `TESTING.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, historial de git de `main` (hasta el 2026-10-29; la versión 1.2 lo contrasta con `main` y con lo desplegado en dev a las 18:33 UTC el 2026-11-10; la 1.3, con `main` y con lo que corría en dev el 2026-11-11; la 1.4, con `main` y dev en la línea de corte de la Etapa 1, el 2026-11-12). Fuera del repositorio: el brief v1 (2026-05-11), el informe de reunión con desarrollo del 21 de octubre de 2026 (§I a §VIII), la bitácora del proyecto (registros del 2026-10-21 y 2026-10-28) y los resultados de evaluación del 2026-10-29.
 
@@ -79,7 +79,7 @@ El informe del 21 de octubre §VIII lista acciones del equipo que no son código
 
 ## 3. Trabajo pendiente por tema
 
-### 3.0 Hecho del 2026-11-10 al 2026-11-12
+### 3.0 Hecho del 2026-11-10 al 2026-11-14
 
 La revisión de `main` del 2026-11-10 y las correcciones que siguieron cerraron varios pendientes de esta lista. Salen de las tablas de abajo. «Desplegado» quiere decir que el cambio corre en dev, que tiene la versión de `main` del 2026-11-12 desde ese día (antes: la del despliegue del 2026-11-10 a las 23:03 UTC, medido con `docker ps`, y las de los despliegues del 2026-11-12 a las 02:22 y 15:31 UTC, citados de `infra/fleet/edc-1.md` §4).
 
@@ -109,6 +109,8 @@ La revisión de `main` del 2026-11-10 y las correcciones que siguieron cerraron 
 | Columnas de error guardadas ocultas al leer, con un patrón único de mensajes de Postgres que citan valores; script `clean-stored-errors.ts` (0 filas en dev, 2026-11-12) | Desplegado | `infra/fleet/edc-1.md` §4zzzzzzzzzz |
 | Una escritura vieja de fila entera ya no revierte ninguna columna de `documents`; editar el texto contra un veredicto concurrente responde 409 | Desplegado | `git log` de `main` |
 | Consentimiento por recurso al subir, constancia con folio `EDC-AAAA-NNNNNN` (PDF desde el navegador) y aviso de privacidad en `/privacidad`, en borrador sin validación jurídica | Desplegado | `git log` de `main` |
+| Ninguna llave con valor público en el archivo de despliegue: la de administración de audio queda vacía por omisión y las de RustFS son obligatorias | Desplegado el 2026-11-15 | Rama `fix/seguridad-deps-2026-11-14`; [Seguridad](../06-privacidad-y-seguridad/seguridad.md) |
+| Dependencias con avisos actualizadas: Payload 3.90.2, Next 16.4.3, Fastify 5.12.6, drizzle-orm 0.45.2, vitest 4 en el backend; FastAPI, Starlette y python-multipart en audio-service. `pnpm audit --prod`: 0 críticos y 0 altos (measured el 2026-11-14) | Desplegado el 2026-11-15 | Ramas `fix/npm-seguridad-2026-11-14` y `fix/seguridad-deps-2026-11-14`; [Seguridad](../06-privacidad-y-seguridad/seguridad.md) §4 |
 | Scripts de datos en dev: `hold-for-consent` (184 filas), `refresh-ai-titles` (52 documentos), `backfill-provenance-titles` (0 pendientes), `clear-legacy-held-text` (2 filas), `clean-stored-errors` (0 filas) | Hecho en dev el 2026-11-12 (medido por el agente de despliegue) | `infra/fleet/edc-1.md` §4zzzzzzzzz y §4zzzzzzzzzz |
 
 
@@ -122,7 +124,6 @@ Antes de recibir el primer testimonio real conviene cerrar los puntos 2 a 4 de l
 | Obtener el visto bueno sobre el equipo que aloja el Spark. El respaldo del detector en dev es `hosted`, por OpenRouter con ZDR (`provider.zdr: true`, nunca se reintenta sin esa marca), por decisión del 2026-11-09, confirmada el 2026-11-10. `none` sigue disponible como ajuste y desde el 2026-11-10 frena también el hospedado cuando no hay URL del Spark (desplegado) | **Alta** | `apps/backend/src/lib/anonymise/fallbackGenerator.ts`; `apps/backend/src/lib/anonymise/detector.ts`; `plan/spark-ai-adopcion.md` |
 | Encontrar la causa de la fuga del ecosistema 6 en la primera corrida de evals: un `documento` sintético terminó `ready` con sus 3 nombres privados. Puede ser el detector, la regla de figuras públicas o el comparador de la evaluación | **Alta** | Resultados de evaluación del 2026-10-29 |
 | Validar con el área jurídica el aviso de `/privacidad` y el consentimiento (ver §2.2) | **Alta** | Brief v1 §3 y §4 |
-| Quitar el valor por defecto público de la llave de administración de audio-service y confirmar qué valor usa dev | **Alta** | `infra/docker-compose.yml`; auditoría del 2026-10-28, hallazgo 11 |
 | Puertos publicados solo hacia la interfaz local en `infra/docker-compose.override.yml`. Los límites de tamaño de cuerpo ya existen (ver §3.0) | Media | Auditoría del 2026-10-28 |
 | Comprobar qué hallazgos medios de privacidad (8 a 11) quedaron cubiertos por las correcciones del 2026-10-29 | Media | `plan/auditoria-codigo-2026-10-28.md` |
 | Rastrear qué documentos originan nombres de colonias en el grafo | Media | Bitácora del proyecto (2026-10-28) |

@@ -1,7 +1,7 @@
 # Arquitectura del sistema
 
-- **Versión:** 1.3
-- **Fecha:** 2026-11-12
+- **Versión:** 1.4
+- **Fecha:** 2026-11-15
 - **Estado:** vigente
 - **Fuentes:** `infra/docker-compose.yml`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md`, notas de contexto del equipo, `plan/adr-corpus-graph.md`, `plan/spark-ai-adopcion.md`, `plan/anonimizacion-y-voces.md`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/anonymise/gate.ts`, `apps/backend/src/lib/publishDocument.ts`, `apps/backend/src/lib/corpus.ts`, `apps/web/src/routes/api/generate/+server.ts`, `apps/web/src/lib/server/engine/*`, `packages/chat-engine/src/core/*`, `services/ai-service/src/server.ts`, `services/audio-service/app/*`. Código leído en `main` 00b943f3 el 2026-11-10 y revisado contra `main` `eb5625f5` el 2026-11-12. Dev corre `eb5625f5`, desplegado el 2026-11-12 a las 19:42 UTC (measured con `docker ps` por el agente de despliegue; `infra/fleet/edc-1.md` §4zzzzzzzzzzz).
 
@@ -37,7 +37,7 @@ La matriz completa está en [Matriz de roles y permisos](../02-requisitos/matriz
 | Sistema | Para qué lo usa EDC | Quién lo llama |
 |---|---|---|
 | OpenRouter | Generación de texto (DeepSeek V3.1) para respuestas, reescritura de preguntas, expansión, grafo, juez de evaluaciones; embeddings `bge-m3` en staging y como respaldo en dev; detector de datos personales en staging y como respaldo en dev | `ai-service` |
-| DeepInfra | Rerank (reordenamiento de pasajes) con `Qwen3-Reranker-0.6B` en staging; en dev el host no está verificado. DeepInfra no lleva ZDR (ver [Pila de IA](pila-de-ia.md)) | `ai-service` |
+| DeepInfra | Rerank (reordenamiento de pasajes) con `Qwen3-Reranker-0.6B` en staging; en dev, el rerank va al Spark desde el 2026-10-21 (`RERANK_PROVIDER=rerank-api`, `infra/fleet/edc-1.md` §4y). Respaldo de embeddings `bge-m3` en dev. DeepInfra no lleva ZDR (ver [Pila de IA](pila-de-ia.md)) | `ai-service` |
 | DGX Spark prestado (solo dev) | Whisper large-v3, detector Qwen3-30B-A3B, `bge-m3` y `Qwen3-Reranker-0.6B`, detrás de un proxy con token | `backend` (detector, títulos), `ai-service` (embeddings), `audio-service` (Whisper) |
 | Hetzner Cloud | La máquina `edc-1` (proyecto `edc`, región fsn1) y sus respaldos | operador |
 | Cloudflare DNS | Registros del dominio `ecosistemasdeconocimiento.com` en modo solo DNS (sin proxy), para que Traefik obtenga certificados Let's Encrypt | operador |
@@ -55,7 +55,7 @@ flowchart LR
   EDC["Ecosistemas de Conocimiento<br/>(edc-1, Hetzner)"]
   subgraph externos["Proveedores de IA hospedados"]
     OR["OpenRouter<br/>DeepSeek V3.1, bge-m3"]
-    DI["DeepInfra<br/>Qwen3-Reranker"]
+    DI["DeepInfra<br/>rerank de staging; respaldo de embeddings de dev"]
   end
   SP["DGX Spark prestado<br/>(solo dev, vía Tailscale)"]
   CF["Cloudflare DNS"]
@@ -81,7 +81,7 @@ Hay dos entornos, dev y staging ("montaje"), en la misma máquina. No hay produc
 | Contenedor | Tecnología | Responsabilidad | Base de datos | Puerto interno |
 |---|---|---|---|---|
 | `web` | SvelteKit con adapter-node | Páginas, BFF `/api/**`, motor de chat (`@edc/chat-engine` y `apps/web/src/lib/server/engine`) | ninguna propia | 3000 |
-| `backend` | Payload CMS 3 sobre Next.js 15 | Dominio, control de acceso, gate de anonimización, publicación, grafo, proveedor de identidad (JWT EdDSA) | `edc_backend` | 3002 |
+| `backend` | Payload CMS 3 sobre Next.js 16 | Dominio, control de acceso, gate de anonimización, publicación, grafo, proveedor de identidad (JWT EdDSA) | `edc_backend` | 3002 |
 | `ai-service` | Node, Fastify, Drizzle, BullMQ | Ingesta, chunking, embeddings, recuperación, rerank, generación, presupuesto, callbacks | `edc_ai` | 3000 |
 | `audio-service`, `audio-service-worker`, `audio-service-callbacks` | Python, FastAPI, arq | Transcripción de archivos y micrófono en vivo; una imagen, tres procesos | Redis | 8080 (solo la API) |
 | `postgres` | `pgvector/pgvector:pg16` | Dos bases: `edc_backend` y `edc_ai` | — | 5432 |

@@ -1,7 +1,7 @@
 # Manual de usuario
 
-- **Versión:** 1.5
-- **Fecha:** 2026-11-12
+- **Versión:** 1.6
+- **Fecha:** 2026-11-15
 - **Estado:** vigente
 - **Fuentes:** `plan/funcionalidades.md` (inventario por pantalla, 2026-10-27), `plan/mapa-historias.md`, `apps/web/src/lib/nav.ts`, `apps/web/src/lib/miembros.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/routes/` (textos de cada pantalla, leídos en `main` ac8fbf7c y revisados en `eb5625f5` el 2026-11-12), `apps/backend/src/lib/permissions.ts`, `apps/backend/src/lib/holdReview.ts`, `apps/backend/src/lib/contentKind.ts`, `apps/backend/src/collections/Media.ts`, `apps/web/e2e/evidencia/`, `plan/ux-demo-backlog.md`, `TESTING.md`.
 
@@ -59,7 +59,7 @@ Si no ves una sección, tu rol no la tiene o el ecosistema la apagó en Ajustes.
 - **Notas:**
   - No hay registro abierto. Tu cuenta la crea un responsable o investigador de tu ecosistema, que te da una contraseña temporal.
   - No hay "olvidé mi contraseña" ni cambio de contraseña dentro de la plataforma. Pide ayuda a quien te dio de alta. Ver [Etapa 2](#etapa-2).
-  - Tras varios intentos fallidos, la pantalla dice que la cuenta o la conexión quedó bloqueada un rato. Espera unos minutos. Payload bloquea la cuenta 10 minutos tras 5 fallos (citado de `apps/backend/src/lib/loginRateLimit.ts`, que cita los valores por omisión de Payload 3.88).
+  - Tras varios intentos fallidos, la pantalla dice que la cuenta o la conexión quedó bloqueada un rato. Espera unos minutos. Payload bloquea la cuenta 10 minutos tras 5 fallos (valores por omisión de Payload 3.90.2, medidos en `collections/config/defaults.js` el 2026-11-15).
   - Una cuenta desactivada no puede entrar, y sus sesiones abiertas se cierran (`apps/backend/src/collections/Users.ts`).
   - La sesión dura hasta 2 horas (inferido: la cookie de la web dura 7 días, `apps/web/src/lib/server/auth.ts`, pero el token del backend vence a los 7200 s por omisión de Payload, citado de `apps/backend/src/collections/Users.ts`, y la web no lo renueva). Al vencer, vuelves a la pantalla de entrada.
 

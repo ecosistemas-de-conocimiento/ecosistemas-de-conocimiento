@@ -1,6 +1,6 @@
 # Requisitos no funcionales
 
-**Versión:** 1.4 · **Fecha:** 2026-11-12 · **Estado:** vigente
+**Versión:** 1.5 · **Fecha:** 2026-11-15 · **Estado:** vigente
 
 **Fuentes:**
 - `plan/ux-demo-backlog.md` (latencia percibida del chat)
@@ -42,7 +42,7 @@ Este documento es para el equipo del proyecto, para revisores institucionales y 
 | Rendimiento y latencia | 8 | 5 | 3 | 0 |
 | Capacidad y límites | 8 | 6 | 2 | 0 |
 | Disponibilidad y recuperación | 5 | 0 | 2 | 3 |
-| Seguridad | 6 | 4 | 1 | 1 |
+| Seguridad | 6 | 5 | 1 | 0 |
 | Privacidad | 5 | 1 | 4 | 0 |
 | Accesibilidad | 5 | 3 | 1 | 1 |
 | Idioma e internacionalización | 3 | 2 | 1 | 0 |
@@ -50,9 +50,9 @@ Este documento es para el equipo del proyecto, para revisores institucionales y 
 | Mantenibilidad | 5 | 4 | 0 | 1 |
 | Observabilidad | 3 | 0 | 2 | 1 |
 | Costos de IA | 4 | 2 | 2 | 0 |
-| **Total** | **55** | **28** | **20** | **7** |
+| **Total** | **55** | **29** | **20** | **6** |
 
-Conteo medido el 2026-11-12 con `awk` sobre la columna de estado de cada fila RNF, por sección; «cumple (solo dev)» cuenta como cumple.
+Conteo medido el 2026-11-15 con `awk` sobre la columna de estado de cada fila RNF, por sección; «cumple (solo dev)» cuenta como cumple.
 
 ## 1. Rendimiento y latencia
 
@@ -126,7 +126,7 @@ Resumen. El detalle de controles, brechas y su estado está en [seguridad](../06
 | RNF-21 | Toda decisión de acceso se toma en el servidor, por ecosistema, con un solo mapa de rol a permisos. | cumple | `apps/backend/src/lib/permissions.ts`; prueba `roles.matrix.pg.test.ts`. Ver [matriz de roles y permisos](matriz-roles-y-permisos.md). |
 | RNF-22 | La sesión web viaja en una cookie `httpOnly`, `SameSite=Lax` y `secure`; los JWT que emite `/v1/identity/token` son EdDSA y duran 900 s como máximo. | cumple | `apps/web/src/lib/server/auth.ts`; `apps/backend/src/lib/jwt/sign.ts` (citado de la revisión de privacidad, leído en código). Ningún consumidor del repo usa esos JWT todavía; no hay flujo OAuth 2.0 (Etapa 2). |
 | RNF-23 | Los callbacks entre servicios llevan firma HMAC-SHA256 con comparación en tiempo constante. | cumple | `apps/backend/src/lib/hmac.ts` (ventana de 900 s; citado de la revisión de privacidad). |
-| RNF-24 | Ninguna llave de servicio tiene un valor por defecto público. | no cumple | `infra/docker-compose.yml` todavía trae una llave de administración de audio-service con valor por defecto público (leído en la revisión de decisiones, hallazgo 11 de la auditoría del 2026-10-28). |
+| RNF-24 | Ninguna llave de servicio tiene un valor por defecto público. | cumple | Desde el 2026-11-14 (en dev desde el 2026-11-15): `S3_ACCESS_KEY_ID` y `S3_SECRET_ACCESS_KEY` son obligatorias en `infra/docker-compose.yml`, y `AUDIO_SERVICE_ADMIN_API_KEY` queda vacía si el entorno no la define; vacía no autentica (`services/audio-service/app/auth.py`). |
 | RNF-25 | Hay límite de frecuencia en inicio de sesión. | cumple | Desde el 2026-11-10 (A-11; commits 223798da, 4d9d1b40 y cd7b7a12, desplegados): 4 intentos fallidos por (IP, correo) en una hora, por debajo del bloqueo de Payload (5 fallos bloquean la cuenta 10 min), y 100 fallos por IP en una hora sobre cualquier correo. El intento se cuenta antes de revisar la contraseña; el 429 trae `Retry-After` y llega al navegador (`apps/backend/src/lib/loginRateLimit.ts`, `rateLimits` en `apps/backend/src/lib/rateLimit.ts`). Los contadores viven en memoria de un proceso. Un límite por correo desde varias IP es Etapa 2. El límite de turnos de chat se movió a la sección Etapa 2. |
 | RNF-26 | Las respuestas HTTP llevan cabeceras de seguridad (CSP, HSTS, `X-Frame-Options`, `nosniff`). | parcial | No hay CSP ni esas cabeceras (citado de la revisión de privacidad). Mitigación: las imágenes en Markdown se muestran como texto y DOMPurify bloquea `img` e `iframe` (`apps/web/src/lib/markdown.ts`). |
 
