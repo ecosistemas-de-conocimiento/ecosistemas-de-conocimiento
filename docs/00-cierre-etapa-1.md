@@ -69,7 +69,7 @@ Criterios de éxito: contribución de punta a punta **implementado**, acervo por
 
 ## 4. Correcciones posteriores al cierre (29 oct - 12 nov)
 
-Del 2026-10-29 al 2026-11-12, hasta la línea de corte del código, hubo trabajo el 29 de octubre y el 4, 6, 7, 9, 10, 11 y 12 de noviembre (fechas de autor leídas con `git log --no-merges` el 2026-11-12); el grueso, el 10 de noviembre: la auditoría de `main` y sus correcciones. Desde el 2026-11-10, `main` solo recibe correcciones y la funcionalidad nueva va a `etapa-2`. La lista completa está en [Cronología e hitos](01-proyecto/cronologia-e-hitos.md) §4.1.
+Del 2026-10-29 al 2026-11-12, hasta la línea de corte del código, hubo trabajo el 29 de octubre y el 4, 6, 7, 9, 10, 11 y 12 de noviembre (fechas de autor leídas con `git log --no-merges` el 2026-11-12); el grueso, el 10 de noviembre: la auditoría de `main` y sus correcciones (inferido de los asuntos de los commits). Desde el 2026-11-10, `main` solo recibe correcciones y la funcionalidad nueva va a `etapa-2`. La lista completa está en [Cronología e hitos](01-proyecto/cronologia-e-hitos.md) §4.1.
 
 | Tema | Qué se corrigió | Fechas |
 |---|---|---|

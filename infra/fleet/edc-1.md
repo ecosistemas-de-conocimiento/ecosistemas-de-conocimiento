@@ -1238,7 +1238,7 @@ the deploy, another deploy queued by someone else at 23:06:36 (another deploymen
 was building. My cleanup loop removed every dev image not tagged
 with the current build, so it deleted its freshly built `web` and `ai-service` images and pruned
 20.47 GB of build cache. At start, Coolify tried to pull those images ("pull access denied for
-pehgnxpqvnonhihabzvnwnil_web…"); the deploy **failed** at 23:17:48, left all containers `Created`,
+<edc-dev uuid>_web…"); the deploy **failed** at 23:17:48, left all containers `Created`,
 and both health URLs answered 503. Volumes were untouched. Fixed by redeploying the same commit
 through the API (23:18:39 → 23:24:59, `finished`). 9 containers up, including the audio services
 the build turns on; health 200. Data checked: 252 backend documents, 4 organisations, 228 ai-service
@@ -1316,8 +1316,8 @@ rerank-only revert without a build can use the §4d method: edit the generated `
 `up -d --no-deps --no-build ai-service`.
 
 **Deploy.** Backup `/root/backups/20261021T2306Z/` (`edc_ai` 2.3 MB, `edc_backend` 311 KB,
-`pg_restore -l` ok, sha256 matched off-box). Deploy `k3iirrwz…` (23:06:36 → 23:17:31) **failed** at
-`up -d`: "audio-service-worker: failed to mkdir …/pehgnxpqvnonhihabzvnwnil_audio-work/_data/uploads:
+`pg_restore -l` ok, sha256 matched off-box). Another deployment (23:06:36 → 23:17:31) **failed** at
+`up -d`: "audio-service-worker: failed to mkdir …/<edc-dev uuid>_audio-work/_data/uploads:
 file exists". Two containers copied the image's directory into the fresh volume at the same moment.
 Dev came back at 23:18 with `docker compose -p <uuid> -f docker-compose.yaml --env-file .env up -d
 --no-build` on the box (9 containers healthy, health 200). The infra lane then redeployed the build

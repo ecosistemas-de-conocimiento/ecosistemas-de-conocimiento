@@ -7,7 +7,7 @@
 
 ## Para quién es y qué responde
 
-Este documento es para quien redacte el informe de la Etapa 1, para revisores que necesiten ubicar un hecho en el tiempo y para quien herede el desarrollo y quiera entender por qué el código tiene la forma que tiene. Responde: qué pasó y cuándo, de abril a octubre de 2026; cuánto trabajo hubo cada semana y en qué temas; cuándo se auditó, se desplegó y se grabó la evidencia; y cómo cerró la Etapa 1 el 2026-10-28. La §4.1 agrega lo que pasó después, hasta el 2026-11-12. Todas las fechas son absolutas. Los conteos de commits son **medidos** con `git log` sobre `main` el 2026-10-30, por fecha de autor, salvo los de la §4.1, medidos el 2026-11-12.
+Este documento es para quien redacte el informe de la Etapa 1, para revisores que necesiten ubicar un hecho en el tiempo y para quien herede el desarrollo y quiera entender por qué el código tiene la forma que tiene. Responde: qué pasó y cuándo, de abril a octubre de 2026; cuánto trabajo hubo cada semana y en qué temas; cuándo se auditó, se desplegó y se grabó la evidencia; y cómo cerró la Etapa 1 el 2026-10-28. La §4.1 agrega lo que pasó después, hasta el 2026-11-12. Todas las fechas son absolutas. Las fechas de trabajo salen de `git log` sobre `main` (fecha de autor), leído el 2026-10-30 y, para la §4.1, el 2026-11-12.
 
 ## 1. Vista general
 
@@ -122,7 +122,7 @@ gantt
 
 ### 4.1 Noviembre de 2026: correcciones después del cierre
 
-Días con trabajo hasta la línea de corte del código, por fecha de autor (leído con `git log --no-merges` el 2026-11-12): 2026-11-04, 2026-11-06, 2026-11-07, 2026-11-09, 2026-11-10, 2026-11-11 y 2026-11-12. El 2026-11-10 concentra la mayor parte: la auditoría de `main` y sus correcciones.
+Días con trabajo hasta la línea de corte del código, por fecha de autor (leído con `git log --no-merges` el 2026-11-12): 2026-11-04, 2026-11-06, 2026-11-07, 2026-11-09, 2026-11-10, 2026-11-11 y 2026-11-12. El 2026-11-10 concentra la mayor parte: la auditoría de `main` y sus correcciones (inferido de los asuntos de los commits).
 
 | Fecha | Hito | Detalle | Fuente |
 |---|---|---|---|
