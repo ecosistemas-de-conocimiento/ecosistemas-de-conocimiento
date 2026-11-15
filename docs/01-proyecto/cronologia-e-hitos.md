@@ -1,7 +1,7 @@
 # Cronología e hitos
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-12
+- **Versión:** 1.5
+- **Fecha:** 2026-11-15
 - **Estado:** vigente
 - **Fuentes:** historial de git de `main` (hasta el 2026-10-29; la §4.1 llega hasta la versión de `main` del 2026-11-12); `infra/fleet/edc-1.md` (bitácora de despliegues §4); `plan/auditoria-ia-2026-10-17.md`; `plan/auditoria-codigo-2026-10-28.md`; `plan/adr-corpus-graph.md`; `plan/spark-chat-eval-2026-10-26.md`; `apps/backend/src/eval/RESULTS.md`. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v0-brief-proyecto-plataforma-ia.md`, `briefs/v1-brief-repositorio-voces-resonancias.md`, `reus/260418/`, `reus/260511-kickoff/`, minutas de `docs/Textos del proyecto/Desarrollo (metodología)/`, «Estado del Proyecto IH-2025-I-445», la bitácora del proyecto (registros del 2026-10-17, 2026-10-21, 2026-10-27 y 2026-10-28), los resultados de evaluación del 2026-10-29, la carpeta de respaldos de edc-1 y `evidencia/`.
 
@@ -155,6 +155,8 @@ Commits sin merges hasta la línea de corte del código, por fecha de autor (med
 | 2026-11-12 | Nombres de ramas y etiqueta de la Etapa 1 | Ese día quedaron así: la etiqueta fija `etapa-1` = la entrega, la Etapa 1 con correcciones; la rama `etapa-1-281026` = la foto del 2026-10-28, sin correcciones (todo lo anterior al 2026-10-29, incluido lo escrito antes e integrado después); `main` = rama de trabajo; `etapa-2` = trabajo nuevo, hoy igual a `main` | `git tag`, `git branch` |
 | **2026-11-12** | **Línea de corte de la Etapa 1: `main` del 2026-11-12, con el consentimiento por recurso** | Lo que se encuentre después va a la Etapa 2. La etiqueta `etapa-1` marca la entrega: este código más los docs entregados | `git log` de `main` |
 | 2026-11-13 | Despliegue de dev, terminado a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México) | La versión de `main` del 2026-11-12 con el consentimiento por recurso y una migración, `consent_receipts` (measured con `docker ps` y `payload_migrations` por el agente de despliegue). Staging sin tocar | `infra/fleet/edc-1.md` |
+| 2026-11-14 | Ola de seguridad en `main` (`fix/seguridad-deps-2026-11-14`, `fix/npm-seguridad-2026-11-14`) | Ninguna llave con valor público en el archivo de despliegue; dependencias con avisos actualizadas (Payload 3.90.2, Next 16.4.3, Fastify 5.12.6; FastAPI, Starlette y python-multipart en audio-service). `pnpm audit --prod`: de 11 críticos y 71 altos a 0 y 0 (measured el 2026-11-14 en la rama de la actualización) | `git log` de `main` |
+| 2026-11-15 | Despliegue de dev, 00:01 a 00:11 UTC (2026-11-14 18:01 a 18:11 en la Ciudad de México) | La ola de seguridad del 2026-11-14 y una migración, `payload_3_90_seguridad` (measured por el agente de despliegue con el registro del despliegue y `payload_migrations`) | `infra/fleet/edc-1.md` |
 
 ## 5. Actividad por semana
 
@@ -190,7 +192,7 @@ El detalle está en [Seguridad](../06-privacidad-y-seguridad/seguridad.md) y [Es
 
 - **Entorno.** EDC vive desde el 2026-10-17 en una sola caja, edc-1, con dev y staging. No hay producción. Ver [Infraestructura y entornos](../05-infraestructura/infraestructura-y-entornos.md).
 - **Bitácora.** La sección §4 de `infra/fleet/edc-1.md` registra cada despliegue. Los registros citados aquí van del 2026-10-17 (§4g) al 2026-11-12 (§4zzzzzzzzzz).
-- **Dev.** Último despliegue de la Etapa 1: el 2026-10-29 a las 06:50 UTC (citado de `edc-1.md` §4zzzz). Después: el 2026-11-10 a las 05:47 UTC, a las 18:33 UTC (citado de `edc-1.md` §4zzzzzzz y §4zzzzzzzz) a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11), el 2026-11-12 a las 02:22 UTC y a las 15:31 UTC (citado de `edc-1.md` §4zzzzzzzzz y §4zzzzzzzzzz), el 2026-11-12 a las 19:42 UTC, y el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México) con la versión de `main` del 2026-11-12 que incluye el consentimiento por recurso (medido con `docker ps` por el agente de despliegue).
+- **Dev.** Último despliegue de la Etapa 1: el 2026-10-29 a las 06:50 UTC (citado de `edc-1.md` §4zzzz). Después: el 2026-11-10 a las 05:47 UTC, a las 18:33 UTC (citado de `edc-1.md` §4zzzzzzz y §4zzzzzzzz) a las 23:03 UTC (medido con `docker ps` en edc-1 el 2026-11-11), el 2026-11-12 a las 02:22 UTC y a las 15:31 UTC (citado de `edc-1.md` §4zzzzzzzzz y §4zzzzzzzzzz), el 2026-11-12 a las 19:42 UTC, y el 2026-11-13 a las 03:21 UTC (2026-11-12 21:21 en la Ciudad de México) con la versión de `main` del 2026-11-12 que incluye el consentimiento por recurso (medido con `docker ps` por el agente de despliegue), y el 2026-11-15 a las 00:11 UTC con la ola de seguridad del 2026-11-14 (medido por el agente de despliegue).
 - **Staging.** Congelado en una versión anterior desde el 2026-10-17 a las 23:03 UTC (citado de `edc-1.md` §4zzzz). Seguía sin tocar el 2026-11-10 (citado de `edc-1.md` §4zzzzzzzz).
 - **Respaldos.** 63 respaldos lógicos manuales, del `20261017T0421Z` al `20261029T0643Z`, unos 2.7 GB en total (medido con `ls` y `du` el 2026-10-30 sobre la carpeta de respaldos de edc-1, fuera del repositorio). Desde el 2026-11-10 se conservan los 7 más recientes por entorno (citado de `edc-1.md` §7).
 

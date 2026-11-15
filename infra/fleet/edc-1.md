@@ -1,8 +1,10 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` at `29c54854` (per-resource upload consent with
-`consent_receipts`, the constancia page, a public `/privacidad`; migration `20261113_015634_consent_receipts` applied
-on start), deployed 2026-11-13 03:21 UTC — see §4zzzzzzzzzzzzzz. Before that, the deploys and dev data fixes of
+**Status:** live since 2026-10-17. Dev runs `main` at `5baaa45` (security updates: Payload 3.90.2, Next 16.4.3,
+fastify 5.12.6, audio-service FastAPI 0.162.0; no public key defaults in compose; migration
+`20261114_234336_payload_3_90_seguridad` applied on start), deployed 2026-11-15 00:01-00:11 UTC — see §4zzzzzzzzzzzzzzz. Before
+that (per-resource upload consent with `consent_receipts`, the constancia page, a public `/privacidad`; migration
+`20261113_015634_consent_receipts` applied on start), deployed 2026-11-13 03:21 UTC — see §4zzzzzzzzzzzzzz. Before that, the deploys and dev data fixes of
 2026-10-29 to 2026-11-12 — §4zz to §4zzzzzzzzzzzzz. Before that (`[[wikilink]]` graph seeds, student
 notes on "Publicar" and "Publicar cambios", `.xls` uploads; migrations `20261028_170129`,
 `20261028_231948` with the `processed_body` backfill and `20261028_235647` applied on start), deployed
@@ -3153,6 +3155,53 @@ dev's `8fdcd258` images (backend, ai-service, web); the `eb5625f5` images stay f
 `/root/backups/` and in the laptop copy, 331.1 MB freed on each side (`du -sb`). Dev keeps `20261110T0538Z`,
 `20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z`, `20261112T1934Z` and `20261113T0312Z`,
 `sha256sum -c` OK on both sides after; staging's 7 unchanged.
+
+---
+
+### 4zzzzzzzzzzzzzzz. Done 2026-11-15 00:01-00:11 UTC: dev only - one migration; security updates of dependencies, keys without public defaults
+
+Measured by the deploy agent (quoted from its report, which covers dev only). Range
+`29c54854` (§4zzzzzzzzzzzzzz) -> `5baaa45`: npm security updates (Payload 3.88.0 -> 3.90.2 with every `@payloadcms/*`,
+Next 15.4.11 -> 16.4.3, fastify 5.12.6, drizzle-orm 0.45.2, backend vitest 4.1.10), audio-service FastAPI 0.162.0,
+Starlette 1.10.0, python-multipart 0.0.31 and requests 2.33.0, and `infra/docker-compose.yml`: `S3_ACCESS_KEY_ID` and
+`S3_SECRET_ACCESS_KEY` became `:?`, and `AUDIO_SERVICE_ADMIN_API_KEY` defaults to empty (`:-`; an empty bearer never
+authenticates) instead of `dev-audio-key-admin`. Dev already sets all three, so the compose change needed no new
+variable (inferred: the compose file rendered and the 9 containers came up). Staging has no
+`AUDIO_SERVICE_ADMIN_API_KEY`; that is why the admin key is `:-` and not `:?` (§4 footgun 1). One backend migration,
+`20261114_234336_payload_3_90_seguridad`. The deploy key moved to `edc-1-coolify` worked (the clone ran without error).
+
+Version check: dev runs `5baaa45` = GitHub `main` (deploy log, `git ls-remote`, image tags). Backup `/root/backups/20261114T2359Z/`; off-box copy in the
+owner's `cide/backups/edc-1/20261114T2359Z/`, `sha256sum -c` passed.
+
+| deploy | queued -> finished (UTC) |
+|---|---|
+| first | 00:01 -> 00:11 (the containers on `5baaa45` from 00:07) |
+
+**Migration** at start: `payload_migrations` 26 -> 27 (`20261114_234336_payload_3_90_seguridad`); `media._objectkey`
+present. Row counts unchanged across the deploy: 1103 documents, 949 media, 15 users. Versions read inside the
+containers: Payload 3.90.2, Next 16.4.3, fastify 5.12.6, FastAPI 0.162.0, Starlette 1.10.0, python-multipart 0.0.31.
+9 dev containers healthy, 0 restarts, 0 error lines in the logs from 00:07 to 00:11.
+
+**Smoke**, no model spend:
+
+| check | result |
+|---|---|
+| health | `dev.` and `api.dev.` 200; ai-service 200; audio-service `:8080` ready |
+| public pages | `/privacidad` 200, `/sign-in` 200 |
+| login, synthetic participant, then `/documentos` | 200 |
+
+Not verified: upload, ingest and chat (they cost model calls), and a real transcription.
+
+**Notices.** The *preview* copies of `POSTGRES_PASSWORD`, `EDC_ENV`, `ALLOWED_ORIGINS`, `AUTH_ISSUER` and `WEB_ORIGIN` hold
+`:?` error text since 2026-10-24; previews are not used. ai-service logs `FSTDEP023` (`disableRequestLogging`
+deprecated).
+
+**Images and disk:** image ids `f971d54c…` deleted, `db9a4456…` kept for rollback (the report does not say which
+commit each carries); `docker builder prune` freed 13.74 GB.
+
+**Retention** (§7 step 7), dev only: `20261110T0538Z` deleted in `/root/backups/` and in the laptop copy. Dev keeps
+`20261110T1825Z`, `20261110T2256Z`, `20261112T0214Z`, `20261112T1523Z`, `20261112T1934Z`, `20261113T0312Z` and
+`20261114T2359Z` (inferred from §4zzzzzzzzzzzzzz's list and this deletion); staging's 7 unchanged.
 
 ---
 

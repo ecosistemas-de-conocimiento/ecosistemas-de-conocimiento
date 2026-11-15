@@ -1,9 +1,9 @@
 # Guía del desarrollador
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-12
+- **Versión:** 1.5
+- **Fecha:** 2026-11-15
 - **Estado:** vigente
-- **Fuentes:** leídas en `main` ac8fbf7c el 2026-11-11 y revisadas en `main` `eb5625f5` el 2026-11-12: `package.json` (raíz y de cada paquete), `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `apps/backend/eslint.config.js`, `apps/backend/eslint/noRawErrorLog.js`, `apps/web/eslint.config.js`, `services/ai-service/eslint.config.js`, `apps/backend/.gitignore`, `infra/.env.example`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/docker-compose.dev.yml`, notas de contexto del equipo (Etapa 1), `TESTING.md`, `apps/backend/src/migrations/README.md`, `apps/backend/src/payload.config.ts`, `apps/backend/src/lib/features.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/lib/design/README.md`, `apps/backend/src/lib/graph/queries.ts`, `apps/backend/src/lib/graph/queries.test.ts`.
+- **Fuentes:** leídas en `main` ac8fbf7c el 2026-11-11, revisadas en `main` `eb5625f5` el 2026-11-12 y, para las versiones de dependencias y vitest, en `main` `5baaa45` el 2026-11-15: `package.json` (raíz y de cada paquete), `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `apps/backend/eslint.config.js`, `apps/backend/eslint/noRawErrorLog.js`, `apps/web/eslint.config.js`, `services/ai-service/eslint.config.js`, `apps/backend/.gitignore`, `infra/.env.example`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/docker-compose.dev.yml`, notas de contexto del equipo (Etapa 1), `TESTING.md`, `apps/backend/src/migrations/README.md`, `apps/backend/src/payload.config.ts`, `apps/backend/src/lib/features.ts`, `apps/web/src/lib/features.ts`, `apps/web/src/lib/design/README.md`, `apps/backend/src/lib/graph/queries.ts`, `apps/backend/src/lib/graph/queries.test.ts`.
 
 ## Para quién es y qué responde
 
@@ -19,7 +19,7 @@ Un solo repo con pnpm workspaces: `apps/*`, `services/*` y `packages/*` (`pnpm-w
 flowchart LR
     subgraph apps
         WEB["apps/web<br/>@edc/web<br/>SvelteKit (BFF y vistas)"]
-        BE["apps/backend<br/>@edc/backend<br/>Payload 3 + Next 15"]
+        BE["apps/backend<br/>@edc/backend<br/>Payload 3 + Next 16"]
     end
     subgraph packages["packages (stack de IA)"]
         CE["@edc/chat-engine"]
@@ -43,15 +43,15 @@ flowchart LR
 
 | Paquete | Versión | Responsabilidad | Versiones clave |
 |---|---|---|---|
-| `apps/backend` (`@edc/backend`) | 0.1.0 | El dominio: colecciones, permisos, compuerta de anonimización, grafo, limpiezas programadas y evaluaciones. También es el proveedor de identidad: firma JWT EdDSA y publica JWKS | payload ^3.84.1, next 15.4.11, `@payloadcms/db-postgres`, `@payloadcms/storage-s3`, vitest ^2.1.9 (2.1.9 en el lockfile), eslint ^9.24 |
-| `apps/web` (`@edc/web`) | 0.3.0 | BFF (la capa que el navegador llama; nunca habla directo con el backend) y todas las vistas. Sin SSR en toda la app | `@sveltejs/kit` ^2.15.1, svelte ^5.16 (runes), vite ^6, tailwind ^3.4, vitest ^4.1.6 (4.1.10 en el lockfile), playwright ^1.62.1, force-graph 1.52.0, 3d-force-graph 1.80.1. Sin eslint |
-| `services/ai-service` | 0.1.0 | Motor de IA y RAG agnóstico del dominio: ingesta, embeddings, recuperación, generación, presupuesto | fastify ^5.2, drizzle-orm ^0.38.3, bullmq ^5.34, zod ^4.5.4, vitest ^5.0.0, eslint ^9.17. `engines.node` ^26 |
-| `services/audio-service` | sin versión | Transcripción y nada más | fastapi 0.115.6, arq 0.26.3, faster-whisper 1.1.1 (`requirements.txt`) |
+| `apps/backend` (`@edc/backend`) | 0.1.0 | El dominio: colecciones, permisos, compuerta de anonimización, grafo, limpiezas programadas y evaluaciones. También es el proveedor de identidad: firma JWT EdDSA y publica JWKS | payload 3.90.2, next 16.4.3 (`next build` y `next dev` con `--webpack`), `@payloadcms/db-postgres`, `@payloadcms/storage-s3`, vitest ^4.1.10 (4.1.10 en el lockfile), eslint ^9.24 |
+| `apps/web` (`@edc/web`) | 0.3.0 | BFF (la capa que el navegador llama; nunca habla directo con el backend) y todas las vistas. Sin SSR en toda la app | `@sveltejs/kit` ^2.15.1, svelte ^5.16 (runes), vite ^6.4.5, tailwind ^3.4, vitest ^4.1.6 (4.1.10 en el lockfile), playwright ^1.62.1, force-graph 1.52.0, 3d-force-graph 1.80.1. Sin eslint |
+| `services/ai-service` | 0.1.0 | Motor de IA y RAG agnóstico del dominio: ingesta, embeddings, recuperación, generación, presupuesto | fastify ^5.12.6, drizzle-orm ^0.45.2, drizzle-kit ^0.31.7, bullmq ^5.34, zod ^4.5.4, vitest ^5.0.0, eslint ^9.17. `engines.node` ^26 |
+| `services/audio-service` | sin versión | Transcripción y nada más | fastapi 0.162.0, starlette 1.10.0, python-multipart 0.0.31, arq 0.26.3, faster-whisper 1.1.1 (`requirements.txt`) |
 | `packages/ai-client` | 0.34.0 | Cliente tipado de la API `/v1` de ai-service | sin dependencias de producción; vitest ^5.0.0 |
 | `packages/chat-engine` | 0.10.0 | El turno RAG (condensar, recuperar, armar el prompt) y componentes Svelte del chat | agnóstico del dominio; vitest ^5.0.0 |
 | `packages/identity-client` | 0.4.0 | Sesión y verificación de tokens con `jose` | ningún paquete del repo lo importa (verificado en los `package.json` de `apps/*` y `services/*` el 2026-11-12); vitest ^5.0.0 |
 
-Versiones medidas: leídas de cada `package.json` y de `pnpm-lock.yaml` en `main` ac8fbf7c, el 2026-11-11. Hay tres versiones de vitest en el repo: 2.1.9 en el backend, 4.1.10 en la web y 5.0.5 en ai-service y los paquetes (lockfile). Sus banderas no son iguales (sección 6). Infraestructura de datos: Postgres 16 con pgvector (imagen propia basada en `pgvector/pgvector:pg16`), Redis 7 y RustFS como almacenamiento compatible con S3. Dos bases en el mismo servidor: `edc_backend` (Payload) y `edc_ai` (ai-service). Están separadas a propósito: Payload y Drizzle guardan su registro de migraciones en el esquema `public` y se pisarían (citado de `infra/.env.example`).
+Versiones medidas: leídas de cada `package.json` y de `pnpm-lock.yaml` en `main` ac8fbf7c, el 2026-11-11; las de backend, ai-service, audio-service y vite, en `main` `5baaa45` el 2026-11-15. Hay dos versiones de vitest en el repo: 4.1.10 en el backend y la web, y 5.0.5 en ai-service y los paquetes (lockfile). Sus banderas no son iguales (sección 6). Infraestructura de datos: Postgres 16 con pgvector (imagen propia basada en `pgvector/pgvector:pg16`), Redis 7 y RustFS como almacenamiento compatible con S3. Dos bases en el mismo servidor: `edc_backend` (Payload) y `edc_ai` (ai-service). Están separadas a propósito: Payload y Drizzle guardan su registro de migraciones en el esquema `public` y se pisarían (citado de `infra/.env.example`).
 
 `services/ai-service` y los tres `packages/` forman el stack de IA, agnóstico del dominio. Ver la sección 10.
 
@@ -220,7 +220,7 @@ Scripts de mantenimiento en `apps/backend/scripts/`. Los tres siguientes corren 
 
 ## 5. Migraciones
 
-Hay 26 migraciones registradas en `apps/backend/src/migrations/index.ts`, desde la línea base `20260908_092211_baseline` hasta `20261113_015634_consent_receipts` (medido: contadas en `index.ts` de `main` 29c54854, 2026-11-12). La última, `20261113_015634_consent_receipts`, corrió en dev con el despliegue de `29c54854` del 2026-11-13 a las 03:21 UTC (citado de `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzz); `20261110_070204_anonymisation_setting_changes_keys`, con el de `44787730` (citado de `infra/fleet/edc-1.md`, 2026-11-10 18:33 UTC). La tabla de la cadena con lo escrito a mano en cada una está en `apps/backend/src/migrations/README.md`.
+Hay 27 migraciones registradas en `apps/backend/src/migrations/index.ts`, desde la línea base `20260908_092211_baseline` hasta `20261114_234336_payload_3_90_seguridad` (medido: contadas en `index.ts` de `main` `5baaa45`, 2026-11-15). La última corrió en dev con el despliegue de `5baaa45` del 2026-11-15, 00:01-00:11 UTC (citado de `infra/fleet/edc-1.md` §4zzzzzzzzzzzzzzz); `20261113_015634_consent_receipts`, con el de `29c54854` del 2026-11-13 a las 03:21 UTC; `20261110_070204_anonymisation_setting_changes_keys`, con el de `44787730` (citado de `infra/fleet/edc-1.md`, 2026-11-10 18:33 UTC). La tabla de la cadena con lo escrito a mano en cada una está en `apps/backend/src/migrations/README.md`.
 
 Reglas:
 
@@ -253,15 +253,14 @@ Y los e2e del flujo que tocaste, contra un stack construido con tu código.
 - **Web:** `eslint .` con `apps/web/eslint.config.js`, solo con `edc/no-raw-error-log`, sobre los `.ts` de `src/`; los `.svelte` los revisa `src/lib/noRawErrorLog.lint.test.ts` (Implementado; commit 0e2720ff). Además, `svelte-check` (`typecheck`).
 - **Paquetes:** sin eslint.
 
-### 6.2 vitest: tres versiones, banderas distintas
+### 6.2 vitest: dos versiones, banderas distintas
 
 | Dónde | vitest (lockfile) | Limitar procesos |
 |---|---|---|
-| `apps/backend` | 2.1.9 | `--poolOptions.forks.maxForks=N --poolOptions.forks.minForks=N` |
-| `apps/web` | 4.1.10 | ver la documentación de vitest 4 (no verificado aquí) |
+| `apps/backend`, `apps/web` | 4.1.10 | `--maxWorkers=N`; vitest 4 quitó `poolOptions.forks.singleFork`, y las pruebas e2e del backend corren con `maxWorkers: 1` (citado de `apps/backend/vitest.e2e.config.ts`) |
 | `services/ai-service`, `packages/*` | 5.0.5 | `maxWorkers`; vitest 5 quitó `poolOptions` (citado de `services/ai-service/vitest.integration.config.ts`) |
 
-En el backend, pasa **las dos** banderas. vitest 2.1.9 toma `minForks` por omisión como el número de CPU menos uno, y tinypool lanza `RangeError` si `minForks` queda por encima de `maxForks` (medido: leído en `vitest/dist/chunks/resolveConfig.*.js`, `createForksPool`, y `tinypool/dist/index.js` de la instalación local, 2026-11-10). Ejemplo: `pnpm --filter @edc/backend exec vitest run --poolOptions.forks.maxForks=2 --poolOptions.forks.minForks=1` (no corrido en esta revisión).
+Ejemplo: `pnpm --filter @edc/backend exec vitest run --maxWorkers=2`. Bajo carga alta conviene limitarlo: en la corrida completa del 2026-11-14 fallaron 16 archivos del backend, y repetidos con `--maxWorkers=2` pasaron sus 505 pruebas (carga de 7 a 65; citado del reporte de la rama `fix/npm-seguridad-2026-11-14`).
 
 ## 7. Convenciones
 
@@ -330,7 +329,8 @@ Lo demás sobre privacidad está en [Protección de datos](../06-privacidad-y-se
 | Generación lenta | Unos 8 tokens por segundo en malas noches; una ventana `deep` de extracción tarda de 70 a 95 s (citado de las notas de contexto del equipo y de `spark-chat-eval`) | No iterar contra inferencia real; usar el proveedor falso |
 | Orden de los timeouts | `LLM_REQUEST_TIMEOUT_MS` vale 120000 por omisión en el código de ai-service (`src/config/env.ts`) y 600000 en los entornos desplegados (citado de `infra/fleet/env-manifests.md`); `GRAPH_EXTRACT_TIMEOUT_MS` (660000) debe quedar por encima, y el del detector (90 s) por debajo | Si el cliente corta antes, todo fallo parece de red. En local, pon `LLM_REQUEST_TIMEOUT_MS=600000` o baja `GRAPH_EXTRACT_TIMEOUT_MS` |
 | `payload-types.ts` ausente | Una copia recién clonada no lo tiene (está en `.gitignore`); lo que lo importe no compila | `pnpm --filter @edc/backend generate:types` |
-| `maxForks` solo, en el backend | vitest 2.1.9 lanza `RangeError` si `minForks` (por omisión CPU − 1) queda por encima | Pasar también `--poolOptions.forks.minForks` (sección 6.2) |
+| `next build` o `next dev` sin `--webpack` en el backend | Next 16 usa Turbopack por omisión, que sigue el worker de extracción hasta tsx/esbuild y falla | Usar los scripts de `apps/backend/package.json` y `Dockerfile.dev`, que ya pasan `--webpack` |
+| `next-env.d.ts` cambiado | Next 16 lo reescribe al construir o arrancar | No commitear ese cambio |
 | Un `select` que omite `anonymise` | El título de un `documento` sale "Documento" aunque no tenga compuerta: falla cerrado | Seleccionar `anonymise` y `anonymisationReport` junto con `name` |
 | `CALLBACK_SECRET` distinto | Subidas en `embedding` para siempre, o audio transcrito con callback rechazado | Una sola variable, interpolada por compose |
 | Saltos de línea en `.env` | Una línea pegada a la anterior rompe la URL y cada ingesta responde 400 | Revisar que el archivo termine en salto de línea |
@@ -425,7 +425,7 @@ Lo que sigue quedó fuera de `main` por ser funcionalidad nueva (clasificación 
 - **Renombrar los objetos ya guardados** con su nombre original. Las subidas nuevas ya se guardan con nombre neutro (sección 8, regla 14); las anteriores no se renombran (citado del mensaje del commit d2a7981f).
 - **Reintentar el borrado en ai-service** cuando falla. Hoy se intenta una vez (P-08).
 - **Purgar `edc_ai.traces`** de la salida del detector hospedado y de los títulos de testimonio (P-14).
-- **ZDR con DeepInfra.** OpenRouter se llama con ZDR; DeepInfra (rerank y embeddings de respaldo) no tiene ese parámetro (P-06).
+- **ZDR con DeepInfra.** OpenRouter se llama con ZDR; DeepInfra (rerank de staging y embeddings de respaldo de dev) no tiene ese parámetro (P-06).
 - **Cambio de contraseña** en la web y cambio obligatorio de la contraseña temporal (A-04); **verificación del correo** (A-03).
 - **Endurecer la regla de "edición sustantiva"** en Revisión (R4-12, revisión de la ola 4 del 2026-11-10).
 

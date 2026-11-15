@@ -1,9 +1,9 @@
 # Despliegue y runbook
 
-- **Versión:** 1.4
-- **Fecha:** 2026-11-12
+- **Versión:** 1.5
+- **Fecha:** 2026-11-15
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (§3, §4, §4b a §4zzzzzzzzzzz, §6, §7, §8, §9), `infra/fleet/runbook.md` (§3, §4, §5, §6, §7, §8), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `apps/backend/scripts/migrate.sh`, `apps/backend/Dockerfile`, `services/ai-service/Dockerfile`, `services/ai-service/.github/workflows/ci.yml`, `TESTING.md`, `package.json` (raíz), `.git/hooks/reference-transaction`, `apps/backend/scripts/hold-for-consent.ts`, `apps/backend/scripts/reextract-published-graph.ts`, `apps/backend/src/lib/consentHold.ts`. Código de `main` en `ac8fbf7c` (2026-11-11).
+- **Fuentes:** `infra/fleet/edc-1.md` (§3, §4, §4b a §4zzzzzzzzzzzzzzz, §6, §7, §8, §9), `infra/fleet/runbook.md` (§3, §4, §5, §6, §7, §8), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `apps/backend/scripts/migrate.sh`, `apps/backend/Dockerfile`, `services/ai-service/Dockerfile`, `services/ai-service/.github/workflows/ci.yml`, `TESTING.md`, `package.json` (raíz), `.git/hooks/reference-transaction`, `apps/backend/scripts/hold-for-consent.ts`, `apps/backend/scripts/reextract-published-graph.ts`, `apps/backend/src/lib/consentHold.ts`. Código de `main` en `ac8fbf7c` (2026-11-11).
 
 ## Para quién es y qué responde
 
@@ -44,7 +44,7 @@ sequenceDiagram
 
 Desde el 2026-11-10 hay dos líneas: `main` solo recibe correcciones, y la funcionalidad nueva va a la rama `etapa-2` (decisión del 2026-11-10). Dev despliega `main`.
 
-**Estado de dev al 2026-11-13.** Dev corre `29c54854`, el código de `main` (los commits posteriores solo cambian `docs/` e `infra/fleet/`), desplegado el 2026-11-13 a las 03:21 UTC, 2026-11-12 21:21 en la Ciudad de México (measured con `docker ps` por el agente de despliegue, `edc-1.md` §4zzzzzzzzzzzzzz), con una migración: `20261113_015634_consent_receipts` (`payload_migrations` 26, último lote 18). El 2026-11-12 hubo tres despliegues sin migración (`payload_migrations` 25, último lote 17). Cada uno, con respaldo previo y prueba de humo:
+**Estado de dev al 2026-11-15.** Dev corre `5baaa45`, el `main` de ese momento, desplegado el 2026-11-15, 00:01-00:11 UTC, 2026-11-14 18:01-18:11 en la Ciudad de México (measured por el agente de despliegue con el registro del despliegue, `git ls-remote` y las etiquetas de imagen, `edc-1.md` §4zzzzzzzzzzzzzzz), con una migración: `20261114_234336_payload_3_90_seguridad` (`payload_migrations` 27). Antes, `29c54854` (2026-11-13 03:21 UTC) con `20261113_015634_consent_receipts` (26, último lote 18). El 2026-11-12 hubo tres despliegues sin migración (`payload_migrations` 25, último lote 17). Cada uno, con respaldo previo y prueba de humo:
 
 | Hora (UTC) | Versión | Scripts aplicados después | Fuente |
 |---|---|---|---|
@@ -52,6 +52,7 @@ Desde el 2026-11-10 hay dos líneas: `main` solo recibe correcciones, y la funci
 | 15:25-15:31 | `8fdcd258` | `clear-legacy-held-text.ts`: 2 filas; `clean-stored-errors.ts`: 0 filas | `edc-1.md` §4zzzzzzzzzz |
 | 19:36-19:42 | `eb5625f5` | ninguno; la prueba de humo renombró dos documentos y comprobó con `psql` que ninguna otra columna cambió | `edc-1.md` §4zzzzzzzzzzz |
 | 2026-11-13 03:14-03:21 | `29c54854` | ninguno; la prueba de humo: alta sin `uploadConsentVersion` 400 y 0 documentos, con versión 1 documento y 1 recibo, constancia 200 para quien subió y 404 para otra cuenta, `/privacidad` 200 sin sesión | `edc-1.md` §4zzzzzzzzzzzzzz |
+| 2026-11-15 00:01-00:11 | `5baaa45` | ninguno; la prueba de humo, sin costo de modelos: salud 200 en `dev.`, `api.dev.`, ai-service y audio-service, `/privacidad` y `/sign-in` 200, sesión de un participante sintético y `/documentos` 200. Subida, ingesta, chat y transcripción no se probaron | `edc-1.md` §4zzzzzzzzzzzzzzz |
 
 Antes, dev corría `9463c79c` (2026-11-10 23:03 UTC). Todo lo que estos documentos marcan como Implementado está en dev.
 

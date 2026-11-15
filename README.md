@@ -29,7 +29,7 @@ Cierre de la etapa: [docs/00-cierre-etapa-1.md](docs/00-cierre-etapa-1.md). Toda
 | Carpeta | Qué contiene |
 |---|---|
 | `apps/web` | La web en SvelteKit: todas las vistas y el BFF, la única capa que llama el navegador |
-| `apps/backend` | Payload 3 sobre Next 15: el dominio, los permisos, la compuerta de anonimización, el grafo y la identidad (JWT) |
+| `apps/backend` | Payload 3 sobre Next 16: el dominio, los permisos, la compuerta de anonimización, el grafo y la identidad (JWT) |
 | `services/ai-service` | Motor de IA y RAG agnóstico del dominio: ingesta, embeddings, recuperación, generación y presupuesto |
 | `services/audio-service` | Transcripción de audio en Python (faster-whisper) |
 | `packages/*` | `ai-client`, `chat-engine` e `identity-client`: el cliente de ai-service, el turno de chat RAG y la verificación de sesiones |

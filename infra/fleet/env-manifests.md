@@ -84,6 +84,8 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `AI_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 the `app` key; compose builds ai-service's `API_KEYS` from it |
 | `AI_SERVICE_ADMIN_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 the `admin` key, also built into `API_KEYS`. No default since 2026-10-17: the old fallback `dev-key-admin` is public (`.env.example`), so a forgotten value gave a known admin key. Never reuse the local value |
 | `CALLBACK_SECRET` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ≥ 32 chars. Compose interpolates it into `API_KEYS` too, so the pair cannot drift |
+| `S3_ACCESS_KEY_ID` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ⚠ also the RustFS **root** key (§3). `:?` since 2026-11-14: no public fallback |
+| `S3_SECRET_ACCESS_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 `openssl rand -hex 32`. `:?` since 2026-11-14 |
 | `PUBLIC_BACKEND_URL` | `https://api.dev.<domain>` | `https://api.montaje.<domain>` | ⚙ ⚠ the origin ai-service calls back to. 🔴 Must be the backend's PUBLIC **https** origin: ai-service refuses private addresses and, under `NODE_ENV=production`, plain http. It reaches the public host through Traefik on the same box (✅ hairpin measured 2026-10-17: `curl` from both ai-service containers on edc-1 to both `api.*` hosts → 200). Locally `http://backend:3002` |
 
 ### 2b. Required by the apps — read through `env_file`
@@ -102,8 +104,6 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `S3_ENDPOINT` | `http://rustfs:9000` | `http://rustfs:9000` | ⚙ the compose-network name. 🔴 never a public URL |
 | `S3_REGION` | `us-east-1` | `us-east-1` | ⚙ RustFS ignores it; the AWS SDK needs one to sign |
 | `S3_BUCKET` | `edc` | `edc` | ⚙ separate stores per env, so the same name is fine |
-| `S3_ACCESS_KEY_ID` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ⚠ also the RustFS **root** key (§3) |
-| `S3_SECRET_ACCESS_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 `openssl rand -hex 32` |
 | `IDENTITY_TRUSTED_PROXY_HOPS` | `1` | `1` | ⚙ 🔴 exactly one proxy (Traefik). Higher = silent bypass of per-IP rate limits. Unset, `0` or junk ⇒ the code treats it as `1` (`endpoints/http.ts`) |
 | `AI_CAPABILITY_MODE` | `strict` | `strict` | ⚙ a version skew between backend and ai-service should be loud |
 | `LLM_REQUEST_TIMEOUT_MS` | `600000` | `600000` | ⚙ ai-service, whole generation. 🔴 Code default `120000` is too short: a `deep`-tier graph extraction window failed at 120,008 ms and passed in 72–96 s after the raise to 600000 (quoted, `plan/adr-corpus-graph.md` §13–§14, local stack 2026-08-28). Must stay **below** the backend's `GRAPH_EXTRACT_TIMEOUT_MS` (§2f) |
@@ -133,7 +133,7 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `RUSTFS_MEMORY` | `1g` | 💤 |
 | `RERANK_API_KEY` | unset | 🔑 **the switch.** Hosted DeepInfra rerank, owner-approved. Setting it turns rerank on (guard in ai-service's `command:` exports `RERANK_ENABLED=true` when the key is non-empty and `RERANK_ENABLED` is unset). Unset ⇒ off, plus one boot warning about the missing key — expected. Not required |
 | `RERANK_ENABLED` | **leave unset** | 💤 🔴 a Coolify value of `false` overrides the key: set it only as a kill switch. `true` without a key refuses boot |
-| `RERANK_PROVIDER`, `RERANK_URL`, `RERANK_MODEL`, `RERANK_TIMEOUT_MS` | `deepinfra`, `https://api.deepinfra.com`, `Qwen/Qwen3-Reranker-0.6B`, `8000` | 💤 compose defaults; do not set. Under `deepinfra` the URL is the API base (a `/v1/inference/…` URL refuses boot) and the model must be on ai-service's code allowlist |
+| `RERANK_PROVIDER`, `RERANK_URL`, `RERANK_MODEL`, `RERANK_TIMEOUT_MS` | `deepinfra`, `https://api.deepinfra.com`, `Qwen/Qwen3-Reranker-0.6B`, `8000` | 💤 compose defaults, which staging uses; do not set there. **Dev overrides the first three to the Spark** (`rerank-api`, the proxy's `/v1/rerank`, `qwen3-reranker-0.6b`) since 2026-10-21, `edc-1.md` §4y. Under `deepinfra` the URL is the API base (a `/v1/inference/…` URL refuses boot) and the model must be on ai-service's code allowlist |
 | `SPARSE_ENABLED` | `false` | 💤 the `heavy` sidecar is not deployed. Keep off |
 | `SHUTDOWN_GRACE_MS` | `30000` | 💤 🔴 must stay below ai-service's `stop_grace_period` (45s in the compose file) |
 | `SEED_CORPUS_SKIP_ABOVE` | the manifest size | 💤 backend corpus seed's double-seed guard: refuses an ecosistema already holding this many docs. Not a positive integer ⇒ ignored with a warning (`seed/corpus.ts`) |
@@ -340,6 +340,8 @@ needed. Verified in `services/audio-service/app/callbacks.py`.
 callback with a 401 and the document never becomes ready. Check this pairing FIRST whenever audio
 appears to hang — it and the ai-service pairing in §3 are the same class of failure and between them
 they account for most of the "it's still processing" reports you will ever get.
+
+In the deployed compose file this JSON is built from `AUDIO_SERVICE_API_KEY`, `AUDIO_SERVICE_ADMIN_API_KEY` and `CALLBACK_SECRET` (`infra/docker-compose.yml:915`). Since 2026-11-14 the admin key has **no public fallback**: unset, it is empty (`:-`), and an empty bearer never authenticates (`services/audio-service/app/auth.py`), so admin stays closed. It is not `:?` because compose expands it even where the `audio` profile is off (staging has none).
 
 🔧 **Issue audio's keys separately from ai-service's**, so a leak on one is revocable without
 taking the other down. It costs nothing.
