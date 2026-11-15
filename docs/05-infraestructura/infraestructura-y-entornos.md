@@ -3,7 +3,7 @@
 - **Versión:** 1.5
 - **Fecha:** 2026-11-15
 - **Estado:** vigente
-- **Fuentes:** `infra/fleet/edc-1.md` (bitácora del servidor, hasta §4zzzzzzzzzzzzzzz, 2026-11-15), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/fleet/backups.md`, `infra/fleet/runbook.md`, `infra/fleet/topology.md`, `plan/spark-ai-adopcion.md`, `plan/servidor-desarrollo.md`, `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, notas de contexto del equipo, `TESTING.md`, código de `main` en `00b943f3` (2026-11-10).
+- **Fuentes:** `infra/fleet/edc-1.md` (bitácora del servidor, hasta §4zzzzzzzzzzzzzzz, 2026-11-15), `infra/fleet/env-manifests.md`, `infra/docker-compose.yml`, `infra/docker-compose.override.yml`, `infra/docker-compose.audio.yml`, `infra/fleet/backups.md`, `infra/fleet/runbook.md`, `infra/fleet/topology.md`, `plan/spark-ai-adopcion.md`, `plan/servidor-desarrollo.md`, `plan/servidor-desarrollo-build.csv`, `plan/justificacion.md`, notas de contexto del equipo, `TESTING.md`, código de `main` en `00b943f3` (2026-11-10); las llaves sin valor público y el estado de dev, en `5baaa45` (2026-11-15).
 
 ## Para quién es y qué responde
 
